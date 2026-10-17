@@ -114,6 +114,11 @@ claude mcp add linkedin --scope user \
   -- node /absolute/path/to/claude-linkedin-connector/dist/index.js
 ```
 
+Or, to use it only while working in the clone, export `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`
+(and optionally `LINKEDIN_SCOPES`) in your shell and start `claude` from the clone's directory: the
+[`.mcp.json`](.mcp.json) there registers the connector as a project server, and Claude Code asks you to
+approve it the first time.
+
 ### Sign in
 
 Ask Claude to "connect my LinkedIn account". It calls `linkedin_login` and gives you a link; approve access

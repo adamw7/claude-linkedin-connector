@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "linkedin": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "env": {
+        "LINKEDIN_CLIENT_ID": "${LINKEDIN_CLIENT_ID:-}",
+        "LINKEDIN_CLIENT_SECRET": "${LINKEDIN_CLIENT_SECRET:-}",
+        "LINKEDIN_SCOPES": "${LINKEDIN_SCOPES:-openid profile email w_member_social}"
+      }
+    }
+  }
+}
