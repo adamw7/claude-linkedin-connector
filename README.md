@@ -169,7 +169,8 @@ Without Docker, set the same variables and run `HOST=0.0.0.0 node dist/index.js 
 Put it behind a TLS-terminating proxy or use a platform that provides HTTPS, and set `TRUST_PROXY` to the
 number of proxies in front of it so rate limits and logs see real client addresses.
 `LINKEDIN_ALLOWED_MEMBERS` is required: list the LinkedIn emails or member IDs that may connect, or set
-it to `*` to let anyone use your LinkedIn app. Then:
+it to `*` to let anyone use your LinkedIn app. An email only matches if the account has verified it on
+LinkedIn. Then:
 
 1. Add `https://linkedin-mcp.example.com/oauth/callback` to your LinkedIn app's authorized redirect URLs.
 2. In Claude, open **Settings → Connectors → Add custom connector** and enter
@@ -197,7 +198,8 @@ connector, and delegates the actual sign-in to LinkedIn:
 - Codes require PKCE (S256), expire after 5 minutes and are single-use (tracked per server instance). Access tokens are bound to the
   `/mcp` resource and expire with the LinkedIn token (at most 60 days), after which Claude asks you to reconnect.
 - By default only Claude's callback URLs and localhost redirects may register, and only the LinkedIn accounts
-  in `LINKEDIN_ALLOWED_MEMBERS` can finish connecting.
+  in `LINKEDIN_ALLOWED_MEMBERS` can finish connecting. The list is checked on every request too, so removing
+  someone (and restarting) cuts off the tokens they already have.
 
 The server keeps no database, so it can be restarted or scaled freely as long as `SERVER_SECRET` stays the
 same. Changing the secret disconnects everyone.

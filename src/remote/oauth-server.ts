@@ -189,6 +189,13 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     return list;
   })();
 
+  /** Whether LINKEDIN_ALLOWED_MEMBERS admits this member (by member ID or verified email). */
+  const memberAllowed = (grant: LinkedInGrant): boolean => {
+    if (config.allowedMembers.includes('*')) return true;
+    const identities = [grant.sub, grant.email].filter((id): id is string => !!id).map((id) => id.toLowerCase());
+    return identities.some((id) => config.allowedMembers.includes(id));
+  };
+
   const clientAccepts = (client: OAuthClient | undefined, redirectUri: string): client is OAuthClient =>
     client !== undefined && client.redirectUris.some((registered) => redirectUriMatches(registered, redirectUri));
 
@@ -313,17 +320,15 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     try {
       const { version, fetch } = options;
       const info = await new LinkedInClient({ accessToken: grant.at, version, apiBaseUrl: config.apiBaseUrl, fetch }).getUserInfo();
-      grant = { ...grant, sub: info.sub, name: info.name, email: info.email };
+      // An unconfirmed email could be anyone's address, so only a verified one may match the allowlist.
+      grant = { ...grant, sub: info.sub, name: info.name, email: info.email_verified === true ? info.email : undefined };
     } catch {
       // Without OpenID scopes there is no userinfo; tools report what is missing.
     }
-    if (!config.allowedMembers.includes('*')) {
-      const identities = [grant.sub, grant.email].filter((id): id is string => !!id).map((id) => id.toLowerCase());
-      if (!identities.some((id) => config.allowedMembers.includes(id))) {
-        logger('warn', 'member_not_allowed', { member: grant.sub, clientId: request.cid });
-        back({ error: 'access_denied', error_description: 'This LinkedIn account is not allowed to use this connector.' });
-        return;
-      }
+    if (!memberAllowed(grant)) {
+      logger('warn', 'member_not_allowed', { member: grant.sub, clientId: request.cid });
+      back({ error: 'access_denied', error_description: 'This LinkedIn account is not allowed to use this connector.' });
+      return;
     }
     logger('info', 'member_authorized', { member: grant.sub, clientId: request.cid, scopes: grant.sc });
     const codePayload: CodePayload = { req: request, li: grant, jti: randomToken(16), exp: nowSeconds() + CODE_TTL_S };
@@ -418,6 +423,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     async verifyAccessToken(token: string): Promise<AuthInfo> {
       const payload = sealer.unseal<AccessTokenPayload>('access', token);
       if (!payload) throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid access token');
+      // Re-checked on every request, so removing someone from LINKEDIN_ALLOWED_MEMBERS cuts off their tokens too.
+      if (!memberAllowed(payload.li)) throw new OAuthError(OAuthErrorCode.InvalidToken, 'This LinkedIn account is no longer allowed');
       return {
         token,
         clientId: payload.cid,

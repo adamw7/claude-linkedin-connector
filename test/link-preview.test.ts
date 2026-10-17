@@ -21,6 +21,15 @@ describe('parseLinkPreview', () => {
     expect(parseLinkPreview(html, 'https://example.com/')).toEqual({ title: 'Plain page', description: 'About us' });
   });
 
+  it('parses hostile pages in linear time', () => {
+    const megabyte = 1024 * 1024;
+    const start = performance.now();
+    parseLinkPreview(`<meta ${'a'.repeat(megabyte)}>`, 'https://example.com/');
+    parseLinkPreview('<meta'.repeat(megabyte / 5), 'https://example.com/');
+    parseLinkPreview('<title'.repeat(megabyte / 6), 'https://example.com/');
+    expect(performance.now() - start).toBeLessThan(2_000);
+  });
+
   it('ignores non-http image URLs', () => {
     expect(parseLinkPreview('<meta property="og:image" content="javascript:alert(1)">', 'https://example.com/')).toEqual({});
   });

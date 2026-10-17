@@ -43,8 +43,10 @@ export interface RemoteApp {
 
 const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1']);
 
-/** Request bodies above this are rejected; base64 inflates media by a third, so data: URIs top out around 20 MB. */
+/** MCP request bodies above this are rejected; base64 inflates media by a third, so data: URIs top out around 20 MB. */
 const MAX_BODY = '30mb';
+/** For the OAuth endpoints, which anyone can call before signing in. */
+const MAX_OAUTH_BODY = '64kb';
 
 /** Endpoints a browser or OAuth client calls before it has a token; limited per client IP. */
 const OAUTH_PATHS = ['/authorize', '/oauth/callback', '/token', '/register'];
@@ -72,7 +74,9 @@ const jsonErrors = (logger: Logger): ErrorRequestHandler => (error: { status?: n
   }
   const message =
     error.type === 'entity.too.large'
-      ? `The request is larger than ${MAX_BODY.toUpperCase()}. Pass large images or documents as an http(s) URL instead of a data: URI.`
+      ? pathOf(req) === '/mcp'
+        ? `The request is larger than ${MAX_BODY.toUpperCase()}. Pass large images or documents as an http(s) URL instead of a data: URI.`
+        : 'The request body is too large.'
       : error.type === 'entity.parse.failed'
         ? 'The request body is not valid JSON.'
         : status < 500
@@ -118,8 +122,6 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
     config.allowedHosts ??
     (LOOPBACK_BINDS.has(config.host) ? [config.publicUrl.hostname, 'localhost', '127.0.0.1', '[::1]'] : undefined);
   if (allowedHosts) app.use(hostHeaderValidation(allowedHosts));
-  // Tool calls can carry base64 images, so allow large JSON bodies.
-  app.use(express.json({ limit: MAX_BODY }));
 
   const metadataOptions = {
     oauthMetadata: oauth.metadata,
@@ -136,6 +138,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   app.use(
     OAUTH_PATHS,
     rateLimit({ limit: config.oauthRateLimit, key: (req) => (req.method === 'OPTIONS' ? undefined : req.ip), reject: tooMany }),
+    express.json({ limit: MAX_OAUTH_BODY }),
   );
   app.use(oauth.router);
 
@@ -179,7 +182,10 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
     },
     reject: tooMany,
   });
-  app.all('/mcp', mcpCors, bearer, mcpLimit, (req, res) => void mcp(req, res, req.body));
+  // Tool calls can carry base64 images, so allow large JSON bodies, but only from authenticated callers
+  // within their rate limit: buffering 30 MB for anyone who asks would let strangers exhaust memory.
+  const mcpBody = express.json({ limit: MAX_BODY });
+  app.all('/mcp', mcpCors, bearer, mcpLimit, mcpBody, (req, res) => void mcp(req, res, req.body));
 
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });

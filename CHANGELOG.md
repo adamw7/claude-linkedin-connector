@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- The remote server only reads request bodies after checking the bearer token (for `/mcp`) or the rate limit
+  (OAuth endpoints, now capped at 64 KB). Before, anyone could make it buffer and parse 30 MB per request
+  without signing in.
+- Link preview parsing runs in linear time. A crafted page (e.g. one huge `<meta …>` tag) could block the
+  server for minutes when someone shared a link to it.
+- `LINKEDIN_ALLOWED_MEMBERS` matches emails only when LinkedIn reports them verified, and is checked on every
+  request, so removing a member cuts off their existing tokens.
+
 ### Fixed
 
 - Post URLs of the form `linkedin.com/posts/…-ugcPost-<id>-…` are recognized by the edit, delete,

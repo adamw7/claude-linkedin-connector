@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CLAUDE_REDIRECT_URIS, DEFAULT_SCOPES, type RemoteConfig } from '../src/config.js';
 import { ApiVersion } from '../src/linkedin/versions.js';
 import { createRemoteApp } from '../src/remote/app.js';
-import { API_BASE, FakeLinkedIn, OAUTH_BASE } from './helpers/fake-linkedin.js';
+import { API_BASE, FakeLinkedIn, MEMBER, OAUTH_BASE } from './helpers/fake-linkedin.js';
 
 interface Remote {
   base: string;
@@ -399,13 +399,27 @@ describe('remote connector discovery', () => {
     const post = (path: string, body: string) =>
       fetch(`${remote.base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
 
-    const tooLarge = await post('/mcp', JSON.stringify({ data: 'x'.repeat(31 * 1024 * 1024) }));
+    const huge = JSON.stringify({ data: 'x'.repeat(31 * 1024 * 1024) });
+    // Bodies are only read once the caller has authenticated.
+    expect((await post('/mcp', huge)).status).toBe(401);
+
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+    const tooLarge = await fetch(remote.mcpUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json' },
+      body: huge,
+    });
     expect(tooLarge.status).toBe(413);
     expect(await tooLarge.json()).toEqual({
       jsonrpc: '2.0',
       error: { code: -32600, message: expect.stringContaining('instead of a data: URI') },
       id: null,
     });
+
+    const tooLargeRegistration = await post('/register', JSON.stringify({ redirect_uris: [REDIRECT], padding: 'x'.repeat(100 * 1024) }));
+    expect(tooLargeRegistration.status).toBe(413);
+    expect(await tooLargeRegistration.json()).toEqual({ error: 'invalid_request', error_description: 'The request body is too large.' });
 
     const malformed = await post('/register', '{bad');
     expect(malformed.status).toBe(400);
@@ -551,6 +565,30 @@ describe('authorization endpoint', () => {
     expect(remote.logs).toContainEqual(expect.objectContaining({ level: 'warn', event: 'member_not_allowed', member: 'abc123' }));
     const allowed = await startRemote({ allowedMembers: ['ADA@example.com'.toLowerCase()] });
     expect((await obtainCode(allowed)).landing.searchParams.get('code')).toBeTruthy();
+  });
+
+  it('matches the allowlist only against a verified email', async () => {
+    const remote = await startRemote({ allowedMembers: ['ada@example.com'] });
+    remote.linkedin.override(({ url }) =>
+      url.pathname === '/v2/userinfo' ? Response.json({ ...MEMBER, email_verified: false }) : undefined,
+    );
+    expect((await obtainCode(remote)).landing.searchParams.get('error')).toBe('access_denied');
+  });
+
+  it('cuts off issued tokens when a member is removed from the allowlist', async () => {
+    const allowedMembers = ['abc123'];
+    const remote = await startRemote({ allowedMembers });
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+    const ping = () =>
+      fetch(remote.mcpUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      });
+    expect((await ping()).status).toBe(200);
+    allowedMembers.splice(0, 1, 'someone-else');
+    expect((await ping()).status).toBe(401);
   });
 });
 
