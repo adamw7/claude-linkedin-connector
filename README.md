@@ -42,8 +42,10 @@ commenting or deleting, and Claude also asks you to confirm each call. A few thi
 - **Connections.** LinkedIn's API doesn't give apps your list of connections, so the connector reads the
   `Connections.csv` from your data export instead: on LinkedIn, open **Settings → Data privacy → Get a copy
   of your data**, choose **Connections**, then unzip the archive LinkedIn emails you. Pass the file's path
-  (local mode), a URL, or attach or paste its contents. Claude can search it by name, company, position
-  or connection date. Email addresses appear only for connections who allow it.
+  (local mode), a URL, or attach or paste its contents. Claude can search it by name, company (one or
+  several, e.g. everyone at xyz or abc), position or connection date, and count how many connections you
+  have at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear
+  only for connections who allow it.
 - **API versions.** LinkedIn retires each monthly API version after about a year. When that happens the
   connector switches to the newest live version automatically.
 

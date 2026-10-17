@@ -177,6 +177,41 @@ describe('linkedin_read_connections', () => {
     expect(names(await read({ limit: 2, offset: first.nextOffset }))).toEqual(['Alan Turing']);
   });
 
+  it('matches companies and text regardless of accents, and any of several companies', async () => {
+    const h = await harness();
+    const csv = [
+      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+      'Zofia,Wójcik,,,Łódzka Spółka,Księgowa,01 Oct 2026',
+      'Jan,Kowalski,,,XYZ Sp. z o.o.,Engineer,02 Sep 2026',
+      'Anna,Nowak,,,abc Group,Designer,03 Aug 2026',
+      'Piotr,Zieliński,,,Other,Engineer,04 Jul 2026',
+    ].join('\n');
+    const names = async (args: Record<string, unknown>) =>
+      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    expect(await names({ company: 'lodzka spolka' })).toEqual(['Zofia Wójcik']);
+    expect(await names({ query: 'WOJCIK' })).toEqual(['Zofia Wójcik']);
+    expect(await names({ query: 'zielinski' })).toEqual(['Piotr Zieliński']);
+    expect(await names({ company: ['xyz', 'ABC'] })).toEqual(['Jan Kowalski', 'Anna Nowak']);
+    expect(await names({ company: ['xyz', 'abc'], query: 'engineer' })).toEqual(['Jan Kowalski']);
+  });
+
+  it('counts connections per company, optionally without listing them', async () => {
+    const h = await harness();
+    const { data } = await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV, limit: 0, companyCounts: 1 });
+    expect(data).toMatchObject({
+      total: 3,
+      matched: 3,
+      connections: [],
+      companies: [{ company: 'Analytical Engines', count: 2 }],
+      companiesTotal: 2,
+      withoutCompany: 0,
+    });
+    expect(data!.nextOffset).toBeUndefined();
+    const filtered = await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV, query: 'grace', companyCounts: 10 });
+    expect(filtered.data!.companies).toEqual([{ company: 'US Navy', count: 1 }]);
+    expect((await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV })).data!.companies).toBeUndefined();
+  });
+
   it('reads URLs, and refuses local files in remote mode', async () => {
     const remote = await harness({ mode: 'remote' });
     expect((await call(remote, 'linkedin_read_connections', { file: `${web.url}/Connections.csv` })).data!.total).toBe(3);

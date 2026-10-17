@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { UserInputError } from '../src/errors.js';
-import { parseConnectedOn, parseConnections, parseCsv } from '../src/linkedin/connections.js';
+import { countCompanies, foldText, parseConnectedOn, parseConnections, parseCsv, type Connection } from '../src/linkedin/connections.js';
 import { CONNECTIONS_CSV } from './helpers/connections.js';
 
 describe('parseCsv', () => {
@@ -49,5 +49,27 @@ describe('parseConnections', () => {
     expect(() => parseConnections('secret=hunter2\n')).toThrow(UserInputError);
     expect(() => parseConnections('secret=hunter2\n')).not.toThrow(/hunter2/);
     expect(() => parseConnections(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0]))).toThrow(/zip archive/);
+  });
+});
+
+describe('foldText', () => {
+  it('ignores case, accents and spacing, including letters Unicode does not decompose', () => {
+    expect(foldText('  ŁÓDŹ  Software  ')).toBe('lodz software');
+    expect(foldText('Zażółć gęślą jaźń')).toBe('zazolc gesla jazn');
+    expect(foldText('Øresund Straße Æther Œuvre')).toBe('oresund strasse aether oeuvre');
+    expect(foldText('Société Générale')).toBe('societe generale');
+  });
+});
+
+describe('countCompanies', () => {
+  const at = (company?: string): Connection => ({ firstName: 'A', lastName: 'B', name: 'A B', company });
+
+  it('groups spellings that differ in case or accents, most connections first', () => {
+    const counts = countCompanies([at('Łódź Labs'), at('Lodz Labs'), at('Łódź Labs'), at('Acme'), at('Beta'), at(), at('Acme')]);
+    expect(counts).toEqual([
+      { company: 'Łódź Labs', count: 3 },
+      { company: 'Acme', count: 2 },
+      { company: 'Beta', count: 1 },
+    ]);
   });
 });

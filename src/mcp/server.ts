@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
-import { MAX_CONNECTIONS_BYTES, parseConnections } from '../linkedin/connections.js';
+import { countCompanies, foldText, MAX_CONNECTIONS_BYTES, parseConnections } from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
 import { escapeLittleText } from '../linkedin/text.js';
@@ -221,19 +221,32 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       description:
         "Reads the user's 1st-degree connections from the Connections.csv file in LinkedIn's data export (LinkedIn's API does not offer connections). " +
         'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and to unzip it. ' +
-        'Pass the file, or its text as csv. Filter with query, company and connection dates; results are newest first and paged with limit and offset.',
+        'Pass the file, or its text as csv. Filter with query, company and connection dates; matching ignores case and accents. Results are newest first and paged with limit and offset. ' +
+          'Set companyCounts to also see how many matching connections work at each company, e.g. to find where the network is concentrated.',
       inputSchema: z.object({
         file: z.string().optional().describe(`Connections.csv as ${mediaSources}.`),
         csv: z.string().optional().describe('The contents of Connections.csv, when the user pasted or attached the text.'),
         query: z
           .string()
           .optional()
-          .describe('Case-insensitive text that must appear in the name, company, position, email or profile URL.'),
-        company: z.string().optional().describe('Case-insensitive text that must appear in the company.'),
+          .describe('Text that must appear in the name, company, position, email or profile URL. Ignores case and accents.'),
+        company: z
+          .union([z.string(), z.array(z.string()).min(1)])
+          .optional()
+          .describe(
+            'Only connections whose company contains this text, or any of these texts (e.g. ["xyz", "abc"] for everyone at xyz or abc). Ignores case and accents.',
+          ),
         connectedAfter: isoDate.optional().describe('Only connections made on or after this date (YYYY-MM-DD).'),
         connectedBefore: isoDate.optional().describe('Only connections made on or before this date (YYYY-MM-DD).'),
-        limit: z.number().int().min(1).max(1000).default(100).describe('Maximum connections to return.'),
+        limit: z.number().int().min(0).max(1000).default(100).describe('Maximum connections to return. 0 returns only the counts.'),
         offset: z.number().int().min(0).default(0).describe('Number of matching connections to skip, for paging.'),
+        companyCounts: z
+          .number()
+          .int()
+          .min(1)
+          .max(1000)
+          .optional()
+          .describe('Also return the companies with the most matching connections, up to this many, with their counts.'),
       }),
       outputSchema: z.object({
         total: z.number().describe('Connections in the file.'),
@@ -241,6 +254,12 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         offset: z.number(),
         connections: z.array(connectionSchema),
         nextOffset: z.number().optional().describe('Pass as offset to get the next page, when there are more matches.'),
+        companies: z
+          .array(z.object({ company: z.string(), count: z.number() }))
+          .optional()
+          .describe('Matching connections per company, most first, when companyCounts is set.'),
+        companiesTotal: z.number().optional().describe('Distinct companies among the matching connections.'),
+        withoutCompany: z.number().optional().describe('Matching connections with no company listed.'),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -259,15 +278,18 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
               ).data
             : args.csv!;
         const all = parseConnections(data);
-        const query = args.query?.trim().toLowerCase();
-        const company = args.company?.trim().toLowerCase();
+        const query = args.query === undefined ? '' : foldText(args.query);
+        const companies = [args.company ?? []].flat().map(foldText).filter(Boolean);
         const dated = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);
         const matches = all.filter((connection) => {
           if (query) {
             const fields = [connection.name, connection.company, connection.position, connection.email, connection.profileUrl];
-            if (!fields.some((field) => field?.toLowerCase().includes(query))) return false;
+            if (!fields.some((field) => field && foldText(field).includes(query))) return false;
           }
-          if (company && !connection.company?.toLowerCase().includes(company)) return false;
+          if (companies.length > 0) {
+            const company = foldText(connection.company ?? '');
+            if (!company || !companies.some((name) => company.includes(name))) return false;
+          }
           if (args.connectedAfter || args.connectedBefore) {
             const date = dated(connection.connectedOn);
             if (!date) return false;
@@ -283,12 +305,16 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           .map(({ connection }) => connection);
         const page = sorted.slice(args.offset, args.offset + args.limit);
         const next = args.offset + page.length;
+        const counts = args.companyCounts === undefined ? undefined : countCompanies(matches);
         return json({
           total: all.length,
           matched: matches.length,
           offset: args.offset,
           connections: page,
-          nextOffset: next < matches.length ? next : undefined,
+          nextOffset: page.length > 0 && next < matches.length ? next : undefined,
+          companies: counts?.slice(0, args.companyCounts),
+          companiesTotal: counts?.length,
+          withoutCompany: counts && matches.filter((connection) => !connection.company).length,
         });
       }),
   );

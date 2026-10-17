@@ -134,3 +134,44 @@ export function parseConnections(data: Buffer | string): Connection[] {
 function normalize(cell: string): string {
   return cell.trim().toLowerCase();
 }
+
+// Letters that Unicode does not decompose into a base letter plus an accent.
+const UNDECOMPOSED: Record<string, string> = { ł: 'l', đ: 'd', ø: 'o', ß: 'ss', æ: 'ae', œ: 'oe', ı: 'i', þ: 'th' };
+
+/** Lowercases text and strips accents ("Łódź" → "lodz") so searches match however names are typed. */
+export function foldText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[łđøßæœıþ]/g, (char) => UNDECOMPOSED[char]!)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export interface CompanyCount {
+  company: string;
+  count: number;
+}
+
+/**
+ * Counts connections per company, most first. Spellings that differ only in case, accents or spacing are
+ * one company, shown under its most common spelling. Connections without a company are not counted.
+ */
+export function countCompanies(connections: Connection[]): CompanyCount[] {
+  const groups = new Map<string, { count: number; spellings: Map<string, number> }>();
+  for (const { company } of connections) {
+    if (!company) continue;
+    const key = foldText(company);
+    const group = groups.get(key) ?? { count: 0, spellings: new Map<string, number>() };
+    group.count += 1;
+    group.spellings.set(company, (group.spellings.get(company) ?? 0) + 1);
+    groups.set(key, group);
+  }
+  return [...groups.values()]
+    .map(({ count, spellings }) => ({
+      company: [...spellings].reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0],
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.company.localeCompare(b.company));
+}
