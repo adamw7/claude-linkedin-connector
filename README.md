@@ -42,8 +42,9 @@ commenting or deleting, and Claude also asks you to confirm each call. A few thi
   description and image and uploads them with the link.
 - **Media.** Images and documents can be local file paths (local mode), `http(s)` URLs or base64 `data:` URIs.
   Local files (including `Connections.csv`) are only read from your Downloads, Desktop and Pictures folders
-  and the server's working directory (unless that is your home directory or above it), so a page or document
-  Claude reads can't get it to post other files on your computer. Set `LINKEDIN_FILE_DIRS` to change this.
+  (also the ones OneDrive keeps on Windows) and the server's working directory (unless that is your home
+  directory or above it), so a page or document Claude reads can't get it to post other files on your
+  computer. Set `LINKEDIN_FILE_DIRS` to change this.
   Files are checked by content, so only real images and documents are ever uploaded.
 - **Connections.** LinkedIn's API doesn't give apps your list of connections, so the connector reads the
   `Connections.csv` from your data export instead: on LinkedIn, open **Settings → Data privacy → Get a copy
@@ -100,7 +101,7 @@ Open **Settings → Developer → Edit Config** and add:
 {
   "mcpServers": {
     "linkedin": {
-      "command": "node",
+      "command": "/absolute/path/to/node",
       "args": ["/absolute/path/to/claude-linkedin-connector/dist/index.js"],
       "env": {
         "LINKEDIN_CLIENT_ID": "your-client-id",
@@ -110,6 +111,9 @@ Open **Settings → Developer → Edit Config** and add:
   }
 }
 ```
+
+Use the full path of Node.js 24 or later (`which node`, or `where node` on Windows): Claude Desktop doesn't get
+the `PATH` your shell sets up (with nvm, for example), so a bare `node` may not be found or may be too old.
 
 ### Claude Code
 
@@ -121,9 +125,10 @@ npm run setup
 
 It asks for your Client ID and Client Secret (or reads `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`),
 installs dependencies and builds, registers the connector for all your projects with `claude mcp add`, and
-signs you in to LinkedIn in your browser. `npm run setup -- --help` lists its options, such as
-`--scope local` to use the connector only in this directory, `--scopes` for extra LinkedIn permissions and
-`--no-login` to sign in later.
+signs you in to LinkedIn in your browser. Put `--` before its options, or npm keeps them for itself:
+`npm run setup -- --help` lists them, such as `--scope local` to use the connector only in this directory,
+`--scopes` for extra LinkedIn permissions (running it again with new ones signs you in again to grant them)
+and `--no-login` to sign in later.
 
 To register it by hand instead:
 
@@ -254,7 +259,8 @@ See [`.env.example`](.env.example) for a template.
 - A post can have one kind of attachment: a link preview, images, or a document.
 - In remote mode, media sent as `data:` URIs is limited to about 20 MB per request; pass larger files as URLs.
 - LinkedIn applies daily rate limits per member and per app.
-- Posts are plain text. LinkedIn doesn't render Markdown; line breaks and `#hashtags` work.
+- Posts are plain text. LinkedIn doesn't render Markdown; line breaks and `#hashtags` work. `@mentions` show as
+  plain text and don't tag anyone.
 
 ## Troubleshooting
 
@@ -262,7 +268,10 @@ See [`.env.example`](.env.example) for a template.
 |---|---|
 | LinkedIn says the redirect URI doesn't match | Add the exact callback URL (scheme, host, port, path) to the app's **Auth** tab |
 | `Port 8723 is already in use` | Set `LINKEDIN_REDIRECT_URI` to another localhost port and register it in the app |
+| `invalid_client: Client authentication failed` when signing in | The Client ID or Client Secret is wrong, or the secret was regenerated: copy both again from the app's **Auth** tab |
 | `LinkedIn denied permission` (403) | The app lacks the product for that feature, or you signed in before adding the scope. Fix the app, then sign in again |
+| A file `is outside the folders this connector may read files from` | Move it to Downloads, Desktop or Pictures, or add its folder to `LINKEDIN_FILE_DIRS` (**Folders for local files** in the Claude Desktop extension's settings) |
+| Editing or deleting a post fails with `not the activity URN` | Links copied from linkedin.com often point to the post's activity rather than the post. Use the URL Claude gave you when publishing, or the code from the post's **Embed this post** menu item |
 | `access token … expired or been revoked` | Sign in again (local) or reconnect the connector (remote) |
 | Remote connection fails after a restart | Set a fixed `SERVER_SECRET` |
 | `LINKEDIN_ALLOWED_MEMBERS is required` on startup | List who may connect, or set it to `*` to allow anyone |

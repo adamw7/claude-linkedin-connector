@@ -331,7 +331,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       .min(1)
       .max(3000)
       .describe(
-        'The post text, max 3000 characters. Plain text only (no Markdown); line breaks are kept and #hashtags become links. Special characters are escaped automatically.',
+        'The post text, max 3000 characters. Plain text only (no Markdown); line breaks are kept and #hashtags become links. @mentions can\'t tag anyone: "@Name" shows as plain text. Special characters are escaped automatically.',
       ),
     visibility: z
       .enum(['PUBLIC', 'CONNECTIONS'])
@@ -363,7 +363,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     document: z
       .object({
         source: z.string().describe(`A PDF, PPT, PPTX, DOC or DOCX (max 100 MB, 300 pages) as ${mediaSources}.`),
-        title: z.string().max(300).optional().describe('Title shown on the document. Defaults to the file name.'),
+        title: z.string().max(300).optional().describe('Title shown on the document. Defaults to the file name without its extension.'),
       })
       .optional()
       .describe('Attach a document, shown as a swipeable carousel.'),
@@ -440,7 +440,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           attachment = entries.length === 1 ? 'image' : 'images';
         } else if (document && args.document) {
           const id = await upload(client, 'documents', author, document);
-          content = { media: { id, title: args.document.title ?? document.filename ?? 'Document' } };
+          // LinkedIn shows the title above the carousel: "Q3 results", not "Q3 results.pdf".
+          const title = args.document.title ?? (document.filename?.replace(/\.(pdf|docx?|pptx?)$/i, '') || 'Document');
+          content = { media: { id, title } };
           attachment = 'document';
         }
 
@@ -456,7 +458,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     } catch (error) {
       if (urn.startsWith('urn:li:activity:') && error instanceof LinkedInApiError && error.status < 500) {
         throw new UserInputError(
-          `LinkedIn could not ${verb} ${urn}. This needs the post's share or ugcPost URN (as returned by linkedin_create_post), not an activity URN. LinkedIn said: ${error.message}`,
+          `LinkedIn could not ${verb} ${urn}. This needs the post's share or ugcPost URN (as returned by linkedin_create_post), not the activity URN that links copied from linkedin.com often contain. ` +
+            `To find it, choose "Embed this post" in the post's menu on linkedin.com and pass the embed code, which contains urn:li:share:… or urn:li:ugcPost:…. LinkedIn said: ${error.message}`,
         );
       }
       throw error;
@@ -470,7 +473,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       description:
         "Replaces the text of a post the signed-in member (or their Page) authored; attachments stay as they are. Accepts the post URN returned by linkedin_create_post or the post URL. Only call this after the user has approved the new text.",
       inputSchema: z.object({
-        post: z.string().describe('Post URN (urn:li:share:… or urn:li:ugcPost:…) or post URL.'),
+        post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
         text: z.string().min(1).max(3000).describe('The complete new post text, max 3000 characters. Plain text only.'),
       }),
       outputSchema: z.object({ updated: z.boolean(), postUrn: z.string(), url: z.string() }),
@@ -492,7 +495,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       description:
         'Permanently deletes a post the signed-in member (or their Page) authored. Accepts the post URN returned by linkedin_create_post or the post URL. Confirm with the user first.',
       inputSchema: z.object({
-        post: z.string().describe('Post URN (urn:li:share:… or urn:li:ugcPost:…) or post URL.'),
+        post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
       }),
       outputSchema: z.object({ deleted: z.boolean(), postUrn: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -584,6 +587,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         memberUrn: z.string().optional(),
         expiresAt: z.string().optional(),
         scopes: z.array(z.string()),
+        missingScopes: z.array(z.string()).optional().describe('Configured scopes the sign-in predates; signing in again grants them.'),
         message: z.string(),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -616,7 +620,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         run('linkedin_login', async () => {
           if (!args.force) {
             const status = await auth.status();
-            if (status.authenticated) return json({ alreadySignedIn: true, message: status.message });
+            if (status.authenticated && !status.missingScopes) return json({ alreadySignedIn: true, message: status.message });
           }
           const start = await login();
           return json({

@@ -6,8 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Document posts are titled after the file name without its extension ("Q3 results", not "Q3 results.pdf")
+  unless a title is given.
+- The CLI refuses options a command doesn't take instead of ignoring them, and `status` exits with 1 when the
+  sign-in predates scopes added to `LINKEDIN_SCOPES`.
+
 ### Fixed
 
+- `--help` after a command shows the help instead of running the command: `logout --help` deleted the stored
+  token, and `login --help` started a sign-in.
+- After adding scopes to `LINKEDIN_SCOPES` (e.g. for comments), `linkedin_login` and re-running `npm run setup`
+  sign in again to grant them, instead of reporting that you are already signed in. `linkedin_auth_status`
+  lists them as `missingScopes`.
+- When a browser sign-in fails (for example with a mistyped Client Secret), the tools tell Claude why, instead
+  of only that you aren't signed in, and `invalid_client` errors say which settings to check.
+- `npm run setup` notices options npm kept for itself because `--` was left out (`npm run setup --scope local`
+  set up user scope), explains mistyped options instead of printing a stack trace, and says what to do when
+  signing in fails.
+- On Windows, local files are also read from the Desktop and Pictures folders OneDrive keeps, where
+  screenshots land when OneDrive backs up those folders.
+- Starting the server from a terminal says it is waiting for Claude instead of printing nothing.
+- Editing or deleting a post by an activity URN, which links copied from linkedin.com often contain, explains
+  how to get the post's own URN; the tools also accept the post's embed code.
 - Post URLs of the form `linkedin.com/posts/…-ugcPost-<id>-…` are recognized by the edit, delete,
   comment and react tools.
 - Media and `Connections.csv` URLs whose file name has a `%` that isn't an escape (e.g. `100%.png`)

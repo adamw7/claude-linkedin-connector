@@ -26,6 +26,8 @@ export interface AuthStatus {
   /** ISO 8601. */
   expiresAt?: string;
   scopes: string[];
+  /** Configured scopes the token lacks because it predates them; signing in again grants them. */
+  missingScopes?: string[];
   message: string;
 }
 

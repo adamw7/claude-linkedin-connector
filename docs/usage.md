@@ -65,10 +65,12 @@ More things to try:
   for your OK before publishing, editing, commenting or deleting. Claude also asks you to allow each tool
   call unless you've allowed it permanently.
 - **Write plain text.** LinkedIn doesn't render Markdown. Line breaks, emoji and `#hashtags` work, and the
-  connector escapes characters such as `( ) * _` so LinkedIn doesn't cut the post short.
+  connector escapes characters such as `( ) * _` so LinkedIn doesn't cut the post short. `@mentions` show as
+  plain text and don't tag anyone.
 - **Claude gets the post's URL back**, so you can say "edit that post" or "delete it" right afterwards.
 - **One kind of attachment per post**: a link preview, 1–20 images, or one document.
 - **Claude can't read your feed or past posts.** LinkedIn only gives that to partner apps. Keep the URL
-  Claude gives you after publishing if you may want to edit or delete the post later.
+  Claude gives you after publishing if you may want to edit or delete the post later: a link copied from
+  linkedin.com often won't work, but the code from the post's **Embed this post** menu item will.
 
 If something goes wrong, see [Troubleshooting](../README.md#troubleshooting).

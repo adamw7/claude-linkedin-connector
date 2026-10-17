@@ -56,4 +56,12 @@ describe('LinkedIn OAuth helpers', () => {
     expect(error).toBeInstanceOf(LinkedInOAuthError);
     expect(error).toMatchObject({ error: 'invalid_grant' });
   });
+
+  it('says which settings to check when LinkedIn rejects the app credentials', async () => {
+    const error = await exchangeAuthorizationCode({ ...app, clientSecret: 'mistyped' }, 'li-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      error: 'invalid_client',
+      message: "invalid_client: Client authentication failed. Check that the Client ID and Client Secret you configured are the ones on the Auth tab of your LinkedIn app.",
+    });
+  });
 });

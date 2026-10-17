@@ -26,9 +26,10 @@ const notImporting = (pattern: RegExp) => (file: FileInfo) => !pattern.test(file
 const srcExcept = (file: string) => new RegExp(`^src/(?!${file.replaceAll('.', '\\.')}$)`);
 
 describe('architecture', () => {
+  // Builds the import graph of all of src/, which takes 5 to 15 seconds on a busy 4-core machine.
   it('has no circular dependencies', async () => {
     await expect(projectFiles().inFolder('src/**').should().haveNoCycles()).toPassAsync();
-  });
+  }, 60_000);
 
   it.each(['errors.ts', 'version.ts', 'html.ts'])('keeps src/%s free of project imports', async (leaf) => {
     await expect(projectFiles().inPath(`src/${leaf}`).shouldNot().dependOnFiles().inPath(srcExcept(leaf))).toPassAsync();

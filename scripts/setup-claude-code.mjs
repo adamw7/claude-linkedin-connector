@@ -13,6 +13,8 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ENTRY = join(ROOT, 'dist', 'index.js');
 const DEFAULT_SCOPES = 'openid profile email w_member_social';
 const IS_WINDOWS = process.platform === 'win32';
+/** How to run this script again with options, for messages. */
+const SETUP = process.env.npm_lifecycle_event ? 'npm run setup --' : 'node scripts/setup-claude-code.mjs';
 
 const HELP = `Sets up the LinkedIn connector in Claude Code.
 
@@ -136,27 +138,65 @@ async function confirm(question) {
   return /^y(es)?$/i.test(await ask(`${question} [y/N] `));
 }
 
+// Without `--`, `npm run setup --scope local` hands the options to npm, which keeps them as its own config
+// (npm_config_*) and runs this script without them. `--yes` isn't checked: npm_config_yes may come from .npmrc.
+const NPM_CONFIG_OPTIONS = {
+  client_id: '--client-id',
+  client_secret: '--client-secret',
+  scopes: '--scopes',
+  scope: '--scope',
+  name: '--name',
+  skip_build: '--skip-build',
+  login: '--no-login',
+};
+
+function checkOptionsReachedSetup(env) {
+  if (!env.npm_lifecycle_event) return;
+  const kept = Object.entries(NPM_CONFIG_OPTIONS)
+    .filter(([key]) => env[`npm_config_${key}`] !== undefined)
+    // An npm scope (@org, e.g. from .npmrc) is npm's own; only a Claude Code scope was meant for setup.
+    .filter(([key]) => key !== 'scope' || ['user', 'local', 'project'].includes(env.npm_config_scope))
+    .map(([, option]) => option);
+  if (kept.length > 0) {
+    throw new SetupError(
+      `npm kept ${kept.join(', ')} for itself instead of passing ${kept.length > 1 ? 'them' : 'it'} to setup. ` +
+        'Put -- before the setup options: npm run setup -- <options>',
+    );
+  }
+}
+
+function parseOptions() {
+  try {
+    return parseArgs({
+      options: {
+        'client-id': { type: 'string' },
+        'client-secret': { type: 'string' },
+        scopes: { type: 'string' },
+        scope: { type: 'string', default: 'user' },
+        name: { type: 'string', default: 'linkedin' },
+        yes: { type: 'boolean', short: 'y', default: false },
+        'skip-build': { type: 'boolean', default: false },
+        'no-login': { type: 'boolean', default: false },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+    }).values;
+  } catch (error) {
+    // The first sentence names the problem; the rest is about positional arguments starting with "-".
+    throw new SetupError(`${error.message.split('. ')[0]}. Run "${SETUP} --help" to see the options.`);
+  }
+}
+
 async function main() {
-  const { values: options } = parseArgs({
-    options: {
-      'client-id': { type: 'string' },
-      'client-secret': { type: 'string' },
-      scopes: { type: 'string' },
-      scope: { type: 'string', default: 'user' },
-      name: { type: 'string', default: 'linkedin' },
-      yes: { type: 'boolean', short: 'y', default: false },
-      'skip-build': { type: 'boolean', default: false },
-      'no-login': { type: 'boolean', default: false },
-      help: { type: 'boolean', short: 'h', default: false },
-    },
-  });
+  checkOptionsReachedSetup(process.env);
+  const options = parseOptions();
   if (options.help) {
     console.log(HELP);
     return;
   }
   // Project scope would write the Client Secret into .mcp.json, which is meant to be committed.
   if (!['user', 'local'].includes(options.scope)) {
-    throw new SetupError(`--scope must be "user" or "local", not "${options.scope}".`);
+    const hint = options.scope === 'project' ? '' : ' LinkedIn permissions go in --scopes.';
+    throw new SetupError(`--scope must be "user" or "local", not "${options.scope}".${hint}`);
   }
   const major = Number(process.versions.node.split('.')[0]);
   if (major < 24) throw new SetupError(`Node.js 24 or later is required; you have ${process.versions.node}.`);
@@ -192,7 +232,9 @@ async function main() {
   step(`Registering "${options.name}" with Claude Code (${options.scope} scope)`);
   if (run('claude', ['mcp', 'get', options.name], { quiet: true }).status === 0) {
     const replace = options.yes || (interactive && (await confirm(`A server named "${options.name}" already exists. Replace it?`)));
-    if (!replace) throw new SetupError(`"${options.name}" already exists. Pass --yes to replace it, or --name to pick another name.`);
+    if (!replace) {
+      throw new SetupError(`"${options.name}" already exists. Run "${SETUP} --yes" to replace it, or pick another name with --name.`);
+    }
     // Remove it from both scopes, so Claude Code doesn't end up with two servers of the same name.
     for (const scope of ['user', 'local']) run('claude', ['mcp', 'remove', options.name, '--scope', scope], { quiet: true });
   }
@@ -209,8 +251,11 @@ async function main() {
   step('Signing in to LinkedIn');
   if (run(process.execPath, [ENTRY, 'status'], { env, quiet: true }).status === 0) {
     console.log('Already signed in.');
-  } else {
-    runOrFail(process.execPath, [ENTRY, 'login'], { env });
+  } else if (run(process.execPath, [ENTRY, 'login'], { env }).status !== 0) {
+    throw new SetupError(
+      `Signing in to LinkedIn failed (see above). "${options.name}" is registered with Claude Code: once the problem is fixed, ` +
+        `run "${SETUP} --yes" again, or ask Claude to "connect my LinkedIn account".`,
+    );
   }
   console.log('\nDone. Start `claude` and ask it to, for example, "show my LinkedIn profile".');
 }

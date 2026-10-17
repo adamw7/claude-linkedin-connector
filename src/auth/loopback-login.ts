@@ -61,6 +61,8 @@ export class LoopbackLogin {
   private active: LoopbackLoginHandle | undefined;
   /** A start still binding the listener, so concurrent calls share it instead of racing for the port. */
   private starting: Promise<LoopbackLoginHandle> | undefined;
+  /** Why the most recent sign-in failed, until another one starts; only the browser showed it otherwise. */
+  lastError: Error | undefined;
 
   constructor(private readonly options: LoopbackLoginOptions) {}
 
@@ -100,6 +102,7 @@ export class LoopbackLogin {
         server.closeIdleConnections();
       }
       if (this.active === flow) this.active = undefined;
+      this.lastError = error;
       if (error) rejectCompletion(error);
       else resolveCompletion(name);
     };
@@ -170,6 +173,7 @@ export class LoopbackLogin {
       expiresAt: Date.now() + timeoutMs,
     };
     this.active = flow;
+    this.lastError = undefined;
     return flow;
   }
 }

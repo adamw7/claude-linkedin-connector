@@ -40,10 +40,23 @@ describe('configuration', () => {
     expect(defaultFileDirs('/home', '/home/ada')).toEqual(usual);
   });
 
+  it('adds the Desktop and Pictures folders OneDrive moves on Windows', () => {
+    const home = 'C:\\Users\\ada';
+    const env = { OneDrive: 'C:\\Users\\ada\\OneDrive', OneDriveConsumer: 'C:\\Users\\ada\\OneDrive', OneDriveCommercial: 'C:\\Users\\ada\\OneDrive - Acme' };
+    expect(defaultFileDirs(home, home, env, 'win32')).toEqual([
+      ...['Downloads', 'Desktop', 'Pictures'].map((name) => join(home, name)),
+      join(env.OneDrive, 'Desktop'),
+      join(env.OneDrive, 'Pictures'),
+      join(env.OneDriveCommercial, 'Desktop'),
+      join(env.OneDriveCommercial, 'Pictures'),
+    ]);
+    expect(defaultFileDirs('/home/ada', '/home/ada', env, 'linux')).toEqual(['/home/ada/Downloads', '/home/ada/Desktop', '/home/ada/Pictures']);
+  });
+
   it('reads LINKEDIN_FILE_DIRS, expanding ~ and resolving relative folders', () => {
     const config = loadLocalConfig({ LINKEDIN_FILE_DIRS: '~/Posts, assets ,/data/media' }, '/work');
     expect(config.fileDirs).toEqual([join(homedir(), 'Posts'), '/work/assets', '/data/media']);
-    expect(loadLocalConfig({}, '/').fileDirs).toEqual(defaultFileDirs('/'));
+    expect(loadLocalConfig({}, '/').fileDirs).toEqual(defaultFileDirs('/', homedir(), {}));
   });
 
   it('validates remote settings', () => {

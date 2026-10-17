@@ -72,9 +72,14 @@ async function requestToken(app: LinkedInOAuthApp, params: Record<string, string
     // Handled below.
   }
   if (!response.ok || typeof json.access_token !== 'string') {
+    const error = typeof json.error === 'string' ? json.error : `http_${response.status}`;
+    const description = typeof json.error_description === 'string' ? json.error_description : text.slice(0, 300) || undefined;
     throw new LinkedInOAuthError(
-      typeof json.error === 'string' ? json.error : `http_${response.status}`,
-      typeof json.error_description === 'string' ? json.error_description : text.slice(0, 300) || undefined,
+      error,
+      // Usually a mistyped or regenerated Client Secret; LinkedIn's own description doesn't say which setting is wrong.
+      error === 'invalid_client'
+        ? `${(description ?? 'Client authentication failed').replace(/\.?$/, '.')} Check that the Client ID and Client Secret you configured are the ones on the Auth tab of your LinkedIn app.`
+        : description,
     );
   }
   const expiry = (seconds: unknown) => (typeof seconds === 'number' ? Date.now() + seconds * 1000 : undefined);

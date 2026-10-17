@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { LocalAuth } from './auth/local-auth.js';
 import { loadLocalConfig, loadRemoteConfig } from './config.js';
@@ -28,9 +29,23 @@ Commands:
 Configuration is read from environment variables; see the README:
   https://github.com/adamw7/claude-linkedin-connector#configuration`;
 
+/** The options each command takes besides --help, which shows the help instead of running it. Anything else is an error. */
+const COMMAND_OPTIONS: Record<string, ParseArgsOptionsConfig> = {
+  stdio: {},
+  http: {},
+  login: { 'no-browser': { type: 'boolean' } },
+  logout: {},
+  status: {},
+};
+
 /** stdout belongs to the MCP protocol in stdio mode, so diagnostics go to stderr. */
 function log(message: string): void {
   process.stderr.write(`[${NAME}] ${message}\n`);
+}
+
+function usageError(message: string): void {
+  log(`${message}\n\n${HELP}`);
+  process.exitCode = 2;
 }
 
 function openBrowser(url: string): void {
@@ -57,6 +72,9 @@ function localSetup() {
 
 function runStdio(): void {
   const { config, version, auth } = localSetup();
+  if (process.stdin.isTTY) {
+    log(`Waiting for MCP messages on stdin. Claude starts this server itself: press Ctrl+C to quit, or run "${NAME} help" for the other commands.`);
+  }
   serveStdio(
     () =>
       createConnectorServer({
@@ -109,14 +127,14 @@ function runHttp(): void {
   process.on('unhandledRejection', (error) => logger('error', 'unhandled_rejection', { error }));
 }
 
-async function runLogin(args: string[]): Promise<void> {
+async function runLogin(browser: boolean): Promise<void> {
   const { config, auth } = localSetup();
   if (config.accessToken) {
     log('Note: LINKEDIN_ACCESS_TOKEN is set and takes precedence over the token stored by this login.');
   }
   const name = await auth.loginAndWait((url) => {
     console.log(`Open this link to sign in to LinkedIn:\n\n  ${url}\n`);
-    if (!args.includes('--no-browser')) openBrowser(url);
+    if (browser) openBrowser(url);
     console.log(`Waiting for LinkedIn to redirect to ${config.redirectUri} ...`);
   });
   console.log(`Signed in to LinkedIn${name ? ` as ${name}` : ''}. Token saved to ${auth.store.path}`);
@@ -133,18 +151,33 @@ async function runStatus(): Promise<void> {
   const status = await auth.status();
   console.log(status.message);
   if (status.authenticated && status.scopes.length > 0) console.log(`Scopes: ${status.scopes.join(' ')}`);
-  if (!status.authenticated) process.exitCode = 1;
+  // Non-zero whenever signing in would help, so `npm run setup` signs in again after scopes were added.
+  if (!status.authenticated || status.missingScopes) process.exitCode = 1;
 }
 
 async function main(argv: string[]): Promise<void> {
   const [command = 'stdio', ...rest] = argv;
+  let values: Record<string, unknown> = {};
+  const options = COMMAND_OPTIONS[command];
+  if (options) {
+    try {
+      ({ values } = parseArgs({ args: rest, options: { ...options, help: { type: 'boolean', short: 'h' } } }));
+    } catch (error) {
+      // The first sentence names the problem; the rest is about positional arguments starting with "-".
+      return usageError(`${command}: ${(error as Error).message.split('. ')[0]}.`);
+    }
+    if (values.help) {
+      console.log(HELP);
+      return;
+    }
+  }
   switch (command) {
     case 'stdio':
       return runStdio();
     case 'http':
       return runHttp();
     case 'login':
-      return runLogin(rest);
+      return runLogin(!values['no-browser']);
     case 'logout':
       return runLogout();
     case 'status':
@@ -160,8 +193,7 @@ async function main(argv: string[]): Promise<void> {
       console.log(VERSION);
       return;
     default:
-      log(`Unknown command "${command}".\n\n${HELP}`);
-      process.exitCode = 2;
+      usageError(`Unknown command "${command}".`);
   }
 }
 
