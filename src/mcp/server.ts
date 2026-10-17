@@ -3,8 +3,9 @@ import { z } from 'zod';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
+import { countCompanies, foldText, MAX_CONNECTIONS_BYTES, parseConnections } from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
-import { loadMedia, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
+import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
 import { escapeLittleText } from '../linkedin/text.js';
 import { organizationUrn, parsePostReference, personUrn, postUrl } from '../linkedin/urn.js';
 import type { ApiVersion } from '../linkedin/versions.js';
@@ -49,7 +50,7 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 function instructions(mode: Mode, engagement: boolean): string {
   return [
-    "Tools for the user's own LinkedIn account: read their profile, publish posts (text, a link, images or a document), and edit or delete them" +
+    "Tools for the user's own LinkedIn account: read their profile and their exported list of connections, publish posts (text, a link, images or a document), and edit or delete them" +
       (engagement ? ', and comment on or react to posts.' : '.'),
     'Publishing is public and immediate. Show the user the exact text (and any media) and get their explicit approval before publishing, editing, commenting on or deleting anything.',
     'Write post text as plain text: LinkedIn does not render Markdown. Use line breaks for structure and a few #hashtags at most.',
@@ -195,6 +196,125 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           emailVerified: info.email_verified,
           pictureUrl: info.picture,
           locale: locale || undefined,
+        });
+      }),
+  );
+
+  // ---------------------------------------------------------------- connections
+
+  const connectionSchema = z.object({
+    name: z.string(),
+    firstName: z.string(),
+    lastName: z.string(),
+    profileUrl: z.string().optional(),
+    email: z.string().optional(),
+    company: z.string().optional(),
+    position: z.string().optional(),
+    connectedOn: z.string().optional(),
+  });
+  const isoDate = z.iso.date();
+
+  server.registerTool(
+    'linkedin_read_connections',
+    {
+      title: 'Read exported LinkedIn connections',
+      description:
+        "Reads the user's 1st-degree connections from the Connections.csv file in LinkedIn's data export (LinkedIn's API does not offer connections). " +
+        'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and to unzip it. ' +
+        'Pass the file, or its text as csv. Filter with query, company and connection dates; matching ignores case and accents. Results are newest first and paged with limit and offset. ' +
+          'Set companyCounts to also see how many matching connections work at each company, e.g. to find where the network is concentrated.',
+      inputSchema: z.object({
+        file: z.string().optional().describe(`Connections.csv as ${mediaSources}.`),
+        csv: z.string().optional().describe('The contents of Connections.csv, when the user pasted or attached the text.'),
+        query: z
+          .string()
+          .optional()
+          .describe('Text that must appear in the name, company, position, email or profile URL. Ignores case and accents.'),
+        company: z
+          .union([z.string(), z.array(z.string()).min(1)])
+          .optional()
+          .describe(
+            'Only connections whose company contains this text, or any of these texts (e.g. ["xyz", "abc"] for everyone at xyz or abc). Ignores case and accents.',
+          ),
+        connectedAfter: isoDate.optional().describe('Only connections made on or after this date (YYYY-MM-DD).'),
+        connectedBefore: isoDate.optional().describe('Only connections made on or before this date (YYYY-MM-DD).'),
+        limit: z.number().int().min(0).max(1000).default(100).describe('Maximum connections to return. 0 returns only the counts.'),
+        offset: z.number().int().min(0).default(0).describe('Number of matching connections to skip, for paging.'),
+        companyCounts: z
+          .number()
+          .int()
+          .min(1)
+          .max(1000)
+          .optional()
+          .describe('Also return the companies with the most matching connections, up to this many, with their counts.'),
+      }),
+      outputSchema: z.object({
+        total: z.number().describe('Connections in the file.'),
+        matched: z.number().describe('Connections matching the filters.'),
+        offset: z.number(),
+        connections: z.array(connectionSchema),
+        nextOffset: z.number().optional().describe('Pass as offset to get the next page, when there are more matches.'),
+        companies: z
+          .array(z.object({ company: z.string(), count: z.number() }))
+          .optional()
+          .describe('Matching connections per company, most first, when companyCounts is set.'),
+        companiesTotal: z.number().optional().describe('Distinct companies among the matching connections.'),
+        withoutCompany: z.number().optional().describe('Matching connections with no company listed.'),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (args) =>
+      run('linkedin_read_connections', async () => {
+        if ((args.file === undefined) === (args.csv === undefined)) {
+          throw new UserInputError('Pass either file or csv.');
+        }
+        const data =
+          args.file !== undefined
+            ? (
+                await readSource(args.file, MAX_CONNECTIONS_BYTES, 'file', {
+                  allowLocalFiles: mode === 'local',
+                  allowPrivateNetwork: options.allowPrivateNetwork,
+                })
+              ).data
+            : args.csv!;
+        const all = parseConnections(data);
+        const query = args.query === undefined ? '' : foldText(args.query);
+        const companies = [args.company ?? []].flat().map(foldText).filter(Boolean);
+        const dated = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);
+        const matches = all.filter((connection) => {
+          if (query) {
+            const fields = [connection.name, connection.company, connection.position, connection.email, connection.profileUrl];
+            if (!fields.some((field) => field && foldText(field).includes(query))) return false;
+          }
+          if (companies.length > 0) {
+            const company = foldText(connection.company ?? '');
+            if (!company || !companies.some((name) => company.includes(name))) return false;
+          }
+          if (args.connectedAfter || args.connectedBefore) {
+            const date = dated(connection.connectedOn);
+            if (!date) return false;
+            if (args.connectedAfter && date < args.connectedAfter) return false;
+            if (args.connectedBefore && date > args.connectedBefore) return false;
+          }
+          return true;
+        });
+        // Newest first; the export is usually in this order already, and undated rows go last.
+        const sorted = matches
+          .map((connection, index) => ({ connection, index, date: dated(connection.connectedOn) ?? '' }))
+          .sort((a, b) => b.date.localeCompare(a.date) || a.index - b.index)
+          .map(({ connection }) => connection);
+        const page = sorted.slice(args.offset, args.offset + args.limit);
+        const next = args.offset + page.length;
+        const counts = args.companyCounts === undefined ? undefined : countCompanies(matches);
+        return json({
+          total: all.length,
+          matched: matches.length,
+          offset: args.offset,
+          connections: page,
+          nextOffset: page.length > 0 && next < matches.length ? next : undefined,
+          companies: counts?.slice(0, args.companyCounts),
+          companiesTotal: counts?.length,
+          withoutCompany: counts && matches.filter((connection) => !connection.company).length,
         });
       }),
   );

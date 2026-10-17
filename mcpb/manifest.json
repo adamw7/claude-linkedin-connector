@@ -34,6 +34,7 @@
   },
   "tools": [
     { "name": "linkedin_get_profile", "description": "Read your basic LinkedIn profile." },
+    { "name": "linkedin_read_connections", "description": "Search your connections in LinkedIn's Connections.csv export." },
     { "name": "linkedin_create_post", "description": "Publish a post with optional link preview, images or document." },
     { "name": "linkedin_edit_post", "description": "Change the text of one of your posts." },
     { "name": "linkedin_delete_post", "description": "Delete one of your posts." },

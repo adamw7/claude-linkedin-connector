@@ -8,6 +8,7 @@ import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo 
 import { NotAuthenticatedError } from '../src/errors.js';
 import { ApiVersion } from '../src/linkedin/versions.js';
 import { createConnectorServer } from '../src/mcp/server.js';
+import { CONNECTIONS_CSV } from './helpers/connections.js';
 import { API_BASE, FakeLinkedIn } from './helpers/fake-linkedin.js';
 import { PDF, PNG, startServer, type TestServer } from './helpers/http.js';
 
@@ -83,12 +84,14 @@ let files: string;
 beforeAll(async () => {
   files = await mkdtemp(join(tmpdir(), 'linkedin-tools-'));
   await writeFile(join(files, 'photo.png'), PNG);
+  await writeFile(join(files, 'Connections.csv'), CONNECTIONS_CSV);
   web = await startServer((req, res) => {
     if (req.url === '/article') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end('<html><head><meta property="og:title" content="Engines &amp; Ideas"><meta property="og:description" content="A note."><meta property="og:image" content="/card.png"></head></html>');
     } else if (req.url === '/card.png') res.end(PNG);
     else if (req.url === '/talk.pdf') res.end(PDF);
+    else if (req.url === '/Connections.csv') res.end(CONNECTIONS_CSV);
     else res.writeHead(404).end();
   });
 });
@@ -100,6 +103,7 @@ describe('tool list', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
       'linkedin_get_profile',
+      'linkedin_read_connections',
       'linkedin_create_post',
       'linkedin_edit_post',
       'linkedin_delete_post',
@@ -145,6 +149,81 @@ describe('linkedin_get_profile', () => {
       locale: 'en_GB',
     });
     expect(h.auth.member).toEqual({ id: 'abc123', name: 'Ada Lovelace', email: 'ada@example.com' });
+  });
+});
+
+describe('linkedin_read_connections', () => {
+  it('reads a local file newest first, without signing in', async () => {
+    const h = await harness();
+    h.auth.signedIn = false;
+    const { isError, data } = await call(h, 'linkedin_read_connections', { file: join(files, 'Connections.csv') });
+    expect(isError).toBe(false);
+    expect(data).toMatchObject({ total: 3, matched: 3, offset: 0 });
+    expect(data!.connections.map((c: { name: string }) => c.name)).toEqual(['Ada Lovelace', 'Grace Hopper', 'Alan Turing']);
+    expect(data!.nextOffset).toBeUndefined();
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('filters by text, company and date, and pages', async () => {
+    const h = await harness();
+    const read = async (args: Record<string, unknown>) =>
+      (await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV, ...args })).data!;
+    const names = (data: Record<string, any>) => data.connections.map((c: { name: string }) => c.name);
+    expect(names(await read({ query: 'ADMIRAL' }))).toEqual(['Grace Hopper']);
+    expect(names(await read({ company: 'analytical' }))).toEqual(['Ada Lovelace', 'Alan Turing']);
+    expect(names(await read({ connectedAfter: '2024-01-01', connectedBefore: '2025-12-31' }))).toEqual(['Grace Hopper']);
+    const first = await read({ limit: 2 });
+    expect(first).toMatchObject({ matched: 3, nextOffset: 2 });
+    expect(names(await read({ limit: 2, offset: first.nextOffset }))).toEqual(['Alan Turing']);
+  });
+
+  it('matches companies and text regardless of accents, and any of several companies', async () => {
+    const h = await harness();
+    const csv = [
+      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+      'Zofia,Wójcik,,,Łódzka Spółka,Księgowa,01 Oct 2026',
+      'Jan,Kowalski,,,XYZ Sp. z o.o.,Engineer,02 Sep 2026',
+      'Anna,Nowak,,,abc Group,Designer,03 Aug 2026',
+      'Piotr,Zieliński,,,Other,Engineer,04 Jul 2026',
+    ].join('\n');
+    const names = async (args: Record<string, unknown>) =>
+      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    expect(await names({ company: 'lodzka spolka' })).toEqual(['Zofia Wójcik']);
+    expect(await names({ query: 'WOJCIK' })).toEqual(['Zofia Wójcik']);
+    expect(await names({ query: 'zielinski' })).toEqual(['Piotr Zieliński']);
+    expect(await names({ company: ['xyz', 'ABC'] })).toEqual(['Jan Kowalski', 'Anna Nowak']);
+    expect(await names({ company: ['xyz', 'abc'], query: 'engineer' })).toEqual(['Jan Kowalski']);
+  });
+
+  it('counts connections per company, optionally without listing them', async () => {
+    const h = await harness();
+    const { data } = await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV, limit: 0, companyCounts: 1 });
+    expect(data).toMatchObject({
+      total: 3,
+      matched: 3,
+      connections: [],
+      companies: [{ company: 'Analytical Engines', count: 2 }],
+      companiesTotal: 2,
+      withoutCompany: 0,
+    });
+    expect(data!.nextOffset).toBeUndefined();
+    const filtered = await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV, query: 'grace', companyCounts: 10 });
+    expect(filtered.data!.companies).toEqual([{ company: 'US Navy', count: 1 }]);
+    expect((await call(h, 'linkedin_read_connections', { csv: CONNECTIONS_CSV })).data!.companies).toBeUndefined();
+  });
+
+  it('reads URLs, and refuses local files in remote mode', async () => {
+    const remote = await harness({ mode: 'remote' });
+    expect((await call(remote, 'linkedin_read_connections', { file: `${web.url}/Connections.csv` })).data!.total).toBe(3);
+    const local = await call(remote, 'linkedin_read_connections', { file: join(files, 'Connections.csv') });
+    expect(local.isError).toBe(true);
+    expect(local.text).toMatch(/Local files cannot be read/);
+  });
+
+  it('needs exactly one of file and csv, and rejects other files', async () => {
+    const h = await harness();
+    expect((await call(h, 'linkedin_read_connections')).text).toMatch(/either file or csv/);
+    expect((await call(h, 'linkedin_read_connections', { file: join(files, 'photo.png') })).text).toMatch(/not a LinkedIn Connections\.csv/);
   });
 });
 
