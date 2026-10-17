@@ -4,6 +4,9 @@ An unofficial [Model Context Protocol](https://modelcontextprotocol.io) connecto
 your LinkedIn account: read your profile, publish posts (text, link previews, images, PDF/Office carousels),
 edit and delete them, and, with extra LinkedIn API access, comment, react and post as a LinkedIn Page.
 
+**New here?** The [usage guide](docs/usage.md) walks through installing, signing in and example requests,
+with screenshots.
+
 It runs two ways:
 
 | | **Local** (`stdio`) | **Remote** (`http`) |
