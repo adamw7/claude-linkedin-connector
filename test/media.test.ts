@@ -33,7 +33,7 @@ describe('loadMedia', () => {
     await writeFile(join(dir, 'pixel.png'), PNG);
     await writeFile(join(dir, 'notes.txt'), 'not an image');
     server = await startServer((req, res) => {
-      if (req.url === '/deck.pdf') res.end(PDF);
+      if (req.url === '/deck.pdf' || req.url === '/100%.pdf') res.end(PDF);
       else res.writeHead(404).end();
     });
   });
@@ -70,8 +70,19 @@ describe('loadMedia', () => {
     expect(media.mimeType).toBe('image/png');
   });
 
+  it('accepts data URIs whose media type has parameters', async () => {
+    const media = await loadMedia(`data:application/pdf;name=deck.pdf;base64,${PDF.toString('base64')}`, 'document', { allowLocalFiles: false });
+    expect(media.mimeType).toBe('application/pdf');
+    await expect(loadMedia('data:image/png;charset=utf-8,abc', 'image', { allowLocalFiles: false })).rejects.toThrow(/Only base64/);
+  });
+
   it('downloads URLs', async () => {
     const media = await loadMedia(`${server.url}/deck.pdf`, 'document', { allowLocalFiles: false, allowPrivateNetwork: true });
     expect(media).toMatchObject({ mimeType: 'application/pdf', filename: 'deck.pdf' });
+  });
+
+  it('keeps file names that are not valid percent-encoding', async () => {
+    const media = await loadMedia(`${server.url}/100%.pdf`, 'document', { allowLocalFiles: false, allowPrivateNetwork: true });
+    expect(media).toMatchObject({ mimeType: 'application/pdf', filename: '100%.pdf' });
   });
 });

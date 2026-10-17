@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Post URLs of the form `linkedin.com/posts/…-ugcPost-<id>-…` are recognized by the edit, delete,
+  comment and react tools.
+- Media and `Connections.csv` URLs whose file name has a `%` that isn't an escape (e.g. `100%.png`)
+  no longer fail with "URI malformed".
+- `data:` URIs whose media type carries parameters (e.g. `data:text/csv;charset=utf-8;base64,…`) are
+  accepted.
+- Two `linkedin_login` calls at once share one sign-in instead of the second failing with "port already
+  in use".
+
 ## [0.1.0] - 2026-10-17
 
 First release.

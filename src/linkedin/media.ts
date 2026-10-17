@@ -54,6 +54,15 @@ export function sniffDocument(data: Uint8Array): string | undefined {
   return undefined;
 }
 
+/** A `%` that doesn't start an escape (e.g. `100%.png`) is kept as is rather than failing the download. */
+function decodeFilename(name: string): string {
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
 function expandHome(path: string): string {
   return path === '~' || path.startsWith('~/') || path.startsWith('~\\') ? homedir() + path.slice(1) : path;
 }
@@ -67,7 +76,8 @@ export async function readSource(
 ): Promise<{ data: Buffer; filename?: string }> {
   const trimmed = source.trim();
 
-  const dataUri = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(trimmed);
+  // The media type may carry parameters (`data:text/csv;charset=utf-8;base64,…`); `;base64` comes last.
+  const dataUri = /^data:([^,]*?)(;base64)?,(.*)$/s.exec(trimmed);
   if (dataUri) {
     if (!dataUri[2]) throw new UserInputError('Only base64-encoded data: URIs are supported.');
     const data = Buffer.from(dataUri[3]!, 'base64');
@@ -78,7 +88,7 @@ export async function readSource(
   if (/^https?:\/\//i.test(trimmed)) {
     const result = await safeFetch(trimmed, { maxBytes, timeoutMs: 60_000, allowPrivateNetwork: options.allowPrivateNetwork });
     const name = basename(new URL(result.url).pathname);
-    return { data: result.data, filename: name ? decodeURIComponent(name) : undefined };
+    return { data: result.data, filename: name ? decodeFilename(name) : undefined };
   }
 
   if (!options.allowLocalFiles) {

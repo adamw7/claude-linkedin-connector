@@ -60,13 +60,21 @@ function respond(res: ServerResponse, status: number, title: string, body: strin
  */
 export class LoopbackLogin {
   private active: LoopbackLoginHandle | undefined;
+  /** A start still binding the listener, so concurrent calls share it instead of racing for the port. */
+  private starting: Promise<LoopbackLoginHandle> | undefined;
 
   constructor(private readonly options: LoopbackLoginOptions) {}
 
   /** Starts a sign-in, or returns the one already waiting for the browser. */
   async start(): Promise<LoopbackLoginHandle> {
     if (this.active && this.active.expiresAt > Date.now()) return this.active;
+    this.starting ??= this.begin().finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
+  }
 
+  private async begin(): Promise<LoopbackLoginHandle> {
     const redirect = validateLoopbackRedirect(this.options.redirectUri);
     const state = randomBytes(32).toString('base64url');
     const timeoutMs = this.options.timeoutMs ?? 10 * 60_000;

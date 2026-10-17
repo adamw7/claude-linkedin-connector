@@ -1,7 +1,7 @@
 import { UserInputError } from '../errors.js';
 
 const POST_URN = /urn:li:(share|ugcPost|activity):(\d+)/;
-const ACTIVITY_SLUG = /activity-(\d{10,})/;
+const POST_SLUG = /(activity|ugcPost|share)-(\d{10,})/;
 
 export function personUrn(memberId: string): string {
   return memberId.startsWith('urn:li:person:') ? memberId : `urn:li:person:${memberId}`;
@@ -18,7 +18,7 @@ export function organizationUrn(idOrUrn: string): string {
 /**
  * Extracts a post URN from a URN or any LinkedIn post URL, e.g.
  * `https://www.linkedin.com/feed/update/urn:li:share:123/` or
- * `https://www.linkedin.com/posts/jane_slug-activity-7123456789012345678-AbCd`.
+ * `https://www.linkedin.com/posts/jane_slug-activity-7123456789012345678-AbCd` (or `-ugcPost-…`).
  */
 export function parsePostReference(input: string): string {
   let text = input.trim();
@@ -29,8 +29,8 @@ export function parsePostReference(input: string): string {
   }
   const urn = POST_URN.exec(text);
   if (urn) return `urn:li:${urn[1]}:${urn[2]}`;
-  const slug = ACTIVITY_SLUG.exec(text);
-  if (slug) return `urn:li:activity:${slug[1]}`;
+  const slug = POST_SLUG.exec(text);
+  if (slug) return `urn:li:${slug[1]}:${slug[2]}`;
   throw new UserInputError(
     `Could not find a LinkedIn post in "${input}". Pass a post URN (urn:li:share:…, urn:li:ugcPost:… or urn:li:activity:…) or the post's URL.`,
   );
