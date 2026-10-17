@@ -1,0 +1,61 @@
+name: Mutation tests
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Restore incremental mutation results
+        uses: actions/cache@v4
+        with:
+          path: reports/stryker-incremental.json
+          key: stryker-incremental-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: stryker-incremental-${{ github.ref_name }}-
+      - run: npm run test:mutation -- --incremental
+      - name: Summarize mutation score
+        if: always()
+        run: |
+          [ -f reports/mutation/mutation.json ] || exit 0
+          node --input-type=module >> "$GITHUB_STEP_SUMMARY" <<'JS'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync('reports/mutation/mutation.json', 'utf8'));
+          const detected = new Set(['Killed', 'Timeout']);
+          const valid = new Set([...detected, 'Survived', 'NoCoverage']);
+          const rows = Object.entries(report.files).map(([file, { mutants }]) => {
+            const counted = mutants.filter((m) => valid.has(m.status));
+            const killed = counted.filter((m) => detected.has(m.status)).length;
+            return { file, killed, total: counted.length };
+          });
+          const pct = (k, t) => (t ? ((100 * k) / t).toFixed(1) : 'n/a');
+          const killed = rows.reduce((s, r) => s + r.killed, 0);
+          const total = rows.reduce((s, r) => s + r.total, 0);
+          console.log(`## Mutation score: ${pct(killed, total)}% (${killed}/${total})\n`);
+          console.log('| File | Score | Killed / valid |\n| --- | ---: | ---: |');
+          for (const r of rows.sort((a, b) => a.file.localeCompare(b.file))) {
+            console.log(`| ${r.file} | ${pct(r.killed, r.total)}% | ${r.killed} / ${r.total} |`);
+          }
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: ignore
