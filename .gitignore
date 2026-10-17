@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 mcpb/server/
+mcpb/LICENSE
 *.mcpb
 .env
 .env.*

@@ -9,6 +9,12 @@
     "linkedin",
     "connector"
   ],
+  "homepage": "https://github.com/adamw7/claude-linkedin-connector#readme",
+  "bugs": {
+    "url": "https://github.com/adamw7/claude-linkedin-connector/issues"
+  },
+  "license": "MIT",
+  "author": "Adam Witkowski (https://github.com/adamw7)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adamw7/claude-linkedin-connector.git"
@@ -19,7 +25,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=24"

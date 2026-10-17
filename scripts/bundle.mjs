@@ -1,4 +1,5 @@
 // Bundles the CLI and all dependencies into one file for the Claude Desktop extension (.mcpb).
+import { copyFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 
 await build({
@@ -11,3 +12,4 @@ await build({
   legalComments: 'inline',
   logLevel: 'info',
 });
+await copyFile('LICENSE', 'mcpb/LICENSE');

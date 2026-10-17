@@ -10,6 +10,7 @@
     "name": "Adam Witkowski",
     "url": "https://github.com/adamw7"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/adamw7/claude-linkedin-connector"
