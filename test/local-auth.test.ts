@@ -1,0 +1,143 @@
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { LocalAuth } from '../src/auth/local-auth.js';
+import { defaultTokenFile, TokenStore, type StoredToken } from '../src/auth/token-store.js';
+import { loadLocalConfig, type LocalConfig } from '../src/config.js';
+import { ConfigError, NotAuthenticatedError } from '../src/errors.js';
+import { ApiVersion } from '../src/linkedin/versions.js';
+import { API_BASE, FakeLinkedIn, OAUTH_BASE } from './helpers/fake-linkedin.js';
+import { freePort } from './helpers/http.js';
+
+const DAY = 24 * 60 * 60 * 1000;
+
+function token(overrides: Partial<StoredToken> = {}): StoredToken {
+  return { version: 1, accessToken: 'li-token', scopes: ['openid', 'w_member_social'], obtainedAt: Date.now(), expiresAt: Date.now() + 30 * DAY, ...overrides };
+}
+
+describe('TokenStore', () => {
+  it('round-trips tokens in a user-only file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'linkedin-store-'));
+    const store = new TokenStore(join(dir, 'nested', 'token.json'));
+    expect(await store.read()).toBeUndefined();
+    await store.write(token());
+    expect(await store.read()).toMatchObject({ accessToken: 'li-token' });
+    if (process.platform !== 'win32') expect((await stat(store.path)).mode & 0o777).toBe(0o600);
+    expect(await store.clear()).toBe(true);
+    expect(await store.clear()).toBe(false);
+  });
+
+  it('ignores corrupt files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'linkedin-store-'));
+    const store = new TokenStore(join(dir, 'token.json'));
+    await writeFile(store.path, '{not json');
+    expect(await store.read()).toBeUndefined();
+  });
+
+  it('defaults to the per-user config directory', () => {
+    expect(defaultTokenFile({ XDG_CONFIG_HOME: '/cfg' }, 'linux')).toBe('/cfg/claude-linkedin-connector/token.json');
+    expect(defaultTokenFile({ APPDATA: 'C:\\Users\\ada\\AppData\\Roaming' }, 'win32')).toContain('claude-linkedin-connector');
+  });
+});
+
+describe('LocalAuth', () => {
+  let linkedin: FakeLinkedIn;
+  let config: LocalConfig;
+
+  beforeEach(async () => {
+    linkedin = new FakeLinkedIn();
+    const dir = await mkdtemp(join(tmpdir(), 'linkedin-auth-'));
+    config = {
+      ...loadLocalConfig({}),
+      clientId: 'test-client',
+      clientSecret: 'test-secret',
+      apiBaseUrl: API_BASE,
+      oauthBaseUrl: OAUTH_BASE,
+      tokenFile: join(dir, 'token.json'),
+    };
+  });
+
+  const auth = (overrides: Partial<LocalConfig> = {}) =>
+    new LocalAuth({ config: { ...config, ...overrides }, version: new ApiVersion('202609'), fetch: linkedin.fetch });
+
+  it('explains how to sign in when there is no token', async () => {
+    await expect(auth().getSession()).rejects.toThrow(NotAuthenticatedError);
+    await expect(auth().getSession()).rejects.toThrow(/linkedin_login/);
+    expect(await auth().status()).toMatchObject({ authenticated: false, source: 'none' });
+  });
+
+  it('uses LINKEDIN_ACCESS_TOKEN when set', async () => {
+    const local = auth({ accessToken: 'env-token' });
+    expect(await local.getSession()).toMatchObject({ accessToken: 'env-token' });
+    await local.rememberMember({ id: 'abc123', name: 'Ada' });
+    expect(await local.getSession()).toMatchObject({ memberId: 'abc123', name: 'Ada' });
+    expect(await local.status()).toMatchObject({ authenticated: true, source: 'environment', memberUrn: 'urn:li:person:abc123' });
+  });
+
+  it('uses the stored token and remembers the member in it', async () => {
+    const local = auth();
+    await local.store.write(token());
+    expect(await local.getSession()).toMatchObject({ accessToken: 'li-token' });
+    await local.rememberMember({ id: 'abc123', name: 'Ada Lovelace' });
+    const status = await local.status();
+    expect(status).toMatchObject({ authenticated: true, source: 'token-file', name: 'Ada Lovelace' });
+    expect(status.message).toContain('Signed in as Ada Lovelace');
+  });
+
+  it('rejects expired tokens without a refresh token', async () => {
+    const local = auth();
+    await local.store.write(token({ expiresAt: Date.now() - DAY }));
+    await expect(local.getSession()).rejects.toThrow(/expired/);
+  });
+
+  it('refreshes expired tokens when LinkedIn issued a refresh token', async () => {
+    const local = auth();
+    await local.store.write(token({ expiresAt: Date.now() - DAY, refreshToken: 'li-refresh', refreshTokenExpiresAt: Date.now() + 300 * DAY, member: { id: 'abc123' } }));
+    expect(await local.getSession()).toMatchObject({ accessToken: 'li-token-refreshed', memberId: 'abc123' });
+    const saved = JSON.parse(await readFile(config.tokenFile, 'utf8')) as StoredToken;
+    expect(saved).toMatchObject({ accessToken: 'li-token-refreshed', refreshToken: 'li-refresh-2' });
+  });
+
+  it('requires app credentials to sign in', async () => {
+    await expect(auth({ clientId: undefined }).login()).rejects.toThrow(ConfigError);
+  });
+
+  it('only accepts loopback redirect URIs with a fixed port', async () => {
+    for (const redirectUri of ['https://example.com/callback', 'http://localhost/callback', 'http://127.0.0.1:0/callback']) {
+      await expect(auth({ redirectUri }).login()).rejects.toThrow(ConfigError);
+    }
+  });
+
+  it('signs in through the browser redirect and stores the token', async () => {
+    const port = await freePort();
+    const signIn = auth({ redirectUri: `http://127.0.0.1:${port}/callback` });
+
+    let authorizationUrl = '';
+    const done = signIn.loginAndWait((url) => {
+      authorizationUrl = url;
+    });
+    await expect.poll(() => authorizationUrl).not.toBe('');
+    const state = new URL(authorizationUrl).searchParams.get('state')!;
+
+    const stale = await fetch(`http://127.0.0.1:${port}/callback?code=li-code&state=wrong`);
+    expect(stale.status).toBe(400);
+    const ok = await fetch(`http://127.0.0.1:${port}/callback?code=li-code&state=${state}`);
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toContain('Connected to LinkedIn as <strong>Ada Lovelace</strong>');
+    expect(await done).toBe('Ada Lovelace');
+    expect(await signIn.store.read()).toMatchObject({ accessToken: 'li-token', member: { id: 'abc123', email: 'ada@example.com' } });
+  });
+
+  it('reports a cancelled sign-in', async () => {
+    const port = await freePort();
+    const signIn = auth({ redirectUri: `http://localhost:${port}/callback` });
+    const start = await signIn.login();
+    const state = new URL(start.authorizationUrl).searchParams.get('state')!;
+    expect(start.expiresInSeconds).toBeGreaterThan(500);
+    const cancelled = expect(signIn.loginAndWait(() => {})).rejects.toThrow(/not completed: The user cancelled/);
+    const response = await fetch(`http://127.0.0.1:${port}/callback?error=user_cancelled_authorize&error_description=The+user+cancelled&state=${state}`);
+    expect(response.status).toBe(400);
+    await cancelled;
+  });
+});

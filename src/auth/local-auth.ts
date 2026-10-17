@@ -1,0 +1,209 @@
+import type { LocalConfig } from '../config.js';
+import { ConfigError, NotAuthenticatedError } from '../errors.js';
+import { LinkedInClient } from '../linkedin/client.js';
+import { refreshAccessToken, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
+import { personUrn } from '../linkedin/urn.js';
+import type { ApiVersion } from '../linkedin/versions.js';
+import { LoopbackLogin } from './loopback-login.js';
+import { TokenStore, type StoredToken } from './token-store.js';
+import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from './types.js';
+
+/** Treat tokens this close to expiry as expired. */
+const EXPIRY_MARGIN_MS = 60_000;
+
+export const SIGN_IN_HINT =
+  'Ask Claude to run the linkedin_login tool to get a sign-in link, or run "claude-linkedin-connector login" in a terminal.';
+
+export interface LocalAuthOptions {
+  config: LocalConfig;
+  version: ApiVersion;
+  store?: TokenStore;
+  fetch?: typeof globalThis.fetch;
+  now?: () => number;
+}
+
+/** Tokens for stdio mode: LINKEDIN_ACCESS_TOKEN, or the file written by the browser sign-in. */
+export class LocalAuth implements LinkedInAuth {
+  readonly store: TokenStore;
+  private readonly now: () => number;
+  private envMember: MemberInfo | undefined;
+  private loopback: LoopbackLogin | undefined;
+
+  constructor(private readonly options: LocalAuthOptions) {
+    this.store = options.store ?? new TokenStore(options.config.tokenFile);
+    this.now = options.now ?? Date.now;
+  }
+
+  private get config(): LocalConfig {
+    return this.options.config;
+  }
+
+  private oauthApp(): LinkedInOAuthApp {
+    const { clientId, clientSecret, scopes, oauthBaseUrl } = this.config;
+    if (!clientId || !clientSecret) {
+      throw new ConfigError(
+        'LinkedIn sign-in needs your LinkedIn app credentials: set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET (see the README), or provide LINKEDIN_ACCESS_TOKEN directly.',
+      );
+    }
+    return { clientId, clientSecret, scopes, oauthBaseUrl, ...(this.options.fetch ? { fetch: this.options.fetch } : {}) };
+  }
+
+  private isExpired(expiresAt: number | undefined): boolean {
+    return expiresAt !== undefined && expiresAt - EXPIRY_MARGIN_MS <= this.now();
+  }
+
+  async getSession(): Promise<LinkedInSession> {
+    if (this.config.accessToken) {
+      return { accessToken: this.config.accessToken, scopes: this.config.scopes, ...memberFields(this.envMember) };
+    }
+    let token = await this.store.read();
+    if (!token) throw new NotAuthenticatedError(`You are not signed in to LinkedIn. ${SIGN_IN_HINT}`);
+    if (this.isExpired(token.expiresAt)) {
+      token = await this.tryRefresh(token);
+      if (!token) throw new NotAuthenticatedError(`Your LinkedIn sign-in has expired. ${SIGN_IN_HINT}`);
+    }
+    return {
+      accessToken: token.accessToken,
+      scopes: token.scopes,
+      ...(token.expiresAt !== undefined ? { expiresAt: token.expiresAt } : {}),
+      ...memberFields(token.member),
+    };
+  }
+
+  private async tryRefresh(token: StoredToken): Promise<StoredToken | undefined> {
+    if (!token.refreshToken || this.isExpired(token.refreshTokenExpiresAt)) return undefined;
+    if (!this.config.clientId || !this.config.clientSecret) return undefined;
+    try {
+      const refreshed = await refreshAccessToken(this.oauthApp(), token.refreshToken);
+      const next = toStoredToken(refreshed, this.now(), token.member, token.refreshToken, token.refreshTokenExpiresAt);
+      await this.store.write(next);
+      return next;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async rememberMember(member: MemberInfo): Promise<void> {
+    if (this.config.accessToken) {
+      this.envMember = member;
+      return;
+    }
+    const token = await this.store.read();
+    if (token && token.member?.id !== member.id) await this.store.write({ ...token, member });
+  }
+
+  async status(): Promise<AuthStatus> {
+    if (this.config.accessToken) {
+      return {
+        authenticated: true,
+        source: 'environment',
+        scopes: this.config.scopes,
+        ...statusMember(this.envMember),
+        message: 'Using the access token from LINKEDIN_ACCESS_TOKEN.',
+      };
+    }
+    let session: LinkedInSession;
+    try {
+      session = await this.getSession();
+    } catch (error) {
+      if (!(error instanceof NotAuthenticatedError)) throw error;
+      return { authenticated: false, source: 'none', scopes: [], message: error.message };
+    }
+    const expires = session.expiresAt === undefined ? '' : ` until ${new Date(session.expiresAt).toISOString().slice(0, 10)}`;
+    return {
+      authenticated: true,
+      source: 'token-file',
+      scopes: session.scopes,
+      ...(session.expiresAt !== undefined ? { expiresAt: new Date(session.expiresAt).toISOString() } : {}),
+      ...statusMember(session.memberId ? { id: session.memberId, name: session.name, email: session.email } : undefined),
+      message: `Signed in${session.name ? ` as ${session.name}` : ''}${expires} (token stored in ${this.store.path}).`,
+    };
+  }
+
+  async login(): Promise<LoginStart> {
+    const flow = await this.startLoopback();
+    return {
+      authorizationUrl: flow.authorizationUrl,
+      expiresInSeconds: Math.max(0, Math.round((flow.expiresAt - this.now()) / 1000)),
+    };
+  }
+
+  /** Starts the sign-in and resolves with the member's name once the browser flow completes (CLI use). */
+  async loginAndWait(onUrl: (url: string) => void): Promise<string | undefined> {
+    const flow = await this.startLoopback();
+    onUrl(flow.authorizationUrl);
+    return flow.completion;
+  }
+
+  private startLoopback() {
+    const app = this.oauthApp();
+    this.loopback ??= new LoopbackLogin({
+      app,
+      redirectUri: this.config.redirectUri,
+      onTokens: (tokens) => this.saveTokens(tokens),
+    });
+    return this.loopback.start();
+  }
+
+  async logout(): Promise<boolean> {
+    this.envMember = undefined;
+    return this.store.clear();
+  }
+
+  private async saveTokens(tokens: LinkedInTokens): Promise<string | undefined> {
+    let member: MemberInfo | undefined;
+    try {
+      const client = new LinkedInClient({
+        accessToken: tokens.accessToken,
+        version: this.options.version,
+        apiBaseUrl: this.config.apiBaseUrl,
+        ...(this.options.fetch ? { fetch: this.options.fetch } : {}),
+      });
+      const info = await client.getUserInfo();
+      member = { id: info.sub, ...(info.name ? { name: info.name } : {}), ...(info.email ? { email: info.email } : {}) };
+    } catch {
+      // Without the openid/profile scopes there is no userinfo; posting will report the problem.
+    }
+    await this.store.write(toStoredToken(tokens, this.now(), member));
+    return member?.name;
+  }
+}
+
+function toStoredToken(
+  tokens: LinkedInTokens,
+  now: number,
+  member?: MemberInfo,
+  previousRefreshToken?: string,
+  previousRefreshExpiry?: number,
+): StoredToken {
+  const refreshToken = tokens.refreshToken ?? previousRefreshToken;
+  const refreshTokenExpiresAt = tokens.refreshTokenExpiresAt ?? (tokens.refreshToken ? undefined : previousRefreshExpiry);
+  return {
+    version: 1,
+    accessToken: tokens.accessToken,
+    scopes: tokens.scopes,
+    obtainedAt: now,
+    ...(tokens.expiresAt !== undefined ? { expiresAt: tokens.expiresAt } : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+    ...(refreshTokenExpiresAt !== undefined ? { refreshTokenExpiresAt } : {}),
+    ...(member ? { member } : {}),
+  };
+}
+
+function memberFields(member: MemberInfo | undefined): Partial<LinkedInSession> {
+  if (!member) return {};
+  return {
+    memberId: member.id,
+    ...(member.name ? { name: member.name } : {}),
+    ...(member.email ? { email: member.email } : {}),
+  };
+}
+
+function statusMember(member: { id: string; name?: string | undefined; email?: string | undefined } | undefined): Partial<AuthStatus> {
+  if (!member) return {};
+  return {
+    memberUrn: personUrn(member.id),
+    ...(member.name ? { name: member.name } : {}),
+    ...(member.email ? { email: member.email } : {}),
+  };
+}
