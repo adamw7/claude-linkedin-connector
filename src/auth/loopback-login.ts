@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { ConfigError } from '../errors.js';
 import { escapeHtml, page } from '../html.js';
 import { buildAuthorizationUrl, exchangeAuthorizationCode, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
+import { isLoopbackHostname } from '../net/loopback.js';
 
 export interface LoopbackLoginOptions {
   app: LinkedInOAuthApp;
@@ -20,8 +21,6 @@ export interface LoopbackLoginHandle {
   expiresAt: number;
 }
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-
 export function validateLoopbackRedirect(redirectUri: string): URL {
   let url: URL;
   try {
@@ -29,7 +28,7 @@ export function validateLoopbackRedirect(redirectUri: string): URL {
   } catch {
     throw new ConfigError(`LINKEDIN_REDIRECT_URI "${redirectUri}" is not a valid URL.`);
   }
-  if (url.protocol !== 'http:' || !LOOPBACK_HOSTS.has(url.hostname) || !url.port || url.port === '0') {
+  if (url.protocol !== 'http:' || !isLoopbackHostname(url.hostname) || !url.port || url.port === '0') {
     throw new ConfigError(`LINKEDIN_REDIRECT_URI must look like http://localhost:<port>/<path> (got "${redirectUri}").`);
   }
   return url;

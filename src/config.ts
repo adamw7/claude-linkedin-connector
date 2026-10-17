@@ -4,6 +4,7 @@ import { ConfigError } from './errors.js';
 import { LINKEDIN_API_BASE } from './linkedin/client.js';
 import { LINKEDIN_OAUTH_BASE, parseScopes } from './linkedin/oauth.js';
 import { isValidApiVersion } from './linkedin/versions.js';
+import { isLoopbackHostname } from './net/loopback.js';
 
 /** Scopes granted by the self-serve "Sign In with LinkedIn using OpenID Connect" and "Share on LinkedIn" products. */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
@@ -120,7 +121,7 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash) {
     throw new ConfigError('PUBLIC_URL must be an origin without a path, e.g. https://linkedin-mcp.example.com');
   }
-  const loopback = publicUrl.hostname === 'localhost' || publicUrl.hostname === '127.0.0.1';
+  const loopback = isLoopbackHostname(publicUrl.hostname);
   if (publicUrl.protocol !== 'https:' && !(publicUrl.protocol === 'http:' && loopback)) {
     throw new ConfigError('PUBLIC_URL must use https (plain http is only allowed for localhost testing).');
   }

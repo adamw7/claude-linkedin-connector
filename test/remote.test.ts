@@ -212,6 +212,21 @@ async function obtainCode(remote: Remote, extra: Record<string, string> = {}) {
   return { clientId: client.client_id as string, verifier, code: landing.searchParams.get('code')!, landing };
 }
 
+/** Runs the whole flow and returns an access token for /mcp. */
+async function accessToken(remote: Remote): Promise<string> {
+  const { clientId, verifier, code } = await obtainCode(remote);
+  const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+  return body.access_token as string;
+}
+
+function ping(remote: Remote, bearer: string): Promise<Response> {
+  return fetch(remote.mcpUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+  });
+}
+
 class TestOAuthProvider implements OAuthClientProvider {
   clientInfo: StoredOAuthClientInformation | undefined;
   saved: StoredOAuthTokens | undefined;
@@ -403,11 +418,9 @@ describe('remote connector discovery', () => {
     // Bodies are only read once the caller has authenticated.
     expect((await post('/mcp', huge)).status).toBe(401);
 
-    const { clientId, verifier, code } = await obtainCode(remote);
-    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
     const tooLarge = await fetch(remote.mcpUrl, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${await accessToken(remote)}`, 'Content-Type': 'application/json' },
       body: huge,
     });
     expect(tooLarge.status).toBe(413);
@@ -578,17 +591,10 @@ describe('authorization endpoint', () => {
   it('cuts off issued tokens when a member is removed from the allowlist', async () => {
     const allowedMembers = ['abc123'];
     const remote = await startRemote({ allowedMembers });
-    const { clientId, verifier, code } = await obtainCode(remote);
-    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
-    const ping = () =>
-      fetch(remote.mcpUrl, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
-      });
-    expect((await ping()).status).toBe(200);
+    const bearer = await accessToken(remote);
+    expect((await ping(remote, bearer)).status).toBe(200);
     allowedMembers.splice(0, 1, 'someone-else');
-    expect((await ping()).status).toBe(401);
+    expect((await ping(remote, bearer)).status).toBe(401);
   });
 });
 
@@ -613,16 +619,9 @@ describe('rate limiting', () => {
 
   it('limits MCP requests per connected account', async () => {
     const remote = await startRemote({ mcpRateLimit: 1 });
-    const { clientId, verifier, code } = await obtainCode(remote);
-    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
-    const ping = () =>
-      fetch(remote.mcpUrl, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
-      });
-    expect((await ping()).status).not.toBe(429);
-    const limited = await ping();
+    const bearer = await accessToken(remote);
+    expect((await ping(remote, bearer)).status).not.toBe(429);
+    const limited = await ping(remote, bearer);
     expect(limited.status).toBe(429);
     expect(await limited.json()).toMatchObject({ jsonrpc: '2.0', error: { code: -32600 } });
     // Unauthenticated requests are challenged, not counted against anyone.
