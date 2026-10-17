@@ -37,6 +37,10 @@ function parseUrl(value: string): URL | undefined {
   }
 }
 
+function clientName(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 100) : undefined;
+}
+
 export function isLoopbackUrl(url: URL): boolean {
   return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname);
 }
@@ -141,14 +145,8 @@ export class ClientRegistry {
     if (m.response_types !== undefined && !(Array.isArray(m.response_types) && m.response_types.includes('code'))) {
       return fail('invalid_client_metadata', 'Only the "code" response type is supported.');
     }
-    const name = typeof m.client_name === 'string' && m.client_name.trim() ? m.client_name.trim().slice(0, 100) : undefined;
-    const payload: RegisteredClientPayload = {
-      v: 1,
-      r: redirectUris,
-      m: method as ClientAuthMethod,
-      ...(name ? { n: name } : {}),
-    };
-    const clientId = this.sealer.sign('client', payload);
+    const name = clientName(m.client_name);
+    const clientId = this.sealer.sign('client', { v: 1, r: redirectUris, m: method as ClientAuthMethod, n: name } satisfies RegisteredClientPayload);
     return {
       status: 201,
       body: {
@@ -171,7 +169,7 @@ export class ClientRegistry {
     // Re-apply the policy so tightening it also cuts off existing registrations.
     const redirectUris = payload.r.filter((uri) => this.policy.allows(uri));
     if (redirectUris.length === 0) return undefined;
-    return { clientId, redirectUris, authMethod: payload.m, kind: 'registered', ...(payload.n ? { clientName: payload.n } : {}) };
+    return { clientId, redirectUris, authMethod: payload.m, kind: 'registered', clientName: payload.n };
   }
 
   /**
@@ -210,7 +208,7 @@ export class ClientRegistry {
           timeoutMs: 5_000,
           maxRedirects: 0,
           accept: 'application/json',
-          ...(this.options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
+          allowPrivateNetwork: this.options.allowPrivateNetwork,
         });
         return response.data.toString('utf8');
       });
@@ -226,7 +224,6 @@ export class ClientRegistry {
       (uri): uri is string => typeof uri === 'string' && this.policy.allows(uri),
     );
     if (redirectUris.length === 0) return undefined;
-    const name = typeof document.client_name === 'string' && document.client_name.trim() ? document.client_name.trim().slice(0, 100) : undefined;
-    return { clientId, redirectUris, authMethod: 'none', kind: 'metadata-document', ...(name ? { clientName: name } : {}) };
+    return { clientId, redirectUris, authMethod: 'none', kind: 'metadata-document', clientName: clientName(document.client_name) };
   }
 }

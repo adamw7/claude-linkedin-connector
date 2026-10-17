@@ -79,20 +79,15 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
 
   const connect = async (): Promise<{ client: LinkedInClient; session: LinkedInSession }> => {
     const session = await auth.getSession();
-    const client = new LinkedInClient({
-      accessToken: session.accessToken,
-      version: options.version,
-      ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
-      ...(options.fetch ? { fetch: options.fetch } : {}),
-    });
-    return { client, session };
+    const { version, apiBaseUrl, fetch } = options;
+    return { client: new LinkedInClient({ accessToken: session.accessToken, version, apiBaseUrl, fetch }), session };
   };
 
   const memberUrn = async (client: LinkedInClient, session: LinkedInSession): Promise<string> => {
     if (session.memberId) return personUrn(session.memberId);
     try {
       const info = await client.getUserInfo();
-      await auth.rememberMember({ id: info.sub, ...(info.name ? { name: info.name } : {}), ...(info.email ? { email: info.email } : {}) });
+      await auth.rememberMember({ id: info.sub, name: info.name, email: info.email });
       return personUrn(info.sub);
     } catch (error) {
       if (error instanceof LinkedInApiError && error.status === 403) {
@@ -108,10 +103,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     organization ? organizationUrn(organization) : memberUrn(client, session);
 
   const load = (source: string, kind: MediaKind): Promise<LoadedMedia> =>
-    loadMedia(source, kind, {
-      allowLocalFiles: mode === 'local',
-      ...(options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
-    });
+    loadMedia(source, kind, { allowLocalFiles: mode === 'local', allowPrivateNetwork: options.allowPrivateNetwork });
 
   const upload = async (client: LinkedInClient, kind: AssetKind, owner: string, media: LoadedMedia): Promise<string> => {
     const { uploadUrl, urn } = await client.initializeUpload(kind, owner);
@@ -174,17 +166,17 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       run(async () => {
         const { client } = await connect();
         const info = await client.getUserInfo();
-        await auth.rememberMember({ id: info.sub, ...(info.name ? { name: info.name } : {}), ...(info.email ? { email: info.email } : {}) });
+        await auth.rememberMember({ id: info.sub, name: info.name, email: info.email });
         const locale = typeof info.locale === 'string' ? info.locale : [info.locale?.language, info.locale?.country].filter(Boolean).join('_');
         return json({
           memberUrn: personUrn(info.sub),
-          ...(info.name ? { name: info.name } : {}),
-          ...(info.given_name ? { givenName: info.given_name } : {}),
-          ...(info.family_name ? { familyName: info.family_name } : {}),
-          ...(info.email ? { email: info.email } : {}),
-          ...(info.email_verified !== undefined ? { emailVerified: info.email_verified } : {}),
-          ...(info.picture ? { pictureUrl: info.picture } : {}),
-          ...(locale ? { locale } : {}),
+          name: info.name,
+          givenName: info.given_name,
+          familyName: info.family_name,
+          email: info.email,
+          emailVerified: info.email_verified,
+          pictureUrl: info.picture,
+          locale: locale || undefined,
         });
       }),
   );
@@ -270,10 +262,10 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         let attachment: 'none' | 'article' | 'image' | 'images' | 'document' = 'none';
         if (args.article) {
           const { url, title, description, thumbnail } = args.article;
-          let preview: LinkPreview = {};
-          if (!title || !description || !thumbnail) {
-            preview = await fetchLinkPreview(url, options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}).catch(() => ({}));
-          }
+          const preview: LinkPreview =
+            title && description && thumbnail
+              ? {}
+              : await fetchLinkPreview(url, { allowPrivateNetwork: options.allowPrivateNetwork }).catch(() => ({}));
           let thumbnailUrn: string | undefined;
           if (thumbnail) {
             thumbnailUrn = await upload(client, 'images', author, await load(thumbnail, 'image'));
@@ -283,24 +275,20 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
               .then((media) => upload(client, 'images', author, media))
               .catch(() => undefined);
           }
-          const articleTitle = title ?? preview.title ?? new URL(url).hostname;
-          const articleDescription = description ?? preview.description;
           content = {
             article: {
               source: url,
-              title: articleTitle,
-              ...(articleDescription ? { description: articleDescription } : {}),
-              ...(thumbnailUrn ? { thumbnail: thumbnailUrn } : {}),
+              title: title ?? preview.title ?? new URL(url).hostname,
+              description: description ?? preview.description,
+              thumbnail: thumbnailUrn,
             },
           };
           attachment = 'article';
         } else if (images && args.images) {
-          const ids: string[] = [];
-          for (const media of images) ids.push(await upload(client, 'images', author, media));
-          const entries = ids.map((id, index) => {
-            const altText = args.images![index]!.altText;
-            return { id, ...(altText ? { altText } : {}) };
-          });
+          const entries: Array<{ id: string; altText?: string }> = [];
+          for (const [index, media] of images.entries()) {
+            entries.push({ id: await upload(client, 'images', author, media), altText: args.images[index]!.altText || undefined });
+          }
           content = entries.length === 1 ? { media: entries[0]! } : { multiImage: { images: entries } };
           attachment = entries.length === 1 ? 'image' : 'images';
         } else if (document && args.document) {
@@ -309,12 +297,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           attachment = 'document';
         }
 
-        const postUrn = await client.createPost({
-          author,
-          commentary: escapeLittleText(args.text),
-          visibility: args.visibility,
-          ...(content ? { content } : {}),
-        });
+        const postUrn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
         return json({ postUrn, url: postUrl(postUrn), author, visibility: args.visibility, attachment });
       }),
   );
@@ -407,7 +390,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           const { client, session } = await connect();
           const actor = await actorUrn(client, session, args.organization);
           const commentId = await client.createComment(target, actor, escapeLittleText(args.text));
-          return json({ postUrn: target, actor, ...(commentId ? { commentId } : {}) });
+          return json({ postUrn: target, actor, commentId });
         }),
     );
 

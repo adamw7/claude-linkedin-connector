@@ -77,16 +77,13 @@ async function requestToken(app: LinkedInOAuthApp, params: Record<string, string
       typeof json.error_description === 'string' ? json.error_description : text.slice(0, 300) || undefined,
     );
   }
-  const now = Date.now();
-  const tokens: LinkedInTokens = {
+  const expiry = (seconds: unknown) => (typeof seconds === 'number' ? Date.now() + seconds * 1000 : undefined);
+  const scopes = parseScopes(typeof json.scope === 'string' ? json.scope : undefined);
+  return {
     accessToken: json.access_token,
-    scopes: parseScopes(typeof json.scope === 'string' ? json.scope : undefined),
+    scopes: scopes.length > 0 ? scopes : [...app.scopes],
+    expiresAt: expiry(json.expires_in),
+    refreshToken: typeof json.refresh_token === 'string' ? json.refresh_token : undefined,
+    refreshTokenExpiresAt: expiry(json.refresh_token_expires_in),
   };
-  if (typeof json.expires_in === 'number') tokens.expiresAt = now + json.expires_in * 1000;
-  if (typeof json.refresh_token === 'string') tokens.refreshToken = json.refresh_token;
-  if (typeof json.refresh_token_expires_in === 'number') {
-    tokens.refreshTokenExpiresAt = now + json.refresh_token_expires_in * 1000;
-  }
-  if (tokens.scopes.length === 0) tokens.scopes = [...app.scopes];
-  return tokens;
 }

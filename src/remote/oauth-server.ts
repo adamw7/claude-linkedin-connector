@@ -161,13 +161,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   const callbackUrl = new URL('/oauth/callback', config.publicUrl).href;
   const secureCookies = config.publicUrl.protocol === 'https:';
   const cookieName = (name: string) => (secureCookies ? `__Host-${name}` : name);
-  const linkedInApp: LinkedInOAuthApp = {
-    clientId: config.clientId,
-    clientSecret: config.clientSecret,
-    scopes: config.scopes,
-    oauthBaseUrl: config.oauthBaseUrl,
-    ...(options.fetch ? { fetch: options.fetch } : {}),
-  };
+  const { clientId, clientSecret, scopes, oauthBaseUrl } = config;
+  const linkedInApp: LinkedInOAuthApp = { clientId, clientSecret, scopes, oauthBaseUrl, fetch: options.fetch };
 
   const usedCodes = new Map<string, number>();
   const markCodeUsed = (jti: string, exp: number): boolean => {
@@ -232,13 +227,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
       fail('invalid_target', `This server only issues tokens for ${resource.href}.`);
       return;
     }
-    const request: AuthorizationRequest = {
-      cid: client.clientId,
-      ru: redirectUri,
-      cc: challenge,
-      res: resource.href,
-      ...(state ? { st: state } : {}),
-    };
+    const request: AuthorizationRequest = { cid: client.clientId, ru: redirectUri, cc: challenge, res: resource.href, st: state };
     const csrf = randomToken();
     setCookie(res, 'csrf', csrf, 'strict');
     sendConsentPage(res, {
@@ -312,19 +301,15 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     let grant: LinkedInGrant;
     try {
       const tokens = await exchangeAuthorizationCode(linkedInApp, code, callbackUrl);
-      grant = { at: tokens.accessToken, sc: tokens.scopes, ...(tokens.expiresAt !== undefined ? { exp: tokens.expiresAt } : {}) };
+      grant = { at: tokens.accessToken, sc: tokens.scopes, exp: tokens.expiresAt };
     } catch (error) {
       back({ error: 'server_error', error_description: `LinkedIn sign-in failed: ${(error as Error).message}` });
       return;
     }
     try {
-      const info = await new LinkedInClient({
-        accessToken: grant.at,
-        version: options.version,
-        apiBaseUrl: config.apiBaseUrl,
-        ...(options.fetch ? { fetch: options.fetch } : {}),
-      }).getUserInfo();
-      grant = { ...grant, sub: info.sub, ...(info.name ? { name: info.name } : {}), ...(info.email ? { email: info.email } : {}) };
+      const { version, fetch } = options;
+      const info = await new LinkedInClient({ accessToken: grant.at, version, apiBaseUrl: config.apiBaseUrl, fetch }).getUserInfo();
+      grant = { ...grant, sub: info.sub, name: info.name, email: info.email };
     } catch {
       // Without OpenID scopes there is no userinfo; tools report what is missing.
     }

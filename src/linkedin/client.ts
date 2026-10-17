@@ -43,6 +43,12 @@ export interface LinkedInClientOptions {
   timeoutMs?: number;
 }
 
+interface CallOptions {
+  body?: unknown;
+  versioned?: boolean;
+  restliMethod?: string;
+}
+
 /** Thin client for the LinkedIn REST endpoints the connector uses. */
 export class LinkedInClient {
   private readonly fetchImpl: typeof globalThis.fetch;
@@ -63,37 +69,27 @@ export class LinkedInClient {
   /** Publishes a post and returns its URN (urn:li:share:… or urn:li:ugcPost:…). */
   async createPost(post: PostRequest): Promise<string> {
     const body = {
-      author: post.author,
-      commentary: post.commentary,
-      visibility: post.visibility,
-      distribution: {
-        feedDistribution: 'MAIN_FEED',
-        targetEntities: [],
-        thirdPartyDistributionChannels: [],
-      },
-      ...(post.content ? { content: post.content } : {}),
+      ...post,
+      distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
       lifecycleState: 'PUBLISHED',
       isReshareDisabledByAuthor: false,
     };
-    const response = await this.call('POST', '/rest/posts', { body });
+    const response = await this.callAndDiscard('POST', '/rest/posts', { body });
     const id = response.headers.get('x-restli-id') ?? response.headers.get('x-linkedin-id');
-    await response.body?.cancel();
     if (!id) throw new LinkedInApiError(response.status, 'LinkedIn created the post but did not return its ID.');
     return id;
   }
 
   /** Replaces a post's text (Rest.li partial update). */
   async updatePostText(postUrn: string, commentary: string): Promise<void> {
-    const response = await this.call('POST', `/rest/posts/${encodeURIComponent(postUrn)}`, {
+    await this.callAndDiscard('POST', `/rest/posts/${encodeURIComponent(postUrn)}`, {
       body: { patch: { $set: { commentary } } },
       restliMethod: 'PARTIAL_UPDATE',
     });
-    await response.body?.cancel();
   }
 
   async deletePost(postUrn: string): Promise<void> {
-    const response = await this.call('DELETE', `/rest/posts/${encodeURIComponent(postUrn)}`, { restliMethod: 'DELETE' });
-    await response.body?.cancel();
+    await this.callAndDiscard('DELETE', `/rest/posts/${encodeURIComponent(postUrn)}`, { restliMethod: 'DELETE' });
   }
 
   /** Registers an upload and returns the URL to PUT the bytes to plus the asset URN. */
@@ -134,26 +130,24 @@ export class LinkedInClient {
 
   /** Comments on a post (or replies to a comment) and returns the comment ID if LinkedIn provides one. */
   async createComment(target: string, actor: string, text: string): Promise<string | undefined> {
-    const response = await this.call('POST', `/rest/socialActions/${encodeURIComponent(target)}/comments`, {
+    const response = await this.callAndDiscard('POST', `/rest/socialActions/${encodeURIComponent(target)}/comments`, {
       body: { actor, object: target, message: { text } },
     });
-    const id = response.headers.get('x-restli-id') ?? undefined;
-    await response.body?.cancel();
-    return id;
+    return response.headers.get('x-restli-id') ?? undefined;
   }
 
   async createReaction(target: string, actor: string, reactionType: ReactionType): Promise<void> {
-    const response = await this.call('POST', `/rest/reactions?actor=${encodeURIComponent(actor)}`, {
-      body: { root: target, reactionType },
-    });
-    await response.body?.cancel();
+    await this.callAndDiscard('POST', `/rest/reactions?actor=${encodeURIComponent(actor)}`, { body: { root: target, reactionType } });
   }
 
-  private async call(
-    method: string,
-    path: string,
-    options: { body?: unknown; versioned?: boolean; restliMethod?: string } = {},
-  ): Promise<Response> {
+  /** Like {@link call}, for responses whose body is not needed. */
+  private async callAndDiscard(...args: Parameters<LinkedInClient['call']>): Promise<Response> {
+    const response = await this.call(...args);
+    await response.body?.cancel();
+    return response;
+  }
+
+  private async call(method: string, path: string, options: CallOptions = {}): Promise<Response> {
     const url = this.apiBase + path;
     const body = options.body === undefined ? undefined : JSON.stringify(options.body);
     const send = (version: string | undefined) => this.send(method, url, body, version, options.restliMethod);
@@ -203,9 +197,9 @@ export class LinkedInClient {
       response.statusText ||
       `HTTP ${response.status}`;
     throw new LinkedInApiError(response.status, message, {
-      ...(typeof parsed.code === 'string' ? { code: parsed.code } : {}),
-      ...(typeof parsed.serviceErrorCode === 'number' ? { serviceErrorCode: parsed.serviceErrorCode } : {}),
-      ...(response.headers.get('retry-after') ? { retryAfter: response.headers.get('retry-after')! } : {}),
+      code: typeof parsed.code === 'string' ? parsed.code : undefined,
+      serviceErrorCode: typeof parsed.serviceErrorCode === 'number' ? parsed.serviceErrorCode : undefined,
+      retryAfter: response.headers.get('retry-after') || undefined,
       method,
       path,
     });

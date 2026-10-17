@@ -13,18 +13,11 @@ export function isValidApiVersion(version: string): boolean {
 
 /** Monthly versions from `now`'s month backwards, newest first. */
 export function recentApiVersions(now: Date, count = 13): string[] {
-  const versions: string[] = [];
-  let year = now.getUTCFullYear();
-  let month = now.getUTCMonth() + 1;
-  for (let i = 0; i < count; i++) {
-    versions.push(`${year}${String(month).padStart(2, '0')}`);
-    month -= 1;
-    if (month === 0) {
-      month = 12;
-      year -= 1;
-    }
-  }
-  return versions;
+  const months = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  return Array.from({ length: count }, (_, i) => {
+    const m = months - i;
+    return `${Math.floor(m / 12)}${String((m % 12) + 1).padStart(2, '0')}`;
+  });
 }
 
 /** The LinkedIn-Version header value, shared by every client in the process. */

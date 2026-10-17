@@ -45,11 +45,7 @@ export function parseLinkPreview(html: string, pageUrl: string): LinkPreview {
   const first = (keys: string[]) => keys.map((key) => meta.get(key)).find(Boolean);
   const titleTag = /<title\b[^>]*>([^<]*)<\/title>/i.exec(html)?.[1];
 
-  const preview: LinkPreview = {};
-  const title = clean(first(TITLE_KEYS) ?? titleTag, 200);
-  const description = clean(first(DESCRIPTION_KEYS), 300);
-  if (title) preview.title = title;
-  if (description) preview.description = description;
+  const preview: LinkPreview = { title: clean(first(TITLE_KEYS) ?? titleTag, 200), description: clean(first(DESCRIPTION_KEYS), 300) };
   const image = first(IMAGE_KEYS);
   if (image) {
     try {
@@ -68,7 +64,7 @@ export async function fetchLinkPreview(url: string, options: { allowPrivateNetwo
     truncate: true,
     timeoutMs: 10_000,
     accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
-    ...(options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
+    allowPrivateNetwork: options.allowPrivateNetwork,
   });
   if (page.contentType && !/html|xml/i.test(page.contentType)) return {};
   return parseLinkPreview(page.data.toString('utf8'), page.url);
