@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SCOPES, defaultFileDirs, loadLocalConfig, loadRemoteConfig } from '../src/config.js';
 import { ConfigError } from '../src/errors.js';
 import { VERSION } from '../src/version.js';
@@ -71,12 +71,16 @@ describe('configuration', () => {
       oauthRateLimit: 60,
       mcpRateLimit: 120,
       shutdownTimeoutMs: 8000,
+      keepAliveTimeoutMs: 65_000,
+      previousSecret: undefined,
     });
     expect(config.allowedRedirectUris).toContain('https://claude.ai/api/mcp/auth_callback');
     expect(() => loadRemoteConfig({ ...remoteEnv, LINKEDIN_CLIENT_ID: '' })).toThrow(/LINKEDIN_CLIENT_ID/);
     expect(() => loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'http://example.com' })).toThrow(/https/);
     expect(() => loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'https://example.com/linkedin' })).toThrow(/without a path/);
-    expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: 'short' })).toThrow(/32 characters/);
+    expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: 'short' })).toThrow(
+      'SERVER_SECRET must be at least 32 characters (try: openssl rand -base64 32).',
+    );
     expect(loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'http://localhost:3000' }).publicUrl.href).toBe('http://localhost:3000/');
   });
 
@@ -88,21 +92,42 @@ describe('configuration', () => {
   });
 
   it('reads proxy, rate limit and shutdown settings', () => {
-    const config = loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: '1', RATE_LIMIT_OAUTH: '0', RATE_LIMIT_MCP: '30', SHUTDOWN_TIMEOUT: '20' });
-    expect(config).toMatchObject({ trustProxy: 1, oauthRateLimit: 0, mcpRateLimit: 30, shutdownTimeoutMs: 20_000 });
+    const config = loadRemoteConfig({
+      ...remoteEnv,
+      TRUST_PROXY: '1',
+      RATE_LIMIT_OAUTH: '0',
+      RATE_LIMIT_MCP: '30',
+      SHUTDOWN_TIMEOUT: '20',
+      KEEP_ALIVE_TIMEOUT: '620',
+    });
+    expect(config).toMatchObject({ trustProxy: 1, oauthRateLimit: 0, mcpRateLimit: 30, shutdownTimeoutMs: 20_000, keepAliveTimeoutMs: 620_000 });
     expect(loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
     expect(loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: 'loopback, 10.0.0.0/8' }).trustProxy).toBe('loopback, 10.0.0.0/8');
     expect(() => loadRemoteConfig({ ...remoteEnv, RATE_LIMIT_MCP: '-1' })).toThrow(/RATE_LIMIT_MCP/);
-    expect(() => loadRemoteConfig({ ...remoteEnv, SHUTDOWN_TIMEOUT: '1.5' })).toThrow(/SHUTDOWN_TIMEOUT/);
+    expect(() => loadRemoteConfig({ ...remoteEnv, SHUTDOWN_TIMEOUT: '1.5' })).toThrow('SHUTDOWN_TIMEOUT must be a whole number, got "1.5".');
+    // 0 would keep idle connections open forever.
+    expect(() => loadRemoteConfig({ ...remoteEnv, KEEP_ALIVE_TIMEOUT: '0' })).toThrow('KEEP_ALIVE_TIMEOUT must be a whole number of at least 1, got "0".');
+    expect(loadRemoteConfig({ ...remoteEnv, KEEP_ALIVE_TIMEOUT: '1' }).keepAliveTimeoutMs).toBe(1000);
   });
 
-  it('generates an ephemeral secret with a warning', () => {
+  it('requires SERVER_SECRET unless the server is only on localhost, where it generates one with a warning', () => {
+    expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: undefined })).toThrow(
+      'SERVER_SECRET is required: set it to at least 32 characters (try: openssl rand -base64 32) and keep it across restarts.',
+    );
     const warnings: string[] = [];
-    const config = loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: undefined, LINKEDIN_ALLOWED_MEMBERS: 'Ada@Example.com, abc123' }, (m) => warnings.push(m));
+    const env = { ...remoteEnv, PUBLIC_URL: 'http://localhost:3000', SERVER_SECRET: undefined, LINKEDIN_ALLOWED_MEMBERS: 'Ada@Example.com, abc123' };
+    const config = loadRemoteConfig(env, (m) => warnings.push(m));
     expect(config.ephemeralSecret).toBe(true);
-    expect(config.secret.length).toBeGreaterThanOrEqual(32);
-    expect(warnings[0]).toMatch(/SERVER_SECRET/);
+    expect(config.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(warnings).toEqual(['SERVER_SECRET is not set; using a random one. Connections will stop working when the server restarts.']);
     expect(config.allowedMembers).toEqual(['ada@example.com', 'abc123']);
+  });
+
+  it('accepts the previous SERVER_SECRET during a rotation', () => {
+    expect(loadRemoteConfig({ ...remoteEnv, SERVER_SECRET_PREVIOUS: 'b'.repeat(32) }).previousSecret).toBe('b'.repeat(32));
+    expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET_PREVIOUS: 'short' })).toThrow(
+      'SERVER_SECRET_PREVIOUS must be at least 32 characters (try: openssl rand -base64 32).',
+    );
   });
 
   it('keeps version numbers in sync', () => {
@@ -110,5 +135,46 @@ describe('configuration', () => {
     const manifest = JSON.parse(readFileSync('mcpb/manifest.json', 'utf8')) as { version: string };
     expect(VERSION).toBe(pkg.version);
     expect(manifest.version).toBe(pkg.version);
+  });
+});
+
+describe('secrets from files', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'config-secrets-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  function secretFile(name: string, contents: string): string {
+    const path = join(dir, name);
+    writeFileSync(path, contents);
+    return path;
+  }
+
+  it('reads LINKEDIN_CLIENT_SECRET, SERVER_SECRET and SERVER_SECRET_PREVIOUS from *_FILE, trimming the trailing newline', () => {
+    const config = loadRemoteConfig({
+      ...remoteEnv,
+      LINKEDIN_CLIENT_SECRET: undefined,
+      LINKEDIN_CLIENT_SECRET_FILE: secretFile('client', 'file-secret\n'),
+      SERVER_SECRET: undefined,
+      SERVER_SECRET_FILE: secretFile('server', `${'c'.repeat(32)}\n`),
+      SERVER_SECRET_PREVIOUS_FILE: secretFile('previous', 'd'.repeat(32)),
+    });
+    expect(config).toMatchObject({ clientSecret: 'file-secret', secret: 'c'.repeat(32), previousSecret: 'd'.repeat(32), ephemeralSecret: false });
+    expect(loadLocalConfig({ LINKEDIN_CLIENT_SECRET_FILE: secretFile('local', 'local-secret') }).clientSecret).toBe('local-secret');
+  });
+
+  it('explains unusable secret files', () => {
+    const missing = join(dir, 'missing');
+    expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: undefined, SERVER_SECRET_FILE: missing })).toThrow(
+      `SERVER_SECRET_FILE: cannot read ${missing} (ENOENT).`,
+    );
+    const empty = secretFile('empty', ' \n');
+    expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: undefined, SERVER_SECRET_FILE: empty })).toThrow(`SERVER_SECRET_FILE: ${empty} is empty.`);
+    expect(() => loadRemoteConfig({ ...remoteEnv, LINKEDIN_CLIENT_SECRET_FILE: secretFile('client', 'x') })).toThrow(
+      'Set either LINKEDIN_CLIENT_SECRET or LINKEDIN_CLIENT_SECRET_FILE, not both.',
+    );
+    expect(() => loadRemoteConfig({ ...remoteEnv, LINKEDIN_CLIENT_SECRET: undefined })).toThrow(
+      'Missing required environment variables: LINKEDIN_CLIENT_SECRET.',
+    );
   });
 });

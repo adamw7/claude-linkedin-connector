@@ -163,6 +163,17 @@ describe('ClientRegistry', () => {
       expect(await registry().resolve(sealer.sign('consent', { v: 1, r: [CLAUDE], m: 'none' }))).toBeUndefined();
     });
 
+    it('keeps clients registered before a SERVER_SECRET rotation working', async () => {
+      const { body } = registry().register({ redirect_uris: [CLAUDE] });
+      const rotated = new ClientRegistry(new Sealer('n'.repeat(32), 's'.repeat(32)), new RedirectPolicy([CLAUDE]));
+      const client = await rotated.resolve(body.client_id as string);
+      expect(client).toMatchObject({ clientId: body.client_id, redirectUris: [CLAUDE], authMethod: 'client_secret_basic' });
+      expect(rotated.authenticate(client!, body.client_secret as string)).toBe(true);
+      expect(rotated.authenticate(client!, 'wrong')).toBe(false);
+      // Once the previous secret is dropped, so are the clients registered with it.
+      expect(await new ClientRegistry(new Sealer('n'.repeat(32)), new RedirectPolicy([CLAUDE])).resolve(body.client_id as string)).toBeUndefined();
+    });
+
     it('re-applies the redirect policy to existing registrations', async () => {
       const { body } = registry().register({ redirect_uris: [CLAUDE, 'http://127.0.0.1/cb'] });
       const narrowed = await registry([CLAUDE]).resolve(body.client_id as string);

@@ -8,3 +8,6 @@ test
 *.mcpb
 .env
 .env.*
+deploy
+docs
+**/.env

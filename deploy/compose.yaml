@@ -1,0 +1,39 @@
+# The remote connector behind Caddy, which obtains and renews its HTTPS certificate automatically.
+# See docs/deployment.md. In this folder:
+#   cp .env.example .env && chmod 600 .env   # then fill it in
+#   docker compose up -d
+name: linkedin-connector
+
+services:
+  connector:
+    image: ${CONNECTOR_IMAGE:-ghcr.io/adamw7/claude-linkedin-connector:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PUBLIC_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      ALLOWED_HOSTS: ${DOMAIN}
+      # Caddy is the one proxy in front.
+      TRUST_PROXY: '1'
+    # Only Caddy can reach it; nothing is published on the host.
+    expose: ['3000']
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ['80:80', '443:443', '443:443/udp']
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      connector:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:

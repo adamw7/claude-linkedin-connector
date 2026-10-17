@@ -12,6 +12,15 @@ describe('Sealer', () => {
     expect(sealer.unseal('code', token)).toEqual({ at: 'secret-token', n: 1 });
   });
 
+  it('derives the same keys as earlier versions, so upgrading keeps everyone connected', () => {
+    // Issued by 0.1.0 with SERVER_SECRET=aaa…a (32 characters).
+    expect(sealer.mac('client', 'value')).toBe('Tc7C_yUVlQSnveoJxMqBo4iLoZgCijF22iE69N2Jtng');
+    expect(sealer.unseal('access', 'PgN7ZLX7Gp3CGU3XBInmucwfeuPfS6G5eR7MaccCs4-FhERsAEuLdlMTM1Xp')).toEqual({ at: 'li-token' });
+    expect(new Sealer('b'.repeat(32), 'a'.repeat(32)).unseal('access', 'PgN7ZLX7Gp3CGU3XBInmucwfeuPfS6G5eR7MaccCs4-FhERsAEuLdlMTM1Xp')).toEqual({
+      at: 'li-token',
+    });
+  });
+
   it('uses a fresh IV for every seal', () => {
     expect(sealer.seal('code', { a: 1 })).not.toBe(sealer.seal('code', { a: 1 }));
   });
@@ -59,6 +68,36 @@ describe('Sealer', () => {
     expect(sealer.mac('a', 'value')).not.toBe(sealer.mac('b', 'value'));
     // The separator keeps purpose/value boundaries unambiguous.
     expect(sealer.mac('ab', 'c')).not.toBe(sealer.mac('a', 'bc'));
+    expect(sealer.macMatches('a', 'value', sealer.mac('a', 'value'))).toBe(true);
+    expect(sealer.macMatches('b', 'value', sealer.mac('a', 'value'))).toBe(false);
+    expect(sealer.macMatches('a', 'other', sealer.mac('a', 'value'))).toBe(false);
+  });
+});
+
+describe('Sealer with a previous secret', () => {
+  const previous = new Sealer('o'.repeat(32));
+  const current = new Sealer('n'.repeat(32));
+  const rotated = new Sealer('n'.repeat(32), 'o'.repeat(32));
+
+  it('opens artifacts issued with the previous secret', () => {
+    expect(rotated.unseal('code', previous.seal('code', { a: 1 }))).toEqual({ a: 1 });
+    expect(rotated.verify('client', previous.sign('client', { r: 1 }))).toEqual({ r: 1 });
+    expect(rotated.macMatches('client-secret', 'id', previous.mac('client-secret', 'id'))).toBe(true);
+    expect(current.unseal('code', previous.seal('code', { a: 1 }))).toBeUndefined();
+  });
+
+  it('issues new artifacts with the current secret only', () => {
+    expect(current.unseal('code', rotated.seal('code', { b: 2 }))).toEqual({ b: 2 });
+    expect(previous.unseal('code', rotated.seal('code', { b: 2 }))).toBeUndefined();
+    expect(current.verify('client', rotated.sign('client', { r: 1 }))).toEqual({ r: 1 });
+    expect(previous.verify('client', rotated.sign('client', { r: 1 }))).toBeUndefined();
+    expect(rotated.mac('client-secret', 'id')).toBe(current.mac('client-secret', 'id'));
+  });
+
+  it('still binds the purpose for previous secrets', () => {
+    expect(rotated.unseal('access', previous.seal('code', { a: 1 }))).toBeUndefined();
+    expect(rotated.verify('consent', previous.sign('client', { r: 1 }))).toBeUndefined();
+    expect(rotated.macMatches('other', 'id', previous.mac('client-secret', 'id'))).toBe(false);
   });
 });
 

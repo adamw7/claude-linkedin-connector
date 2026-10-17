@@ -6,8 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Each release publishes a Docker image of the remote server for amd64 and arm64 at
+  `ghcr.io/adamw7/claude-linkedin-connector`, with an SBOM and build provenance. The image has a health check,
+  runs as the unprivileged user 1000 (so Kubernetes' `runAsNonRoot` accepts it) and works with a read-only root
+  file system.
+- A [deployment guide](docs/deployment.md) for the remote server: a production checklist, a Docker Compose setup
+  with automatic HTTPS in `deploy/`, a Kubernetes example, secret rotation, the log events and what to alert on.
+- `SERVER_SECRET_PREVIOUS` rotates `SERVER_SECRET` without disconnecting anyone: tokens and client registrations
+  issued with the previous secret keep working while it is set.
+- `LINKEDIN_CLIENT_SECRET_FILE`, `SERVER_SECRET_FILE` and `SERVER_SECRET_PREVIOUS_FILE` read those secrets from a
+  file, as Docker and Kubernetes secrets are mounted.
+- Every remote server response carries an `X-Request-Id` (the proxy's, if it sends one), which is also logged
+  with the request, its tool calls and server errors.
+- [`SECURITY.md`](SECURITY.md) explains how to report vulnerabilities privately.
+
 ### Changed
 
+- The remote server refuses to start without `SERVER_SECRET` unless `PUBLIC_URL` is localhost. The random secret
+  it used instead changed with every restart and differed between replicas, so connections broke seemingly at
+  random.
 - Document posts are titled after the file name without its extension ("Q3 results", not "Q3 results.pdf")
   unless a title is given.
 - The CLI refuses options a command doesn't take instead of ignoring them, and `status` exits with 1 when the
@@ -15,6 +34,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `/healthz` answers whatever the `Host` header. With `ALLOWED_HOSTS` set, load balancer and Kubernetes health
+  checks, which use the server's IP address, got `403` and took the server out of service.
+- Behind a proxy or load balancer that keeps idle connections longer than 5 seconds (AWS load balancers keep them
+  for 60), some requests failed with `502`: the server closed idle connections after Node.js's default 5 seconds,
+  just as the proxy reused them. It now keeps them for `KEEP_ALIVE_TIMEOUT` seconds, 65 by default.
 - `--help` after a command shows the help instead of running the command: `logout --help` deleted the stored
   token, and `login --help` started a sign-in.
 - After adding scopes to `LINKEDIN_SCOPES` (e.g. for comments), `linkedin_login` and re-running `npm run setup`

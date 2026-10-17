@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Request, RequestHandler } from 'express';
 
 export type LogLevel = 'info' | 'warn' | 'error';
@@ -25,6 +26,22 @@ export function pathOf(req: Request): string {
   return req.originalUrl.split('?', 1)[0]!;
 }
 
+/** What a proxy's request ID may look like to be kept: UUIDs, hex and the like, nothing that could mislead a log reader. */
+const REQUEST_ID = /^[\w.:+=@/-]{1,128}$/;
+
+/**
+ * Tags each request with an ID: the one a proxy in front sent as `X-Request-Id`, or a new UUID. It is
+ * echoed in the response and logged with the request, its tool calls and errors, so they can be matched up.
+ */
+export const requestId: RequestHandler = (req, res, next) => {
+  const incoming = req.get('x-request-id');
+  const id = incoming !== undefined && REQUEST_ID.test(incoming) ? incoming : randomUUID();
+  // Kept on the request headers so the MCP handler, which only sees a copy of the request, can read it too.
+  req.headers['x-request-id'] = id;
+  res.set('X-Request-Id', id);
+  next();
+};
+
 /**
  * Logs each finished request. Only the path is logged: OAuth query strings
  * carry codes and state, and bodies carry tokens and post text.
@@ -41,6 +58,7 @@ export function requestLogger(logger: Logger, now: () => number = performance.no
         status: res.statusCode,
         durationMs: Math.round(now() - start),
         ip: req.ip,
+        requestId: req.get('x-request-id'),
       });
     });
     next();

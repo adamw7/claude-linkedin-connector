@@ -44,3 +44,10 @@ jobs:
           npm run bundle
           node mcpb/server/index.cjs --version
           npx --no-install mcpb validate mcpb/manifest.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t claude-linkedin-connector:ci .
+      - run: scripts/smoke-test-image.sh claude-linkedin-connector:ci

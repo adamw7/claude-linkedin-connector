@@ -3,7 +3,8 @@
 An MCP connector for LinkedIn (profile, posts, media, comments, reactions, `Connections.csv` search) in
 TypeScript on Node.js 24. One code base, two modes: **local** (`stdio`, token file on disk) and **remote**
 (`http`, Express, stateless, OAuth 2.1 authorization server; the LinkedIn token is sealed inside the access
-token with `SERVER_SECRET`). User docs: `README.md`, `docs/usage.md`. Design: `docs/architecture.md`.
+token with `SERVER_SECRET`). User docs: `README.md`, `docs/usage.md`, `docs/deployment.md` (remote mode in
+production). Design: `docs/architecture.md`.
 
 ## Commands
 
@@ -14,6 +15,7 @@ npm test             # vitest; one file: npx vitest run test/text.test.ts
 npm run build        # tsc -p tsconfig.build.json -> dist/
 npm run test:mutation  # Stryker; slow, CI runs it incrementally
 npm run pack:mcpb    # bundle the Claude Desktop extension
+docker build -t connector . && scripts/smoke-test-image.sh connector  # the remote image; CI runs both
 ```
 
 ## Layout and layering

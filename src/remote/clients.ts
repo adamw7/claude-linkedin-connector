@@ -1,6 +1,6 @@
 import { isLoopbackHostname } from '../net/loopback.js';
 import { safeFetch } from '../net/safe-fetch.js';
-import { safeEqual, type Sealer } from './crypto.js';
+import type { Sealer } from './crypto.js';
 
 export type ClientAuthMethod = 'none' | 'client_secret_post' | 'client_secret_basic';
 
@@ -178,7 +178,8 @@ export class ClientRegistry {
    */
   authenticate(client: OAuthClient, secret: string | undefined): boolean {
     if (client.authMethod === 'none' || client.kind === 'metadata-document') return true;
-    return secret !== undefined && safeEqual(secret, this.clientSecret(client.clientId));
+    // Any secret the Sealer accepts: clients registered before a SERVER_SECRET rotation keep working.
+    return secret !== undefined && this.sealer.macMatches('client-secret', client.clientId, secret);
   }
 
   private clientSecret(clientId: string): string {

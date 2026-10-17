@@ -111,6 +111,9 @@ function runHttp(): void {
       allowedMembers: config.allowedMembers.includes('*') ? 'anyone' : config.allowedMembers.length,
     });
   });
+  // Outlast the idle timeout of a load balancer in front, which otherwise reuses a connection just as the server
+  // closes it and answers 502 (Node's default is 5 seconds; AWS load balancers keep connections for 60).
+  server.keepAliveTimeout = config.keepAliveTimeoutMs;
   let stopping = false;
   const shutdown = (signal: NodeJS.Signals) => {
     if (stopping) return;

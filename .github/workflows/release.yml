@@ -39,9 +39,44 @@ jobs:
             on { print }
           ' CHANGELOG.md > release-notes.md
           [ -s release-notes.md ] || { echo "::error::No CHANGELOG.md entry for $GITHUB_REF_NAME"; exit 1; }
+          printf '\n### Docker image\n\nFor the remote server (amd64 and arm64):\n\n```sh\ndocker pull ghcr.io/%s:%s\n```\n' \
+            "${GITHUB_REPOSITORY,,}" "${GITHUB_REF_NAME#v}" >> release-notes.md
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" claude-linkedin-connector.mcpb \
             --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag
+
+  # After the release job, so an image is only published for a version whose tests passed.
+  image:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Smoke test the image
+        run: |
+          docker build -t claude-linkedin-connector:release .
+          scripts/smoke-test-image.sh claude-linkedin-connector:release
+      - name: Push the image to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version="${GITHUB_REF_NAME#v}"
+          tags=(--tag "$image:$version")
+          # Pre-releases (1.2.0-rc.1) get only their own tag; releases also move 1.2 and latest.
+          [[ "$version" == *-* ]] || tags+=(--tag "$image:${version%.*}" --tag "$image:latest")
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          # The build stage runs on the runner's platform and the final stage has no RUN steps, so arm64 needs no emulation.
+          docker buildx create --use --driver docker-container
+          docker buildx build . --push --platform linux/amd64,linux/arm64 --provenance=mode=max --sbom=true \
+            --label "org.opencontainers.image.version=$version" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.description=Remote MCP server (custom connector) that lets Claude use your LinkedIn account" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            "${tags[@]}"

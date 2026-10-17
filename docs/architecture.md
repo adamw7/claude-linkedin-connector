@@ -65,6 +65,7 @@ C4Container
 
 In remote mode the LinkedIn token never touches disk: it is sealed with `SERVER_SECRET` (AES-256-GCM) inside
 the access token the server issues to Claude, so any instance holding the same secret can serve any request.
+[`deployment.md`](deployment.md) covers running it in production.
 
 ## Level 3: Components of the local MCP server
 
@@ -118,10 +119,10 @@ C4Component
 
   Container_Boundary(http, "Remote MCP server") {
     Component(app, "Remote app", "src/remote/app.ts, Express", "Host validation, CORS, OAuth metadata, bearer auth and rate limits (src/remote/rate-limit.ts) on /mcp and OAuth endpoints, /healthz")
-    Component(logger, "Logger", "src/remote/logger.ts", "JSON-lines request, sign-in, tool-call audit and error logs on stderr")
+    Component(logger, "Logger", "src/remote/logger.ts", "Request IDs; JSON-lines request, sign-in, tool-call audit and error logs on stderr")
     Component(oauth, "OAuth authorization server", "src/remote/oauth-server.ts", "/register, /authorize, /oauth/callback, /token; PKCE, single-use codes, token verifier")
     Component(clients, "ClientRegistry + RedirectPolicy", "src/remote/clients.ts", "Dynamic client registration and client ID metadata documents; redirect URI allow-list")
-    Component(crypto, "Sealer", "src/remote/crypto.ts", "Keyed by SERVER_SECRET: signs client IDs and consent state; seals codes and access tokens (AES-256-GCM)")
+    Component(crypto, "Sealer", "src/remote/crypto.ts", "Keyed by SERVER_SECRET (and SERVER_SECRET_PREVIOUS while rotating): signs client IDs and consent state; seals codes and access tokens (AES-256-GCM)")
     Component(pages, "Pages", "src/remote/pages.ts", "Consent and error pages")
     Component(connAuth, "ConnectorAuth", "src/remote/connector-auth.ts", "Implements LinkedInAuth from the verified access token's sealed LinkedIn grant")
     Component(mcp, "Connector MCP server", "src/mcp/server.ts", "Same tools as local mode, created per request")

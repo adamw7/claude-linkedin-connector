@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { defaultTokenFile } from './auth/token-store.js';
@@ -44,6 +45,8 @@ export interface RemoteConfig extends CommonConfig {
   secret: string;
   /** True when `secret` was generated at startup (connections won't survive a restart). */
   ephemeralSecret: boolean;
+  /** The secret used before `secret`; still opens tokens and client IDs issued with it, during a rotation. */
+  previousSecret: string | undefined;
   /** Entries: exact URIs, `https://host/prefix*`, `loopback`, or `*`. */
   allowedRedirectUris: string[];
   /** LinkedIn member IDs or emails allowed to connect (lowercase); `*` allows anyone. */
@@ -58,6 +61,8 @@ export interface RemoteConfig extends CommonConfig {
   mcpRateLimit: number;
   /** How long to wait for in-flight requests on shutdown, in milliseconds. */
   shutdownTimeoutMs: number;
+  /** How long idle keep-alive connections stay open, in milliseconds; above a load balancer's idle timeout. */
+  keepAliveTimeoutMs: number;
 }
 
 type Env = NodeJS.ProcessEnv;
@@ -65,6 +70,21 @@ type Env = NodeJS.ProcessEnv;
 function value(env: Env, name: string): string | undefined {
   const raw = env[name]?.trim();
   return raw ? raw : undefined;
+}
+
+/** A secret from NAME, or from the file NAME_FILE names, as Docker and Kubernetes secrets are mounted. */
+function secretValue(env: Env, name: string): string | undefined {
+  const file = value(env, `${name}_FILE`);
+  if (file === undefined) return value(env, name);
+  if (value(env, name) !== undefined) throw new ConfigError(`Set either ${name} or ${name}_FILE, not both.`);
+  let contents: string;
+  try {
+    contents = readFileSync(file, 'utf8').trim();
+  } catch (error) {
+    throw new ConfigError(`${name}_FILE: cannot read ${file} (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}).`);
+  }
+  if (!contents) throw new ConfigError(`${name}_FILE: ${file} is empty.`);
+  return contents;
 }
 
 function list(env: Env, name: string): string[] | undefined {
@@ -80,7 +100,7 @@ function common(env: Env): CommonConfig {
   const scopes = parseScopes(value(env, 'LINKEDIN_SCOPES'));
   return {
     clientId: value(env, 'LINKEDIN_CLIENT_ID'),
-    clientSecret: value(env, 'LINKEDIN_CLIENT_SECRET'),
+    clientSecret: secretValue(env, 'LINKEDIN_CLIENT_SECRET'),
     scopes: scopes.length > 0 ? scopes : [...DEFAULT_SCOPES],
     apiVersion,
     apiBaseUrl: value(env, 'LINKEDIN_API_BASE_URL') ?? LINKEDIN_API_BASE,
@@ -88,13 +108,17 @@ function common(env: Env): CommonConfig {
   };
 }
 
-function count(env: Env, name: string, fallback: number): number {
+function count(env: Env, name: string, fallback: number, min = 0): number {
   const raw = value(env, name);
   if (raw === undefined) return fallback;
   const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0) throw new ConfigError(`${name} must be a whole number, got "${raw}".`);
+  if (!Number.isInteger(parsed) || parsed < min) {
+    throw new ConfigError(`${name} must be a whole number${min > 0 ? ` of at least ${min}` : ''}, got "${raw}".`);
+  }
   return parsed;
 }
+
+const SECRET_HINT = 'at least 32 characters (try: openssl rand -base64 32)';
 
 /** `true`/`false`, a hop count, or the subnets Express accepts (e.g. `loopback, 10.0.0.0/8`). */
 function trustProxy(raw: string | undefined): boolean | number | string {
@@ -135,7 +159,8 @@ export function loadLocalConfig(env: Env = process.env, cwd: string = process.cw
 
 export function loadRemoteConfig(env: Env = process.env, warn: (message: string) => void = () => {}): RemoteConfig {
   const base = common(env);
-  const missing = ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET', 'PUBLIC_URL'].filter((name) => !value(env, name));
+  const required = { LINKEDIN_CLIENT_ID: base.clientId, LINKEDIN_CLIENT_SECRET: base.clientSecret, PUBLIC_URL: value(env, 'PUBLIC_URL') };
+  const missing = Object.entries(required).filter(([, setting]) => !setting).map(([name]) => name);
   if (missing.length > 0) throw new ConfigError(`Missing required environment variables: ${missing.join(', ')}.`);
 
   let publicUrl: URL;
@@ -155,14 +180,18 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
   const port = Number(value(env, 'PORT') ?? 3000);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ConfigError(`PORT "${env.PORT}" is not a valid port.`);
 
-  let secret = value(env, 'SERVER_SECRET');
+  let secret = secretValue(env, 'SERVER_SECRET');
   const ephemeralSecret = secret === undefined;
   if (secret === undefined) {
+    // A random secret differs per restart and per replica, so a public server would keep disconnecting everyone.
+    if (!loopback) throw new ConfigError(`SERVER_SECRET is required: set it to ${SECRET_HINT} and keep it across restarts.`);
     secret = randomBytes(32).toString('base64url');
     warn('SERVER_SECRET is not set; using a random one. Connections will stop working when the server restarts.');
   } else if (secret.length < 32) {
-    throw new ConfigError('SERVER_SECRET must be at least 32 characters (try: openssl rand -base64 32).');
+    throw new ConfigError(`SERVER_SECRET must be ${SECRET_HINT}.`);
   }
+  const previousSecret = secretValue(env, 'SERVER_SECRET_PREVIOUS');
+  if (previousSecret !== undefined && previousSecret.length < 32) throw new ConfigError(`SERVER_SECRET_PREVIOUS must be ${SECRET_HINT}.`);
 
   // A public server must say who may use it; local testing defaults to anyone.
   const allowedMembers = list(env, 'LINKEDIN_ALLOWED_MEMBERS') ?? (loopback ? ['*'] : undefined);
@@ -181,6 +210,7 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
     port,
     secret,
     ephemeralSecret,
+    previousSecret,
     allowedRedirectUris: list(env, 'OAUTH_ALLOWED_REDIRECT_URIS') ?? [...CLAUDE_REDIRECT_URIS, 'loopback'],
     allowedMembers: allowedMembers.map((member) => member.toLowerCase()),
     allowedHosts: list(env, 'ALLOWED_HOSTS'),
@@ -188,5 +218,6 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
     oauthRateLimit: count(env, 'RATE_LIMIT_OAUTH', 60),
     mcpRateLimit: count(env, 'RATE_LIMIT_MCP', 120),
     shutdownTimeoutMs: count(env, 'SHUTDOWN_TIMEOUT', 8) * 1000,
+    keepAliveTimeoutMs: count(env, 'KEEP_ALIVE_TIMEOUT', 65, 1) * 1000,
   };
 }
