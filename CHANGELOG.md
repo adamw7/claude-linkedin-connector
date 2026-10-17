@@ -20,6 +20,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- In local mode, tools only read local files from `~/Downloads`, `~/Desktop`, `~/Pictures` and the working
+  directory (unless it contains the home directory), or the folders listed in the new `LINKEDIN_FILE_DIRS`.
+  Before, a prompt injection could get Claude to post any PDF, Office document or image on the computer.
+- Fetching link previews and media also refuses the local-use NAT64 prefix `64:ff9b:1::/48`.
+- GitHub Actions are pinned to commit SHAs, and the `mcpb` CLI used to build and validate releases is a
+  locked dev dependency instead of whatever `npx @anthropic-ai/mcpb@2` resolved to.
 - The remote server only reads request bodies after checking the bearer token (for `/mcp`) or the rate limit
   (OAuth endpoints, now capped at 64 KB). Before, anyone could make it buffer and parse 30 MB per request
   without signing in.

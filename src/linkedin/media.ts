@@ -1,6 +1,6 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UserInputError } from '../errors.js';
 import { safeFetch } from '../net/safe-fetch.js';
@@ -20,8 +20,11 @@ export interface LoadedMedia {
 }
 
 export interface MediaSourceOptions {
-  /** Read local file paths (stdio mode only: a remote server must never read its own disk). */
-  allowLocalFiles: boolean;
+  /**
+   * Folders local file paths may point into (stdio mode only: a remote server must never read its own disk).
+   * Undefined forbids local files altogether.
+   */
+  localFileDirs?: string[];
   allowPrivateNetwork?: boolean;
   cwd?: string;
 }
@@ -63,8 +66,23 @@ function decodeFilename(name: string): string {
   }
 }
 
-function expandHome(path: string): string {
+export function expandHome(path: string): string {
   return path === '~' || path.startsWith('~/') || path.startsWith('~\\') ? homedir() + path.slice(1) : path;
+}
+
+/** Whether `path` is `dir` or lies somewhere below it. */
+export function isInside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/** Whether `path` (already resolved) lies in one of `dirs`, comparing real paths so symlinks can't lead outside. */
+async function inAllowedDir(path: string, dirs: string[]): Promise<boolean> {
+  for (const dir of dirs) {
+    const real = await realpath(dir).catch(() => undefined);
+    if (real !== undefined && isInside(real, path)) return true;
+  }
+  return false;
 }
 
 /** Reads up to `maxBytes` from a local path (when allowed), an http(s) URL or a base64 data: URI. */
@@ -91,27 +109,39 @@ export async function readSource(
     return { data: result.data, filename: name ? decodeFilename(name) : undefined };
   }
 
-  if (!options.allowLocalFiles) {
+  const dirs = options.localFileDirs;
+  if (dirs === undefined) {
     throw new UserInputError(`"${source}" is not an http(s) URL or base64 data: URI. Local files cannot be read by a remote connector.`);
   }
   const path = trimmed.startsWith('file://') ? fileURLToPath(trimmed) : expandHome(trimmed);
-  const relative = !isAbsolute(path);
-  const absolute = relative ? resolve(options.cwd ?? process.cwd(), path) : path;
+  const relativePath = !isAbsolute(path);
+  const absolute = relativePath ? resolve(options.cwd ?? process.cwd(), path) : path;
+  const outside = () =>
+    new UserInputError(
+      `${absolute} is outside the folders this connector may read files from (${dirs.join(', ') || 'none'}). ` +
+        'Move the file into one of them, or add its folder to LINKEDIN_FILE_DIRS.',
+    );
+  let real: string;
   let size: number;
   try {
-    const info = await stat(absolute);
+    real = await realpath(absolute);
+    // Checked before anything else about the file, so a path outside the folders reveals nothing about it.
+    if (!(await inAllowedDir(real, dirs))) throw outside();
+    const info = await stat(real);
     if (!info.isFile()) throw new UserInputError(`${absolute} is not a file.`);
     size = info.size;
   } catch (error) {
     if (error instanceof UserInputError) throw error;
+    // Not even whether it exists.
+    if (!dirs.some((dir) => isInside(resolve(dir), absolute))) throw outside();
     const { code, message } = error as NodeJS.ErrnoException;
     const reason = code === 'ENOENT' ? 'the file does not exist' : code === 'EACCES' ? 'permission denied' : message;
     // The server's working directory is rarely the user's (Claude Desktop starts it in /).
-    const hint = relative ? ` "${path}" was resolved against ${dirname(absolute)}; pass an absolute path instead.` : '';
+    const hint = relativePath ? ` "${path}" was resolved against ${dirname(absolute)}; pass an absolute path instead.` : '';
     throw new UserInputError(`Cannot read ${absolute}: ${reason}.${hint}`);
   }
   if (size > maxBytes) throw new UserInputError(`${absolute} is larger than ${maxBytes / 1024 / 1024} MB.`);
-  return { data: await readFile(absolute), filename: basename(absolute) };
+  return { data: await readFile(real), filename: basename(absolute) };
 }
 
 /**

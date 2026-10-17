@@ -1,7 +1,10 @@
 import { randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { defaultTokenFile } from './auth/token-store.js';
 import { ConfigError } from './errors.js';
 import { LINKEDIN_API_BASE } from './linkedin/client.js';
+import { expandHome, isInside } from './linkedin/media.js';
 import { LINKEDIN_OAUTH_BASE, parseScopes } from './linkedin/oauth.js';
 import { isValidApiVersion } from './linkedin/versions.js';
 import { isLoopbackHostname } from './net/loopback.js';
@@ -26,6 +29,8 @@ export interface LocalConfig extends CommonConfig {
   tokenFile: string;
   /** A pre-issued token that bypasses the sign-in flow entirely. */
   accessToken: string | undefined;
+  /** Folders tools may read local images, documents and connection exports from. */
+  fileDirs: string[];
 }
 
 export interface RemoteConfig extends CommonConfig {
@@ -98,12 +103,23 @@ function trustProxy(raw: string | undefined): boolean | number | string {
   return /^\d+$/.test(raw) ? Number(raw) : raw;
 }
 
-export function loadLocalConfig(env: Env = process.env): LocalConfig {
+/**
+ * The folders local files may come from unless LINKEDIN_FILE_DIRS says otherwise: where downloads (such as
+ * LinkedIn's data export), screenshots and photos usually land, plus the working directory (Claude Code
+ * starts the server in the project), unless that contains the home directory (Claude Desktop starts it in /).
+ */
+export function defaultFileDirs(cwd: string = process.cwd(), home: string = homedir()): string[] {
+  const dirs = ['Downloads', 'Desktop', 'Pictures'].map((name) => join(home, name));
+  return isInside(cwd, home) ? dirs : [...dirs, cwd];
+}
+
+export function loadLocalConfig(env: Env = process.env, cwd: string = process.cwd()): LocalConfig {
   return {
     ...common(env),
     redirectUri: value(env, 'LINKEDIN_REDIRECT_URI') ?? DEFAULT_LOCAL_REDIRECT_URI,
     tokenFile: value(env, 'LINKEDIN_TOKEN_FILE') ?? defaultTokenFile(env),
     accessToken: value(env, 'LINKEDIN_ACCESS_TOKEN'),
+    fileDirs: list(env, 'LINKEDIN_FILE_DIRS')?.map((dir) => resolve(cwd, expandHome(dir))) ?? defaultFileDirs(cwd),
   };
 }
 

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SCOPES, loadLocalConfig, loadRemoteConfig } from '../src/config.js';
+import { DEFAULT_SCOPES, defaultFileDirs, loadLocalConfig, loadRemoteConfig } from '../src/config.js';
 import { ConfigError } from '../src/errors.js';
 import { VERSION } from '../src/version.js';
 
@@ -27,6 +29,21 @@ describe('configuration', () => {
     const config = loadLocalConfig({ LINKEDIN_SCOPES: 'openid,w_member_social', LINKEDIN_ACCESS_TOKEN: '  ', LINKEDIN_API_VERSION: '202608' });
     expect(config).toMatchObject({ scopes: ['openid', 'w_member_social'], accessToken: undefined, apiVersion: '202608' });
     expect(() => loadLocalConfig({ LINKEDIN_API_VERSION: '2026-08' })).toThrow(ConfigError);
+  });
+
+  it('limits local files to the usual folders, plus a working directory that is not above home', () => {
+    const usual = ['/home/ada/Downloads', '/home/ada/Desktop', '/home/ada/Pictures'];
+    expect(defaultFileDirs('/home/ada/project', '/home/ada')).toEqual([...usual, '/home/ada/project']);
+    expect(defaultFileDirs('/srv/work', '/home/ada')).toEqual([...usual, '/srv/work']);
+    expect(defaultFileDirs('/home/ada', '/home/ada')).toEqual(usual);
+    expect(defaultFileDirs('/', '/home/ada')).toEqual(usual);
+    expect(defaultFileDirs('/home', '/home/ada')).toEqual(usual);
+  });
+
+  it('reads LINKEDIN_FILE_DIRS, expanding ~ and resolving relative folders', () => {
+    const config = loadLocalConfig({ LINKEDIN_FILE_DIRS: '~/Posts, assets ,/data/media' }, '/work');
+    expect(config.fileDirs).toEqual([join(homedir(), 'Posts'), '/work/assets', '/data/media']);
+    expect(loadLocalConfig({}, '/').fileDirs).toEqual(defaultFileDirs('/'));
   });
 
   it('validates remote settings', () => {

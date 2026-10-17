@@ -58,7 +58,15 @@ function localSetup() {
 function runStdio(): void {
   const { config, version, auth } = localSetup();
   serveStdio(
-    () => createConnectorServer({ mode: 'local', auth, version, scopes: config.scopes, apiBaseUrl: config.apiBaseUrl }),
+    () =>
+      createConnectorServer({
+        mode: 'local',
+        auth,
+        version,
+        scopes: config.scopes,
+        apiBaseUrl: config.apiBaseUrl,
+        localFileDirs: config.fileDirs,
+      }),
     { onerror: (error) => log(`MCP error: ${error.message}`) },
   );
   // Exit with the client even if a sign-in listener is still waiting for the browser.
