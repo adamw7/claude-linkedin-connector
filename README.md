@@ -59,7 +59,7 @@ grants on application. If you get it, add `w_member_social_feed` and/or `w_organ
 
 ## 2a. Local setup (Claude Desktop, Claude Code)
 
-Requires Node.js 22 or later.
+Requires Node.js 24 or later.
 
 ```sh
 git clone https://github.com/adamw7/claude-linkedin-connector.git
