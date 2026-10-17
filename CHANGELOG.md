@@ -15,6 +15,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `npm run setup` sets the connector up in Claude Code in one command: it builds, registers the server
+  with `claude mcp add` and signs you in to LinkedIn.
 - `linkedin_read_connections` reads the `Connections.csv` from LinkedIn's data export (LinkedIn's API doesn't
   offer connections) and returns your connections newest first, filtered by text, company or connection
   date and paged. It matches regardless of case and accents ("Lodz" finds "Łódź"), filters by several

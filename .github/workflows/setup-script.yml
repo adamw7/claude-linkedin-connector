@@ -1,0 +1,71 @@
+name: Setup script
+
+# Runs `npm run setup` against a real Claude Code install. Windows gets its own job because the script
+# runs npm.cmd / claude.cmd through cmd.exe there, with its own quoting.
+on:
+  push:
+    paths: ['scripts/setup-claude-code.mjs', '.github/workflows/setup-script.yml']
+  pull_request:
+    paths: ['scripts/setup-claude-code.mjs', '.github/workflows/setup-script.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # npm installs a claude.cmd shim (run through cmd.exe); the native installer a claude.exe.
+        claude: [npm, native]
+    env:
+      LINKEDIN_CLIENT_ID: test-client-id
+      # cmd.exe metacharacters, a quote, spaces and a trailing backslash, to check they arrive unchanged.
+      LINKEDIN_CLIENT_SECRET: 's3c"r&e|t %PATH% ^!(x) <y> \'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install Claude Code (npm)
+        if: matrix.claude == 'npm'
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Install Claude Code (native)
+        if: matrix.claude == 'native'
+        run: |
+          irm https://claude.ai/install.ps1 | iex
+          "$env:USERPROFILE\.local\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - run: |
+          where.exe claude
+          claude --version
+
+      - name: npm run setup (fresh clone, credentials from the environment)
+        run: npm run setup -- --no-login
+      - name: Check the registered server
+        run: |
+          $out = claude mcp get linkedin | Out-String
+          $out
+          if (-not $out.Contains("LINKEDIN_CLIENT_SECRET=$env:LINKEDIN_CLIENT_SECRET")) { throw 'secret was mangled' }
+          if (-not $out.Contains('LINKEDIN_SCOPES=openid profile email w_member_social')) { throw 'scopes were mangled' }
+          if (-not $out.Contains('Connected')) { throw 'server does not start' }
+
+      - name: Re-run with flags, replacing the existing server
+        run: node scripts/setup-claude-code.mjs --yes --no-login --skip-build --client-id flag-id --scopes 'openid profile'
+      - name: Check the replaced server
+        run: |
+          $out = claude mcp get linkedin | Out-String
+          $out
+          if (-not $out.Contains('LINKEDIN_CLIENT_ID=flag-id')) { throw 'client id flag ignored' }
+          if (-not $out.Contains('LINKEDIN_SCOPES=openid profile')) { throw 'scopes flag ignored' }
+          if (-not $out.Contains('Connected')) { throw 'server does not start' }
+
+      - name: Refuses to replace without --yes
+        run: |
+          node scripts/setup-claude-code.mjs --no-login --skip-build
+          if ($LASTEXITCODE -ne 1) { throw "expected exit code 1, got $LASTEXITCODE" }
+          exit 0

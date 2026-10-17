@@ -107,17 +107,26 @@ Open **Settings → Developer → Edit Config** and add:
 
 ### Claude Code
 
+From the clone, run:
+
+```sh
+npm run setup
+```
+
+It asks for your Client ID and Client Secret (or reads `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`),
+installs dependencies and builds, registers the connector for all your projects with `claude mcp add`, and
+signs you in to LinkedIn in your browser. `npm run setup -- --help` lists its options, such as
+`--scope local` to use the connector only in this directory, `--scopes` for extra LinkedIn permissions and
+`--no-login` to sign in later.
+
+To register it by hand instead:
+
 ```sh
 claude mcp add linkedin --scope user \
   -e LINKEDIN_CLIENT_ID=your-client-id \
   -e LINKEDIN_CLIENT_SECRET=your-client-secret \
   -- node /absolute/path/to/claude-linkedin-connector/dist/index.js
 ```
-
-Or, to use it only while working in the clone, export `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`
-(and optionally `LINKEDIN_SCOPES`) in your shell and start `claude` from the clone's directory: the
-[`.mcp.json`](.mcp.json) there registers the connector as a project server, and Claude Code asks you to
-approve it the first time.
 
 ### Sign in
 
