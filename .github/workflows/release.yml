@@ -28,7 +28,7 @@ jobs:
       - name: Build the Claude Desktop extension
         run: |
           npm run pack:mcpb
-          npx -y @anthropic-ai/mcpb@2 validate mcpb/manifest.json
+          npx --no-install mcpb validate mcpb/manifest.json
           node mcpb/server/index.cjs --version
       - name: Extract release notes
         run: |

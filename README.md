@@ -41,6 +41,9 @@ commenting or deleting, and Claude also asks you to confirm each call. A few thi
 - **Link previews.** LinkedIn's API doesn't build previews itself, so the connector reads the page's title,
   description and image and uploads them with the link.
 - **Media.** Images and documents can be local file paths (local mode), `http(s)` URLs or base64 `data:` URIs.
+  Local files (including `Connections.csv`) are only read from your Downloads, Desktop and Pictures folders
+  and the server's working directory (unless that is your home directory or above it), so a page or document
+  Claude reads can't get it to post other files on your computer. Set `LINKEDIN_FILE_DIRS` to change this.
   Files are checked by content, so only real images and documents are ever uploaded.
 - **Connections.** LinkedIn's API doesn't give apps your list of connections, so the connector reads the
   `Connections.csv` from your data export instead: on LinkedIn, open **Settings → Data privacy → Get a copy
@@ -229,6 +232,7 @@ same. Changing the secret disconnects everyone.
 | `LINKEDIN_REDIRECT_URI` | local | `http://localhost:8723/callback` | Sign-in callback; must match the LinkedIn app exactly |
 | `LINKEDIN_TOKEN_FILE` | local | per-user config dir | Where the token is stored |
 | `LINKEDIN_ACCESS_TOKEN` | local | | Use this token instead of signing in |
+| `LINKEDIN_FILE_DIRS` | local | `~/Downloads`, `~/Desktop`, `~/Pictures`, working directory | Comma-separated folders local images, documents and `Connections.csv` may be read from (symlinks out of them are refused) |
 | `PUBLIC_URL` | remote | | Public origin, e.g. `https://linkedin-mcp.example.com` (required) |
 | `SERVER_SECRET` | remote | random | At least 32 characters. If unset, connections break on every restart |
 | `HOST` / `PORT` | remote | `127.0.0.1` / `3000` | Listen address (the Docker image uses `0.0.0.0`) |

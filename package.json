@@ -41,7 +41,7 @@
     "start": "node dist/index.js",
     "setup": "node scripts/setup-claude-code.mjs",
     "bundle": "node scripts/bundle.mjs",
-    "pack:mcpb": "npm run bundle && npx -y @anthropic-ai/mcpb@2 pack mcpb claude-linkedin-connector.mcpb",
+    "pack:mcpb": "npm run bundle && mcpb pack mcpb claude-linkedin-connector.mcpb",
     "test:mutation": "node scripts/patch-stryker-vitest.mjs && stryker run"
   },
   "dependencies": {
@@ -52,6 +52,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@modelcontextprotocol/client": "^2.3.1",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",

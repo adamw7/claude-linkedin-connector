@@ -63,6 +63,7 @@ async function harness(options: { scopes?: string[]; mode?: 'local' | 'remote'; 
     apiBaseUrl: API_BASE,
     fetch: linkedin.fetch,
     allowPrivateNetwork: true,
+    localFileDirs: [files],
     sleep: async () => {},
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

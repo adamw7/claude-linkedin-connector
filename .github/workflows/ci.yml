@@ -43,4 +43,4 @@ jobs:
         run: |
           npm run bundle
           node mcpb/server/index.cjs --version
-          npx -y @anthropic-ai/mcpb@2 validate mcpb/manifest.json
+          npx --no-install mcpb validate mcpb/manifest.json

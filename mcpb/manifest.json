@@ -28,7 +28,8 @@
         "LINKEDIN_CLIENT_ID": "${user_config.client_id}",
         "LINKEDIN_CLIENT_SECRET": "${user_config.client_secret}",
         "LINKEDIN_REDIRECT_URI": "${user_config.redirect_uri}",
-        "LINKEDIN_SCOPES": "${user_config.scopes}"
+        "LINKEDIN_SCOPES": "${user_config.scopes}",
+        "LINKEDIN_FILE_DIRS": "${user_config.file_dirs}"
       }
     }
   },
@@ -75,6 +76,13 @@
       "title": "Scopes",
       "description": "LinkedIn permissions to request. Add w_member_social_feed and/or w_organization_social if your app has the Community Management API.",
       "default": "openid profile email w_member_social",
+      "required": false
+    },
+    "file_dirs": {
+      "type": "string",
+      "title": "Folders for local files",
+      "description": "Comma-separated folders Claude may read images, documents and Connections.csv from. Leave empty for Downloads, Desktop and Pictures.",
+      "default": "",
       "required": false
     }
   }

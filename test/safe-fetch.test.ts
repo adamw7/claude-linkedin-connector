@@ -20,6 +20,7 @@ describe('isBlockedAddress', () => {
     '::ffff:127.0.0.1',
     '::ffff:7f00:1',
     '64:ff9b::a9fe:a9fe',
+    '64:ff9b:1::a00:1',
     '2002:c0a8:0101::1',
     '[::1]',
   ])('blocks %s', (address) => {

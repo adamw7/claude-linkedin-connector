@@ -22,6 +22,8 @@ export interface ConnectorOptions {
   fetch?: typeof globalThis.fetch;
   /** Permit fetching media from private networks (tests only). */
   allowPrivateNetwork?: boolean;
+  /** Local mode: folders local file paths may point into. */
+  localFileDirs?: string[];
   sleep?: (ms: number) => Promise<void>;
   /** Called after every tool call, e.g. for an audit log. */
   onToolCall?: (event: ToolCallEvent) => void;
@@ -72,9 +74,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const memberEngagement = scopes.has('w_member_social_feed');
   const engagement = memberEngagement || organizations;
   const sleep = options.sleep ?? defaultSleep;
+  // A remote server must never read its own disk.
+  const localFileDirs = mode === 'local' ? (options.localFileDirs ?? []) : undefined;
   const mediaSources =
-    mode === 'local'
-      ? 'an absolute local file path, an http(s) URL or a base64 data: URI'
+    localFileDirs !== undefined
+      ? `an absolute local file path (inside ${localFileDirs.join(', ') || 'no folder: local files are disabled'}), an http(s) URL or a base64 data: URI`
       : 'an http(s) URL or a base64 data: URI (data: URIs up to about 20 MB; use a URL for larger files)';
 
   const server = new McpServer(
@@ -122,7 +126,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     organization ? organizationUrn(organization) : memberUrn(client, session);
 
   const load = (source: string, kind: MediaKind): Promise<LoadedMedia> =>
-    loadMedia(source, kind, { allowLocalFiles: mode === 'local', allowPrivateNetwork: options.allowPrivateNetwork });
+    loadMedia(source, kind, { localFileDirs, allowPrivateNetwork: options.allowPrivateNetwork });
 
   const upload = async (client: LinkedInClient, kind: AssetKind, owner: string, media: LoadedMedia): Promise<string> => {
     const { uploadUrl, urn } = await client.initializeUpload(kind, owner);
@@ -272,7 +276,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           args.file !== undefined
             ? (
                 await readSource(args.file, MAX_CONNECTIONS_BYTES, 'file', {
-                  allowLocalFiles: mode === 'local',
+                  localFileDirs,
                   allowPrivateNetwork: options.allowPrivateNetwork,
                 })
               ).data
