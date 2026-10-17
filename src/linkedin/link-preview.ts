@@ -33,9 +33,11 @@ function clean(value: string | undefined, maxLength: number): string | undefined
 /** Extracts Open Graph / Twitter card metadata, as LinkedIn's Posts API does not generate link previews itself. */
 export function parseLinkPreview(html: string, pageUrl: string): LinkPreview {
   const meta = new Map<string, string>();
-  for (const tag of html.matchAll(/<meta\b[^>]*>/gi)) {
+  // The page is untrusted: `[^<>]` and the lookbehind keep these scans linear, so a crafted page
+  // (`<meta<meta…`, or a huge attribute name) can't stall the server for minutes.
+  for (const tag of html.matchAll(/<meta\b[^<>]*>/gi)) {
     const attributes = new Map<string, string>();
-    for (const attr of tag[0].matchAll(/([a-zA-Z_:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) {
+    for (const attr of tag[0].matchAll(/(?<![a-zA-Z_:.-])([a-zA-Z_:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) {
       attributes.set(attr[1]!.toLowerCase(), attr[2] ?? attr[3] ?? attr[4] ?? '');
     }
     const key = (attributes.get('property') ?? attributes.get('name'))?.toLowerCase();
@@ -43,7 +45,7 @@ export function parseLinkPreview(html: string, pageUrl: string): LinkPreview {
     if (key && content && !meta.has(key)) meta.set(key, content);
   }
   const first = (keys: string[]) => keys.map((key) => meta.get(key)).find(Boolean);
-  const titleTag = /<title\b[^>]*>([^<]*)<\/title>/i.exec(html)?.[1];
+  const titleTag = /<title\b[^<>]*>([^<]*)<\/title>/i.exec(html)?.[1];
 
   const preview: LinkPreview = { title: clean(first(TITLE_KEYS) ?? titleTag, 200), description: clean(first(DESCRIPTION_KEYS), 300) };
   const image = first(IMAGE_KEYS);

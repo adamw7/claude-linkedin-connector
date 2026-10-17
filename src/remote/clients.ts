@@ -1,3 +1,4 @@
+import { isLoopbackHostname } from '../net/loopback.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import { safeEqual, type Sealer } from './crypto.js';
 
@@ -25,7 +26,6 @@ interface RegisteredClientPayload {
 }
 
 const AUTH_METHODS: ClientAuthMethod[] = ['none', 'client_secret_post', 'client_secret_basic'];
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const METADATA_CACHE_MS = 5 * 60_000;
 const METADATA_CACHE_LIMIT = 500;
 
@@ -42,7 +42,7 @@ function clientName(value: unknown): string | undefined {
 }
 
 export function isLoopbackUrl(url: URL): boolean {
-  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname);
+  return url.protocol === 'http:' && isLoopbackHostname(url.hostname);
 }
 
 /** Redirect URIs must be absolute, fragment-free, and https unless they are loopback. */

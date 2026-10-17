@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CLAUDE_REDIRECT_URIS, DEFAULT_SCOPES, type RemoteConfig } from '../src/config.js';
 import { ApiVersion } from '../src/linkedin/versions.js';
 import { createRemoteApp } from '../src/remote/app.js';
-import { API_BASE, FakeLinkedIn, OAUTH_BASE } from './helpers/fake-linkedin.js';
+import { API_BASE, FakeLinkedIn, MEMBER, OAUTH_BASE } from './helpers/fake-linkedin.js';
 
 interface Remote {
   base: string;
@@ -212,6 +212,21 @@ async function obtainCode(remote: Remote, extra: Record<string, string> = {}) {
   return { clientId: client.client_id as string, verifier, code: landing.searchParams.get('code')!, landing };
 }
 
+/** Runs the whole flow and returns an access token for /mcp. */
+async function accessToken(remote: Remote): Promise<string> {
+  const { clientId, verifier, code } = await obtainCode(remote);
+  const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+  return body.access_token as string;
+}
+
+function ping(remote: Remote, bearer: string): Promise<Response> {
+  return fetch(remote.mcpUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+  });
+}
+
 class TestOAuthProvider implements OAuthClientProvider {
   clientInfo: StoredOAuthClientInformation | undefined;
   saved: StoredOAuthTokens | undefined;
@@ -371,6 +386,13 @@ describe('remote connector discovery', () => {
     expect(response.status).toBe(401);
   });
 
+  it('rejects tokens issued by another deployment, even one sharing SERVER_SECRET', async () => {
+    const [first, second] = await Promise.all([startRemote(), startRemote()]);
+    const bearer = await accessToken(first);
+    expect((await ping(first, bearer)).status).toBe(200);
+    expect((await ping(second, bearer)).status).toBe(401);
+  });
+
   it('serves protected resource and authorization server metadata', async () => {
     const remote = await startRemote();
     for (const path of ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']) {
@@ -399,13 +421,25 @@ describe('remote connector discovery', () => {
     const post = (path: string, body: string) =>
       fetch(`${remote.base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
 
-    const tooLarge = await post('/mcp', JSON.stringify({ data: 'x'.repeat(31 * 1024 * 1024) }));
+    const huge = JSON.stringify({ data: 'x'.repeat(31 * 1024 * 1024) });
+    // Bodies are only read once the caller has authenticated.
+    expect((await post('/mcp', huge)).status).toBe(401);
+
+    const tooLarge = await fetch(remote.mcpUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${await accessToken(remote)}`, 'Content-Type': 'application/json' },
+      body: huge,
+    });
     expect(tooLarge.status).toBe(413);
     expect(await tooLarge.json()).toEqual({
       jsonrpc: '2.0',
       error: { code: -32600, message: expect.stringContaining('instead of a data: URI') },
       id: null,
     });
+
+    const tooLargeRegistration = await post('/register', JSON.stringify({ redirect_uris: [REDIRECT], padding: 'x'.repeat(100 * 1024) }));
+    expect(tooLargeRegistration.status).toBe(413);
+    expect(await tooLargeRegistration.json()).toEqual({ error: 'invalid_request', error_description: 'The request body is too large.' });
 
     const malformed = await post('/register', '{bad');
     expect(malformed.status).toBe(400);
@@ -515,6 +549,21 @@ describe('authorization endpoint', () => {
     expect(crossOrigin.status).toBe(400);
   });
 
+  it('re-checks the client when the consent is approved', async () => {
+    const allowedRedirectUris = [...CLAUDE_REDIRECT_URIS, 'loopback'];
+    const remote = await startRemote({ allowedRedirectUris });
+    const clientId = await client(remote);
+    const browser = new Browser();
+    const html = await (
+      await browser.get(authorizeUrl(remote, { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256' }))
+    ).text();
+    // The operator stops allowing loopback redirects while the consent page is open.
+    allowedRedirectUris.splice(allowedRedirectUris.indexOf('loopback'), 1);
+    const response = await browser.post(`${remote.base}/authorize`, { consent: hiddenField(html, 'consent'), csrf: hiddenField(html, 'csrf'), decision: 'approve' }, remote.base);
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('no longer allowed to connect');
+  });
+
   it('accepts an approval sent with an opaque Origin, since the CSRF cookie is what protects it', async () => {
     const remote = await startRemote();
     const clientId = await client(remote);
@@ -552,6 +601,23 @@ describe('authorization endpoint', () => {
     const allowed = await startRemote({ allowedMembers: ['ADA@example.com'.toLowerCase()] });
     expect((await obtainCode(allowed)).landing.searchParams.get('code')).toBeTruthy();
   });
+
+  it('matches the allowlist only against a verified email', async () => {
+    const remote = await startRemote({ allowedMembers: ['ada@example.com'] });
+    remote.linkedin.override(({ url }) =>
+      url.pathname === '/v2/userinfo' ? Response.json({ ...MEMBER, email_verified: false }) : undefined,
+    );
+    expect((await obtainCode(remote)).landing.searchParams.get('error')).toBe('access_denied');
+  });
+
+  it('cuts off issued tokens when a member is removed from the allowlist', async () => {
+    const allowedMembers = ['abc123'];
+    const remote = await startRemote({ allowedMembers });
+    const bearer = await accessToken(remote);
+    expect((await ping(remote, bearer)).status).toBe(200);
+    allowedMembers.splice(0, 1, 'someone-else');
+    expect((await ping(remote, bearer)).status).toBe(401);
+  });
 });
 
 describe('rate limiting', () => {
@@ -575,16 +641,9 @@ describe('rate limiting', () => {
 
   it('limits MCP requests per connected account', async () => {
     const remote = await startRemote({ mcpRateLimit: 1 });
-    const { clientId, verifier, code } = await obtainCode(remote);
-    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
-    const ping = () =>
-      fetch(remote.mcpUrl, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
-      });
-    expect((await ping()).status).not.toBe(429);
-    const limited = await ping();
+    const bearer = await accessToken(remote);
+    expect((await ping(remote, bearer)).status).not.toBe(429);
+    const limited = await ping(remote, bearer);
     expect(limited.status).toBe(429);
     expect(await limited.json()).toMatchObject({ jsonrpc: '2.0', error: { code: -32600 } });
     // Unauthenticated requests are challenged, not counted against anyone.
@@ -638,6 +697,24 @@ describe('token endpoint', () => {
     const basic = Buffer.from(`${encodeURIComponent(client.client_id)}:${encodeURIComponent(client.client_secret)}`).toString('base64');
     const ok = await token(remote, form, { Authorization: `Basic ${basic}` });
     expect(ok.status).toBe(200);
+  });
+
+  it('rejects a client_id that contradicts the Authorization header', async () => {
+    const remote = await startRemote();
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const basic = Buffer.from(`someone-else:secret`).toString('base64');
+    const result = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier }, { Authorization: `Basic ${basic}` });
+    expect(result).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+  });
+
+  it('issues no token for a LinkedIn grant that has already expired', async () => {
+    const remote = await startRemote();
+    remote.linkedin.override(({ url }) =>
+      url.pathname === '/oauth/v2/accessToken' ? Response.json({ access_token: 'li-token', expires_in: 0, scope: remote.linkedin.grantedScope }) : undefined,
+    );
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const result = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+    expect(result.body).toMatchObject({ error: 'invalid_grant', error_description: expect.stringContaining('already expired') });
   });
 
   it('only supports the authorization_code grant', async () => {

@@ -77,6 +77,13 @@ describe('LoopbackLogin', () => {
     expect(await loopback.start()).toBe(first);
   });
 
+  it('shares one listener between concurrent starts', async () => {
+    const { loopback } = await login();
+    const [first, second] = await Promise.all([loopback.start(), loopback.start()]);
+    pending.push(first);
+    expect(second).toBe(first);
+  });
+
   it('exchanges the code, escapes the member name and closes the listener', async () => {
     const { loopback, received, linkedin } = await login();
     const flow = await loopback.start();
