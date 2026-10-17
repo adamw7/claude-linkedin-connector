@@ -7,6 +7,8 @@ import { ConfigError } from './errors.js';
 import { ApiVersion } from './linkedin/versions.js';
 import { createConnectorServer } from './mcp/server.js';
 import { createRemoteApp } from './remote/app.js';
+import { jsonLogger } from './remote/logger.js';
+import { drainServer } from './remote/shutdown.js';
 import { NAME, VERSION } from './version.js';
 
 const HELP = `${NAME} ${VERSION} — LinkedIn connector (MCP server) for Claude
@@ -63,25 +65,40 @@ function runStdio(): void {
   process.stdin.once('close', () => setTimeout(() => process.exit(0), 100).unref());
 }
 
+/** The HTTP server logs JSON lines to stderr, for log collectors. */
 function runHttp(): void {
-  const config = loadRemoteConfig(process.env, log);
-  const version = new ApiVersion(config.apiVersion, undefined, log);
-  const { app, mcpUrl, close } = createRemoteApp({ config, version });
+  const logger = jsonLogger();
+  const warn = (message: string) => logger('warn', 'warning', { message });
+  const config = loadRemoteConfig(process.env, warn);
+  const version = new ApiVersion(config.apiVersion, undefined, warn);
+  const { app, mcpUrl, close } = createRemoteApp({ config, version, logger });
   const server = app.listen(config.port, config.host, (error?: Error) => {
     if (error) {
-      log(`Could not start the HTTP server: ${error.message}`);
+      logger('error', 'listen_failed', { error });
       process.exit(1);
     }
-    log(`Listening on ${config.host}:${config.port}`);
-    log(`MCP endpoint (add this URL to Claude): ${mcpUrl.href}`);
-    log(`LinkedIn redirect URL (add it to your LinkedIn app): ${new URL('/oauth/callback', config.publicUrl).href}`);
+    logger('info', 'listening', {
+      version: VERSION,
+      address: `${config.host}:${config.port}`,
+      mcpUrl: mcpUrl.href,
+      linkedInRedirectUrl: new URL('/oauth/callback', config.publicUrl).href,
+      allowedMembers: config.allowedMembers.includes('*') ? 'anyone' : config.allowedMembers.length,
+    });
   });
-  const shutdown = () => {
-    server.close();
-    void close().finally(() => process.exit(0));
+  let stopping = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (stopping) return;
+    stopping = true;
+    logger('info', 'shutting_down', { signal });
+    void drainServer(server, close, config.shutdownTimeoutMs, logger).then((clean) => process.exit(clean ? 0 : 1));
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+  process.on('uncaughtException', (error) => {
+    logger('error', 'uncaught_exception', { error });
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (error) => logger('error', 'unhandled_rejection', { error }));
 }
 
 async function runLogin(args: string[]): Promise<void> {

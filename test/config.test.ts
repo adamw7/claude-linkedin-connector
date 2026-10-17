@@ -9,6 +9,7 @@ const remoteEnv = {
   LINKEDIN_CLIENT_SECRET: 'secret',
   PUBLIC_URL: 'https://linkedin-mcp.example.com',
   SERVER_SECRET: 'a'.repeat(32),
+  LINKEDIN_ALLOWED_MEMBERS: '*',
 };
 
 describe('configuration', () => {
@@ -30,13 +31,39 @@ describe('configuration', () => {
 
   it('validates remote settings', () => {
     const config = loadRemoteConfig(remoteEnv);
-    expect(config).toMatchObject({ port: 3000, host: '127.0.0.1', ephemeralSecret: false, allowedMembers: [], allowedHosts: undefined });
+    expect(config).toMatchObject({
+      port: 3000,
+      host: '127.0.0.1',
+      ephemeralSecret: false,
+      allowedMembers: ['*'],
+      allowedHosts: undefined,
+      trustProxy: false,
+      oauthRateLimit: 60,
+      mcpRateLimit: 120,
+      shutdownTimeoutMs: 8000,
+    });
     expect(config.allowedRedirectUris).toContain('https://claude.ai/api/mcp/auth_callback');
     expect(() => loadRemoteConfig({ ...remoteEnv, LINKEDIN_CLIENT_ID: '' })).toThrow(/LINKEDIN_CLIENT_ID/);
     expect(() => loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'http://example.com' })).toThrow(/https/);
     expect(() => loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'https://example.com/linkedin' })).toThrow(/without a path/);
     expect(() => loadRemoteConfig({ ...remoteEnv, SERVER_SECRET: 'short' })).toThrow(/32 characters/);
     expect(loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'http://localhost:3000' }).publicUrl.href).toBe('http://localhost:3000/');
+  });
+
+  it('requires an explicit member allowlist unless the server is only on localhost', () => {
+    expect(() => loadRemoteConfig({ ...remoteEnv, LINKEDIN_ALLOWED_MEMBERS: undefined })).toThrow(/LINKEDIN_ALLOWED_MEMBERS is required/);
+    expect(() => loadRemoteConfig({ ...remoteEnv, LINKEDIN_ALLOWED_MEMBERS: ' , ' })).toThrow(/LINKEDIN_ALLOWED_MEMBERS/);
+    const local = loadRemoteConfig({ ...remoteEnv, LINKEDIN_ALLOWED_MEMBERS: undefined, PUBLIC_URL: 'http://localhost:3000' });
+    expect(local.allowedMembers).toEqual(['*']);
+  });
+
+  it('reads proxy, rate limit and shutdown settings', () => {
+    const config = loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: '1', RATE_LIMIT_OAUTH: '0', RATE_LIMIT_MCP: '30', SHUTDOWN_TIMEOUT: '20' });
+    expect(config).toMatchObject({ trustProxy: 1, oauthRateLimit: 0, mcpRateLimit: 30, shutdownTimeoutMs: 20_000 });
+    expect(loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+    expect(loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: 'loopback, 10.0.0.0/8' }).trustProxy).toBe('loopback, 10.0.0.0/8');
+    expect(() => loadRemoteConfig({ ...remoteEnv, RATE_LIMIT_MCP: '-1' })).toThrow(/RATE_LIMIT_MCP/);
+    expect(() => loadRemoteConfig({ ...remoteEnv, SHUTDOWN_TIMEOUT: '1.5' })).toThrow(/SHUTDOWN_TIMEOUT/);
   });
 
   it('generates an ephemeral secret with a warning', () => {

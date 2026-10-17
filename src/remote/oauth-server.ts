@@ -7,6 +7,7 @@ import type { ApiVersion } from '../linkedin/versions.js';
 import { HOMEPAGE } from '../version.js';
 import { redirectUriMatches, type ClientRegistry, type OAuthClient } from './clients.js';
 import { pkceChallenge, randomToken, safeEqual, type Sealer } from './crypto.js';
+import { silentLogger, type Logger } from './logger.js';
 import { sendConsentPage, sendErrorPage } from './pages.js';
 
 /** The LinkedIn credentials an access token carries (encrypted inside it). */
@@ -70,6 +71,7 @@ export interface OAuthServerOptions {
   version: ApiVersion;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
+  logger?: Logger;
 }
 
 export interface OAuthServer {
@@ -156,6 +158,7 @@ function cors(req: Request, res: Response, next: NextFunction): void {
 export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   const { config, sealer, clients, resource } = options;
   const now = options.now ?? Date.now;
+  const logger = options.logger ?? silentLogger;
   const nowSeconds = () => Math.floor(now() / 1000);
   const issuer = config.publicUrl.origin;
   const callbackUrl = new URL('/oauth/callback', config.publicUrl).href;
@@ -303,6 +306,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
       const tokens = await exchangeAuthorizationCode(linkedInApp, code, callbackUrl);
       grant = { at: tokens.accessToken, sc: tokens.scopes, exp: tokens.expiresAt };
     } catch (error) {
+      logger('warn', 'linkedin_token_exchange_failed', { clientId: request.cid, error });
       back({ error: 'server_error', error_description: `LinkedIn sign-in failed: ${(error as Error).message}` });
       return;
     }
@@ -313,13 +317,15 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     } catch {
       // Without OpenID scopes there is no userinfo; tools report what is missing.
     }
-    if (config.allowedMembers.length > 0) {
+    if (!config.allowedMembers.includes('*')) {
       const identities = [grant.sub, grant.email].filter((id): id is string => !!id).map((id) => id.toLowerCase());
       if (!identities.some((id) => config.allowedMembers.includes(id))) {
+        logger('warn', 'member_not_allowed', { member: grant.sub, clientId: request.cid });
         back({ error: 'access_denied', error_description: 'This LinkedIn account is not allowed to use this connector.' });
         return;
       }
     }
+    logger('info', 'member_authorized', { member: grant.sub, clientId: request.cid, scopes: grant.sc });
     const codePayload: CodePayload = { req: request, li: grant, jti: randomToken(16), exp: nowSeconds() + CODE_TTL_S };
     back({ code: sealer.seal('code', codePayload) });
   });

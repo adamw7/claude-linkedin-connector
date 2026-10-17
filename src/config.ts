@@ -40,10 +40,18 @@ export interface RemoteConfig extends CommonConfig {
   ephemeralSecret: boolean;
   /** Entries: exact URIs, `https://host/prefix*`, `loopback`, or `*`. */
   allowedRedirectUris: string[];
-  /** LinkedIn member IDs or emails allowed to connect; empty allows anyone. */
+  /** LinkedIn member IDs or emails allowed to connect (lowercase); `*` allows anyone. */
   allowedMembers: string[];
   /** Host header values to accept; undefined disables the check. */
   allowedHosts: string[] | undefined;
+  /** Express `trust proxy` setting, so client IPs are read from X-Forwarded-For behind a proxy. */
+  trustProxy: boolean | number | string;
+  /** Requests per minute per client IP to the OAuth endpoints; 0 disables. */
+  oauthRateLimit: number;
+  /** Requests per minute per connected account to /mcp; 0 disables. */
+  mcpRateLimit: number;
+  /** How long to wait for in-flight requests on shutdown, in milliseconds. */
+  shutdownTimeoutMs: number;
 }
 
 type Env = NodeJS.ProcessEnv;
@@ -72,6 +80,21 @@ function common(env: Env): CommonConfig {
     apiBaseUrl: value(env, 'LINKEDIN_API_BASE_URL') ?? LINKEDIN_API_BASE,
     oauthBaseUrl: value(env, 'LINKEDIN_OAUTH_BASE_URL') ?? LINKEDIN_OAUTH_BASE,
   };
+}
+
+function count(env: Env, name: string, fallback: number): number {
+  const raw = value(env, name);
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new ConfigError(`${name} must be a whole number, got "${raw}".`);
+  return parsed;
+}
+
+/** `true`/`false`, a hop count, or the subnets Express accepts (e.g. `loopback, 10.0.0.0/8`). */
+function trustProxy(raw: string | undefined): boolean | number | string {
+  if (raw === undefined || raw === 'false') return false;
+  if (raw === 'true') return true;
+  return /^\d+$/.test(raw) ? Number(raw) : raw;
 }
 
 export function loadLocalConfig(env: Env = process.env): LocalConfig {
@@ -114,6 +137,14 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
     throw new ConfigError('SERVER_SECRET must be at least 32 characters (try: openssl rand -base64 32).');
   }
 
+  // A public server must say who may use it; local testing defaults to anyone.
+  const allowedMembers = list(env, 'LINKEDIN_ALLOWED_MEMBERS') ?? (loopback ? ['*'] : undefined);
+  if (!allowedMembers?.length) {
+    throw new ConfigError(
+      'LINKEDIN_ALLOWED_MEMBERS is required: list the LinkedIn emails or member IDs allowed to connect, or set it to * to allow anyone.',
+    );
+  }
+
   return {
     ...base,
     clientId: base.clientId!,
@@ -124,7 +155,11 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
     secret,
     ephemeralSecret,
     allowedRedirectUris: list(env, 'OAUTH_ALLOWED_REDIRECT_URIS') ?? [...CLAUDE_REDIRECT_URIS, 'loopback'],
-    allowedMembers: (list(env, 'LINKEDIN_ALLOWED_MEMBERS') ?? []).map((member) => member.toLowerCase()),
+    allowedMembers: allowedMembers.map((member) => member.toLowerCase()),
     allowedHosts: list(env, 'ALLOWED_HOSTS'),
+    trustProxy: trustProxy(value(env, 'TRUST_PROXY')),
+    oauthRateLimit: count(env, 'RATE_LIMIT_OAUTH', 60),
+    mcpRateLimit: count(env, 'RATE_LIMIT_MCP', 120),
+    shutdownTimeoutMs: count(env, 'SHUTDOWN_TIMEOUT', 8) * 1000,
   };
 }

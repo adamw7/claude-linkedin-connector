@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the remote server now refuses to start without `LINKEDIN_ALLOWED_MEMBERS`. List the
+  LinkedIn emails or member IDs allowed to connect, or set it to `*` to keep allowing anyone. Servers
+  with a localhost `PUBLIC_URL` still allow anyone by default.
+- The remote server logs JSON lines to stderr instead of plain text.
+
+### Added
+
+- Structured logs for the remote server: requests, sign-ins, an audit entry for every tool call (who,
+  which tool, outcome) and server errors with stack traces. Tokens, codes and post text are never logged.
+- Rate limits for the remote server: `RATE_LIMIT_OAUTH` per client IP on the OAuth endpoints and
+  `RATE_LIMIT_MCP` per connected account on `/mcp`, plus `TRUST_PROXY` to see client IPs behind a proxy.
+
+### Fixed
+
+- The remote server now lets in-flight requests finish on `SIGTERM`/`SIGINT` (up to `SHUTDOWN_TIMEOUT`
+  seconds) instead of exiting immediately and cutting off uploads and posts.
+
 ## [0.1.0] - 2026-10-17
 
 First release.

@@ -117,7 +117,8 @@ C4Component
   System_Ext(web, "Public web")
 
   Container_Boundary(http, "Remote MCP server") {
-    Component(app, "Remote app", "src/remote/app.ts, Express", "Host validation, CORS, OAuth metadata, bearer auth on /mcp, /healthz")
+    Component(app, "Remote app", "src/remote/app.ts, Express", "Host validation, CORS, OAuth metadata, bearer auth and rate limits (src/remote/rate-limit.ts) on /mcp and OAuth endpoints, /healthz")
+    Component(logger, "Logger", "src/remote/logger.ts", "JSON-lines request, sign-in, tool-call audit and error logs on stderr")
     Component(oauth, "OAuth authorization server", "src/remote/oauth-server.ts", "/register, /authorize, /oauth/callback, /token; PKCE, single-use codes, token verifier")
     Component(clients, "ClientRegistry + RedirectPolicy", "src/remote/clients.ts", "Dynamic client registration and client ID metadata documents; redirect URI allow-list")
     Component(crypto, "Sealer", "src/remote/crypto.ts", "Keyed by SERVER_SECRET: signs client IDs and consent state; seals codes and access tokens (AES-256-GCM)")
@@ -133,6 +134,8 @@ C4Component
   Rel(app, oauth, "Routes OAuth, verifies bearer tokens")
   Rel(app, mcp, "Creates per request")
   Rel(app, connAuth, "Creates from auth info")
+  Rel(app, logger, "Requests, errors, tool-call audit")
+  Rel(oauth, logger, "Sign-ins")
   Rel(oauth, clients, "Looks up / registers clients")
   Rel(oauth, crypto, "Signs and seals state, codes, tokens")
   Rel(oauth, pages, "Renders")

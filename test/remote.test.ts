@@ -19,6 +19,7 @@ interface Remote {
   base: string;
   mcpUrl: URL;
   linkedin: FakeLinkedIn;
+  logs: Array<Record<string, unknown>>;
   close: () => Promise<void>;
 }
 
@@ -49,15 +50,21 @@ async function startRemote(
     secret: 'test-secret-that-is-at-least-32-characters-long',
     ephemeralSecret: false,
     allowedRedirectUris: [...CLAUDE_REDIRECT_URIS, 'loopback'],
-    allowedMembers: [],
+    allowedMembers: ['*'],
     allowedHosts: undefined,
+    trustProxy: false,
+    oauthRateLimit: 0,
+    mcpRateLimit: 0,
+    shutdownTimeoutMs: 1000,
     ...overrides,
   };
+  const logs: Array<Record<string, unknown>> = [];
   const remote = createRemoteApp({
     config,
     version: new ApiVersion('202609'),
     fetch: linkedin.fetch,
     allowPrivateNetwork: true,
+    logger: (level, event, fields) => logs.push({ level, event, ...fields }),
     ...(fetchClientMetadata ? { fetchClientMetadata } : {}),
   });
   server.on('request', remote.app);
@@ -65,6 +72,7 @@ async function startRemote(
     base: publicUrl.origin,
     mcpUrl: remote.mcpUrl,
     linkedin,
+    logs,
     close: async () => {
       await remote.close();
       server.closeAllConnections();
@@ -285,6 +293,15 @@ describe('remote connector end to end', () => {
     // The member was resolved during sign-in, so no userinfo call was needed when posting.
     expect(remote.linkedin.find('GET', '/v2/userinfo')).toHaveLength(1);
     await client.close();
+
+    expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'member_authorized', member: 'abc123' }));
+    expect(remote.logs).toContainEqual(
+      expect.objectContaining({ level: 'info', event: 'tool_call', tool: 'linkedin_create_post', ok: true, member: 'abc123' }),
+    );
+    expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'GET', path: '/oauth/callback', status: 302 }));
+    // Neither tokens, codes nor post text reach the logs.
+    const logged = JSON.stringify(remote.logs);
+    for (const secret of ['li-token', 'li-code', provider.saved!.access_token, 'Hello from Claude']) expect(logged).not.toContain(secret);
   });
 
   it('works with a Client ID Metadata Document instead of registration', async () => {
@@ -530,8 +547,47 @@ describe('authorization endpoint', () => {
     const remote = await startRemote({ allowedMembers: ['someone@example.com'] });
     const { landing } = await obtainCode(remote);
     expect(landing.searchParams.get('error')).toBe('access_denied');
+    expect(remote.logs).toContainEqual(expect.objectContaining({ level: 'warn', event: 'member_not_allowed', member: 'abc123' }));
     const allowed = await startRemote({ allowedMembers: ['ADA@example.com'.toLowerCase()] });
     expect((await obtainCode(allowed)).landing.searchParams.get('code')).toBeTruthy();
+  });
+});
+
+describe('rate limiting', () => {
+  it('limits OAuth endpoints per client IP', async () => {
+    const remote = await startRemote({ oauthRateLimit: 2 });
+    const metadata = { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' };
+    expect((await register(remote, metadata)).status).toBe(201);
+    expect((await register(remote, metadata)).status).toBe(201);
+    const response = await fetch(`${remote.base}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata),
+    });
+    expect(response.status).toBe(429);
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await response.json()).toMatchObject({ error: 'too_many_requests' });
+    expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', path: '/register', status: 429 }));
+    // Discovery and health checks are not limited.
+    expect((await fetch(`${remote.base}/healthz`)).status).toBe(200);
+  });
+
+  it('limits MCP requests per connected account', async () => {
+    const remote = await startRemote({ mcpRateLimit: 1 });
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const { body } = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+    const ping = () =>
+      fetch(remote.mcpUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+      });
+    expect((await ping()).status).not.toBe(429);
+    const limited = await ping();
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toMatchObject({ jsonrpc: '2.0', error: { code: -32600 } });
+    // Unauthenticated requests are challenged, not counted against anyone.
+    expect((await fetch(remote.mcpUrl, { method: 'POST' })).status).toBe(401);
   });
 });
 
