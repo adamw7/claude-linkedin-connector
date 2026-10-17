@@ -233,6 +233,8 @@ src/
   net/safe-fetch.ts   fetching URLs without reaching private networks
 ```
 
+See [`docs/architecture.md`](docs/architecture.md) for C4 diagrams (context, containers, components).
+
 Tests run against an in-memory fake of LinkedIn, including an end-to-end OAuth flow driven by the
 official MCP client SDK. `test/architecture.test.ts` uses [ArchUnitTS](https://github.com/LukasNiessen/ArchUnitTS)
 to keep the module layering above in place: no import cycles, `linkedin/` and `net/` know nothing of MCP
