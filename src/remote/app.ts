@@ -56,18 +56,12 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   const { config } = options;
   const mcpUrl = new URL('/mcp', config.publicUrl);
   const sealer = new Sealer(config.secret);
+  const { version, fetch, allowPrivateNetwork } = options;
   const clients = new ClientRegistry(sealer, new RedirectPolicy(config.allowedRedirectUris), {
-    ...(options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
-    ...(options.fetchClientMetadata ? { fetchDocument: options.fetchClientMetadata } : {}),
+    allowPrivateNetwork,
+    fetchDocument: options.fetchClientMetadata,
   });
-  const oauth = createOAuthServer({
-    config,
-    sealer,
-    clients,
-    resource: mcpUrl,
-    version: options.version,
-    ...(options.fetch ? { fetch: options.fetch } : {}),
-  });
+  const oauth = createOAuthServer({ config, sealer, clients, resource: mcpUrl, version, fetch });
 
   const app = express();
   app.disable('x-powered-by');
@@ -97,11 +91,11 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
     createConnectorServer({
       mode: 'remote',
       auth: new ConnectorAuth(grantFromAuthInfo(ctx.authInfo)),
-      version: options.version,
+      version,
       scopes: config.scopes,
       apiBaseUrl: config.apiBaseUrl,
-      ...(options.fetch ? { fetch: options.fetch } : {}),
-      ...(options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
+      fetch,
+      allowPrivateNetwork,
     }),
   );
   const mcp = toNodeHandler(handler);

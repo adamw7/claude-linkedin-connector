@@ -45,7 +45,7 @@ export class LocalAuth implements LinkedInAuth {
         'LinkedIn sign-in needs your LinkedIn app credentials: set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET (see the README), or provide LINKEDIN_ACCESS_TOKEN directly.',
       );
     }
-    return { clientId, clientSecret, scopes, oauthBaseUrl, ...(this.options.fetch ? { fetch: this.options.fetch } : {}) };
+    return { clientId, clientSecret, scopes, oauthBaseUrl, fetch: this.options.fetch };
   }
 
   private isExpired(expiresAt: number | undefined): boolean {
@@ -62,12 +62,7 @@ export class LocalAuth implements LinkedInAuth {
       token = await this.tryRefresh(token);
       if (!token) throw new NotAuthenticatedError(`Your LinkedIn sign-in has expired. ${SIGN_IN_HINT}`);
     }
-    return {
-      accessToken: token.accessToken,
-      scopes: token.scopes,
-      ...(token.expiresAt !== undefined ? { expiresAt: token.expiresAt } : {}),
-      ...memberFields(token.member),
-    };
+    return { accessToken: token.accessToken, scopes: token.scopes, expiresAt: token.expiresAt, ...memberFields(token.member) };
   }
 
   private async tryRefresh(token: StoredToken): Promise<StoredToken | undefined> {
@@ -114,7 +109,7 @@ export class LocalAuth implements LinkedInAuth {
       authenticated: true,
       source: 'token-file',
       scopes: session.scopes,
-      ...(session.expiresAt !== undefined ? { expiresAt: new Date(session.expiresAt).toISOString() } : {}),
+      expiresAt: session.expiresAt === undefined ? undefined : new Date(session.expiresAt).toISOString(),
       ...statusMember(session.memberId ? { id: session.memberId, name: session.name, email: session.email } : undefined),
       message: `Signed in${session.name ? ` as ${session.name}` : ''}${expires} (token stored in ${this.store.path}).`,
     };
@@ -153,14 +148,9 @@ export class LocalAuth implements LinkedInAuth {
   private async saveTokens(tokens: LinkedInTokens): Promise<string | undefined> {
     let member: MemberInfo | undefined;
     try {
-      const client = new LinkedInClient({
-        accessToken: tokens.accessToken,
-        version: this.options.version,
-        apiBaseUrl: this.config.apiBaseUrl,
-        ...(this.options.fetch ? { fetch: this.options.fetch } : {}),
-      });
-      const info = await client.getUserInfo();
-      member = { id: info.sub, ...(info.name ? { name: info.name } : {}), ...(info.email ? { email: info.email } : {}) };
+      const { version, fetch } = this.options;
+      const info = await new LinkedInClient({ accessToken: tokens.accessToken, version, apiBaseUrl: this.config.apiBaseUrl, fetch }).getUserInfo();
+      member = { id: info.sub, name: info.name, email: info.email };
     } catch {
       // Without the openid/profile scopes there is no userinfo; posting will report the problem.
     }
@@ -176,34 +166,22 @@ function toStoredToken(
   previousRefreshToken?: string,
   previousRefreshExpiry?: number,
 ): StoredToken {
-  const refreshToken = tokens.refreshToken ?? previousRefreshToken;
-  const refreshTokenExpiresAt = tokens.refreshTokenExpiresAt ?? (tokens.refreshToken ? undefined : previousRefreshExpiry);
   return {
     version: 1,
     accessToken: tokens.accessToken,
     scopes: tokens.scopes,
     obtainedAt: now,
-    ...(tokens.expiresAt !== undefined ? { expiresAt: tokens.expiresAt } : {}),
-    ...(refreshToken ? { refreshToken } : {}),
-    ...(refreshTokenExpiresAt !== undefined ? { refreshTokenExpiresAt } : {}),
-    ...(member ? { member } : {}),
+    expiresAt: tokens.expiresAt,
+    refreshToken: tokens.refreshToken ?? previousRefreshToken,
+    refreshTokenExpiresAt: tokens.refreshTokenExpiresAt ?? (tokens.refreshToken ? undefined : previousRefreshExpiry),
+    member,
   };
 }
 
 function memberFields(member: MemberInfo | undefined): Partial<LinkedInSession> {
-  if (!member) return {};
-  return {
-    memberId: member.id,
-    ...(member.name ? { name: member.name } : {}),
-    ...(member.email ? { email: member.email } : {}),
-  };
+  return member ? { memberId: member.id, name: member.name, email: member.email } : {};
 }
 
-function statusMember(member: { id: string; name?: string | undefined; email?: string | undefined } | undefined): Partial<AuthStatus> {
-  if (!member) return {};
-  return {
-    memberUrn: personUrn(member.id),
-    ...(member.name ? { name: member.name } : {}),
-    ...(member.email ? { email: member.email } : {}),
-  };
+function statusMember(member: MemberInfo | undefined): Partial<AuthStatus> {
+  return member ? { memberUrn: personUrn(member.id), name: member.name, email: member.email } : {};
 }

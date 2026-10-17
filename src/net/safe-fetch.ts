@@ -9,41 +9,17 @@ export class FetchError extends Error {
   override readonly name = 'FetchError';
 }
 
-const BLOCKED = buildBlockList();
+const BLOCKED_RANGES = {
+  ipv4: '0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4',
+  ipv6: '::/128 ::1/128 100::/64 2001::/32 2001:db8::/32 fc00::/7 fe80::/10 fec0::/10 ff00::/8',
+} as const;
 
-function buildBlockList(): BlockList {
-  const list = new BlockList();
-  const ipv4: Array<[string, number]> = [
-    ['0.0.0.0', 8],
-    ['10.0.0.0', 8],
-    ['100.64.0.0', 10],
-    ['127.0.0.0', 8],
-    ['169.254.0.0', 16],
-    ['172.16.0.0', 12],
-    ['192.0.0.0', 24],
-    ['192.0.2.0', 24],
-    ['192.88.99.0', 24],
-    ['192.168.0.0', 16],
-    ['198.18.0.0', 15],
-    ['198.51.100.0', 24],
-    ['203.0.113.0', 24],
-    ['224.0.0.0', 4],
-    ['240.0.0.0', 4],
-  ];
-  const ipv6: Array<[string, number]> = [
-    ['::', 128],
-    ['::1', 128],
-    ['100::', 64],
-    ['2001::', 32],
-    ['2001:db8::', 32],
-    ['fc00::', 7],
-    ['fe80::', 10],
-    ['fec0::', 10],
-    ['ff00::', 8],
-  ];
-  for (const [network, prefix] of ipv4) list.addSubnet(network, prefix, 'ipv4');
-  for (const [network, prefix] of ipv6) list.addSubnet(network, prefix, 'ipv6');
-  return list;
+const BLOCKED = new BlockList();
+for (const [family, ranges] of Object.entries(BLOCKED_RANGES) as Array<['ipv4' | 'ipv6', string]>) {
+  for (const range of ranges.split(' ')) {
+    const [network, prefix] = range.split('/');
+    BLOCKED.addSubnet(network!, Number(prefix), family);
+  }
 }
 
 function ipv6Hextets(address: string): number[] | undefined {

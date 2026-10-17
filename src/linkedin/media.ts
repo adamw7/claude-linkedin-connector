@@ -71,13 +71,9 @@ async function readSource(source: string, kind: MediaKind, options: MediaSourceO
   }
 
   if (/^https?:\/\//i.test(trimmed)) {
-    const result = await safeFetch(trimmed, {
-      maxBytes,
-      timeoutMs: 60_000,
-      ...(options.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
-    });
+    const result = await safeFetch(trimmed, { maxBytes, timeoutMs: 60_000, allowPrivateNetwork: options.allowPrivateNetwork });
     const name = basename(new URL(result.url).pathname);
-    return { data: result.data, ...(name ? { filename: decodeURIComponent(name) } : {}) };
+    return { data: result.data, filename: name ? decodeURIComponent(name) : undefined };
   }
 
   if (!options.allowLocalFiles) {
@@ -110,7 +106,7 @@ export async function loadMedia(source: string, kind: MediaKind, options: MediaS
     const expected = kind === 'image' ? 'JPEG, PNG or GIF image' : `${DOCUMENT_TYPES} document`;
     throw new UserInputError(`"${shorten(source)}" is not a ${expected}.`);
   }
-  return { data, mimeType, ...(filename ? { filename } : {}) };
+  return { data, mimeType, filename };
 }
 
 function shorten(source: string): string {
