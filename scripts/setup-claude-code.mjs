@@ -53,7 +53,11 @@ function cmdArgument(arg) {
 /** Resolves a command on the PATH to the file Windows would run, e.g. C:\...\npm.cmd. */
 function whereIs(command) {
   const result = spawnSync('where', [command], { encoding: 'utf8', windowsHide: true });
-  return result.status === 0 ? result.stdout.split(/\r?\n/)[0].trim() : undefined;
+  // `where` also lists npm's extensionless shell-script shims, which Windows can't run.
+  return result.stdout
+    ?.split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /\.(exe|cmd|bat|com)$/i.test(line));
 }
 
 function spawnArgs(command, args) {
