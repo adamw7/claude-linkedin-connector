@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+mcpb/server/
+*.mcpb
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

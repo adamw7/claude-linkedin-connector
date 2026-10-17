@@ -1,0 +1,52 @@
+{
+  "name": "claude-linkedin-connector",
+  "version": "0.1.0",
+  "description": "MCP connector that lets Claude read your LinkedIn profile and publish, manage and engage with LinkedIn posts.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "linkedin",
+    "connector"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamw7/claude-linkedin-connector.git"
+  },
+  "type": "module",
+  "bin": {
+    "claude-linkedin-connector": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test",
+    "start": "node dist/index.js",
+    "bundle": "node scripts/bundle.mjs",
+    "pack:mcpb": "npm run bundle && npx -y @anthropic-ai/mcpb@2 pack mcpb claude-linkedin-connector.mcpb"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/express": "^2.0.2",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

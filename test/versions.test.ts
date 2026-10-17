@@ -1,0 +1,38 @@
+import { describe, expect, it } from 'vitest';
+import { ApiVersion, DEFAULT_API_VERSION, isValidApiVersion, recentApiVersions } from '../src/linkedin/versions.js';
+
+const rejected = () => new Response('{"code":"NONEXISTENT_VERSION"}', { status: 426 });
+const accepted = () => new Response('{}', { status: 200 });
+
+describe('LinkedIn API versions', () => {
+  it('validates version strings', () => {
+    expect(isValidApiVersion(DEFAULT_API_VERSION)).toBe(true);
+    expect(isValidApiVersion('202401.01')).toBe(true);
+    expect(isValidApiVersion('2024-01')).toBe(false);
+    expect(isValidApiVersion('20240101')).toBe(false);
+  });
+
+  it('lists recent months newest first, across a year boundary', () => {
+    expect(recentApiVersions(new Date('2026-02-10T00:00:00Z'), 4)).toEqual(['202602', '202601', '202512', '202511']);
+  });
+
+  it('switches to the newest live version when the configured one is rejected', async () => {
+    const logs: string[] = [];
+    const version = new ApiVersion('202409', () => new Date('2026-10-17T00:00:00Z'), (m) => logs.push(m));
+    const tried: string[] = [];
+    const response = await version.recover('202409', async (candidate) => {
+      tried.push(candidate);
+      return candidate === '202609' ? accepted() : rejected();
+    });
+    expect(response?.status).toBe(200);
+    expect(tried).toEqual(['202610', '202609']);
+    expect(version.value).toBe('202609');
+    expect(logs[0]).toContain('switched to 202609');
+  });
+
+  it('gives up when no recent version is accepted', async () => {
+    const version = new ApiVersion('202609', () => new Date('2026-10-17T00:00:00Z'));
+    expect(await version.recover('202609', async () => rejected())).toBeUndefined();
+    expect(version.value).toBe('202609');
+  });
+});
