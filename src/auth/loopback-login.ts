@@ -147,7 +147,8 @@ export class LoopbackLogin {
         if (code === 'EADDRINUSE') {
           throw new ConfigError(
             `Port ${port} is already in use, so the sign-in callback cannot listen on ${redirect.origin}. ` +
-              "Free the port, or set LINKEDIN_REDIRECT_URI to another localhost port and add it to your LinkedIn app's authorized redirect URLs.",
+              'Another LinkedIn sign-in may be waiting (for example in another Claude window or terminal): finish it or close it and try again. ' +
+              "Otherwise free the port, or set LINKEDIN_REDIRECT_URI to another localhost port and add it to your LinkedIn app's authorized redirect URLs.",
           );
         }
         throw error;

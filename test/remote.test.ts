@@ -375,6 +375,24 @@ describe('remote connector discovery', () => {
     expect(await (await fetch(remote.base)).text()).toContain(remote.mcpUrl.href);
     expect(await (await fetch(`${remote.base}/healthz`)).json()).toEqual({ status: 'ok' });
   });
+
+  it('reports oversized and malformed bodies as JSON, not an HTML stack trace', async () => {
+    const remote = await startRemote();
+    const post = (path: string, body: string) =>
+      fetch(`${remote.base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+
+    const tooLarge = await post('/mcp', JSON.stringify({ data: 'x'.repeat(31 * 1024 * 1024) }));
+    expect(tooLarge.status).toBe(413);
+    expect(await tooLarge.json()).toEqual({
+      jsonrpc: '2.0',
+      error: { code: -32600, message: expect.stringContaining('instead of a data: URI') },
+      id: null,
+    });
+
+    const malformed = await post('/register', '{bad');
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The request body is not valid JSON.' });
+  });
 });
 
 describe('dynamic client registration', () => {

@@ -205,7 +205,10 @@ describe('linkedin_create_post', () => {
     const h = await harness();
     const url = `${web.url}/article`;
     const result = await call(h, 'linkedin_create_post', { text: 'Read this', article: { url } });
-    expect(result.data).toMatchObject({ attachment: 'article' });
+    expect(result.data).toMatchObject({
+      attachment: 'article',
+      linkPreview: { title: 'Engines & Ideas', description: 'A note.', thumbnail: true },
+    });
     expect(h.linkedin.find('POST', '/rest/images')).toHaveLength(1);
     expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({
       content: { article: { source: url, title: 'Engines & Ideas', description: 'A note.', thumbnail: expect.stringMatching(/^urn:li:image:/) } },
@@ -217,6 +220,7 @@ describe('linkedin_create_post', () => {
     const url = `${web.url}/missing-page`;
     const result = await call(h, 'linkedin_create_post', { text: 'Link', article: { url, title: 'Custom' } });
     expect(result.isError).toBe(false);
+    expect(result.data).toMatchObject({ linkPreview: { title: 'Custom', thumbnail: false } });
     expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({ content: { article: { source: url, title: 'Custom' } } });
     expect(h.linkedin.find('POST', '/rest/images')).toHaveLength(0);
   });

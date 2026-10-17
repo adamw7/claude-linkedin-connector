@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UserInputError } from '../errors.js';
 import { safeFetch } from '../net/safe-fetch.js';
@@ -80,7 +80,8 @@ async function readSource(source: string, kind: MediaKind, options: MediaSourceO
     throw new UserInputError(`"${source}" is not an http(s) URL or base64 data: URI. Local files cannot be read by a remote connector.`);
   }
   const path = trimmed.startsWith('file://') ? fileURLToPath(trimmed) : expandHome(trimmed);
-  const absolute = isAbsolute(path) ? path : resolve(options.cwd ?? process.cwd(), path);
+  const relative = !isAbsolute(path);
+  const absolute = relative ? resolve(options.cwd ?? process.cwd(), path) : path;
   let size: number;
   try {
     const info = await stat(absolute);
@@ -88,7 +89,11 @@ async function readSource(source: string, kind: MediaKind, options: MediaSourceO
     size = info.size;
   } catch (error) {
     if (error instanceof UserInputError) throw error;
-    throw new UserInputError(`Cannot read ${absolute}: ${(error as Error).message}`);
+    const { code, message } = error as NodeJS.ErrnoException;
+    const reason = code === 'ENOENT' ? 'the file does not exist' : code === 'EACCES' ? 'permission denied' : message;
+    // The server's working directory is rarely the user's (Claude Desktop starts it in /).
+    const hint = relative ? ` "${path}" was resolved against ${dirname(absolute)}; pass an absolute path instead.` : '';
+    throw new UserInputError(`Cannot read ${absolute}: ${reason}.${hint}`);
   }
   if (size > maxBytes) throw new UserInputError(`${absolute} is larger than ${maxBytes / 1024 / 1024} MB.`);
   return { data: await readFile(absolute), filename: basename(absolute) };
