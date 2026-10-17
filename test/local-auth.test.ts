@@ -85,6 +85,14 @@ describe('LocalAuth', () => {
     expect(status.message).toContain('Signed in as Ada Lovelace');
   });
 
+  it('reports configured scopes the stored token predates', async () => {
+    const local = auth({ scopes: ['openid', 'w_member_social', 'w_member_social_feed', 'w_organization_social'] });
+    await local.store.write(token());
+    expect(await local.status()).toMatchObject({ authenticated: true, missingScopes: ['w_member_social_feed', 'w_organization_social'] });
+    expect((await local.status()).message).toContain('predates the w_member_social_feed, w_organization_social permissions now configured: sign in again to grant them.');
+    expect(await auth({ scopes: ['openid'] }).status()).not.toHaveProperty('missingScopes');
+  });
+
   it('rejects expired tokens without a refresh token', async () => {
     const local = auth();
     await local.store.write(token({ expiresAt: Date.now() - DAY }));
@@ -127,6 +135,24 @@ describe('LocalAuth', () => {
     expect(await ok.text()).toContain('Connected to LinkedIn as <strong>Ada Lovelace</strong>');
     expect(await done).toBe('Ada Lovelace');
     expect(await signIn.store.read()).toMatchObject({ accessToken: 'li-token', member: { id: 'abc123', email: 'ada@example.com' } });
+  });
+
+  it('tells Claude why the last browser sign-in failed, until the next one starts', async () => {
+    const port = await freePort();
+    const signIn = auth({ clientSecret: 'mistyped-secret', redirectUri: `http://127.0.0.1:${port}/callback` });
+    const start = await signIn.login();
+    const state = new URL(start.authorizationUrl).searchParams.get('state')!;
+    const page = await fetch(`http://127.0.0.1:${port}/callback?code=li-code&state=${state}`);
+    expect(page.status).toBe(500);
+    expect(await page.text()).toContain('Check that the Client ID and Client Secret you configured are the ones on the Auth tab');
+
+    const failure = /not signed in to LinkedIn\. The last sign-in attempt failed: invalid_client: Client authentication failed\. Check that the Client ID/;
+    await expect(signIn.getSession()).rejects.toThrow(failure);
+    expect((await signIn.status()).message).toMatch(failure);
+    const retry = await signIn.login();
+    await expect(signIn.getSession()).rejects.toThrow(/^You are not signed in to LinkedIn\. Ask Claude/);
+    const retryState = new URL(retry.authorizationUrl).searchParams.get('state')!;
+    await fetch(`http://127.0.0.1:${port}/callback?error=cleanup&state=${retryState}`);
   });
 
   it('reports a cancelled sign-in', async () => {

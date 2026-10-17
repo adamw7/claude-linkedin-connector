@@ -42,7 +42,7 @@ function storeToken(): void {
   const token = {
     version: 1,
     accessToken: 'li-token',
-    scopes: ['openid', 'profile', 'w_member_social'],
+    scopes: ['openid', 'profile', 'email', 'w_member_social'],
     obtainedAt: Date.now(),
     expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
     member: { id: 'abc123', name: 'Ada Lovelace' },
@@ -67,6 +67,26 @@ describe('command line', () => {
     expect(stderr).toContain('Unknown command "nope"');
   });
 
+  it('shows help for --help after a command instead of running it', () => {
+    storeToken();
+    for (const args of [['logout', '--help'], ['login', '-h']]) {
+      const { status, stdout } = cli(args, { LINKEDIN_CLIENT_ID: 'test-client', LINKEDIN_CLIENT_SECRET: 'test-secret' });
+      expect(status, args.join(' ')).toBe(0);
+      expect(stdout).toContain('Usage:');
+    }
+    expect(existsSync(tokenFile)).toBe(true);
+  });
+
+  it('rejects options and arguments a command does not take, without running it', () => {
+    storeToken();
+    const typo = cli(['logout', '--all']);
+    expect(typo.status).toBe(2);
+    expect(typo.stderr).toContain("logout: Unknown option '--all'.");
+    expect(typo.stderr).toContain('Usage:');
+    expect(existsSync(tokenFile)).toBe(true);
+    expect(cli(['status', 'now'])).toMatchObject({ status: 2, stderr: expect.stringContaining("status: Unexpected argument 'now'.") });
+  });
+
   it('reports the sign-in status', () => {
     const signedOut = cli(['status']);
     expect(signedOut.status).toBe(1);
@@ -76,7 +96,12 @@ describe('command line', () => {
     const signedIn = cli(['status']);
     expect(signedIn.status).toBe(0);
     expect(signedIn.stdout).toContain('Signed in as Ada Lovelace');
-    expect(signedIn.stdout).toContain('Scopes: openid profile w_member_social');
+    expect(signedIn.stdout).toContain('Scopes: openid profile email w_member_social');
+
+    // Scopes added after signing in (e.g. for comments) need a new sign-in, which `npm run setup` keys off the exit code.
+    const predates = cli(['status'], { LINKEDIN_SCOPES: 'openid profile email w_member_social w_member_social_feed' });
+    expect(predates.status).toBe(1);
+    expect(predates.stdout).toContain('That sign-in predates the w_member_social_feed permission now configured: sign in again to grant it.');
 
     expect(cli(['status'], { LINKEDIN_ACCESS_TOKEN: 'env-token' })).toMatchObject({ status: 0, stdout: expect.stringContaining('LINKEDIN_ACCESS_TOKEN') });
   });
@@ -188,6 +213,19 @@ describe('stdio command', () => {
       expect(status.structuredContent).toMatchObject({ authenticated: false, source: 'none' });
     } finally {
       await client.close();
+    }
+  });
+
+  // `script` (util-linux) runs the CLI with a terminal as stdin, as when someone starts it by hand.
+  const hasScript = process.platform === 'linux' && spawnSync('script', ['--version']).status === 0;
+  it.runIf(hasScript)('says what it is waiting for when started from a terminal', async () => {
+    const child = spawn('script', ['-qec', `"${process.execPath}" "${ENTRY}"`, '/dev/null'], { env: environment() });
+    let output = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (output += chunk));
+    try {
+      await expect.poll(() => output, { timeout: 5_000 }).toContain('Waiting for MCP messages on stdin');
+    } finally {
+      child.kill();
     }
   });
 });

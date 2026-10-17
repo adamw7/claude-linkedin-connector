@@ -62,12 +62,18 @@ export class LocalAuth implements LinkedInAuth {
       return { accessToken: this.config.accessToken, scopes: this.config.scopes, ...memberFields(this.envMember) };
     }
     let token = await this.store.read();
-    if (!token) throw new NotAuthenticatedError(`You are not signed in to LinkedIn. ${SIGN_IN_HINT}`);
+    if (!token) throw new NotAuthenticatedError(`You are not signed in to LinkedIn.${this.lastFailure()} ${SIGN_IN_HINT}`);
     if (this.isExpired(token.expiresAt)) {
       token = await this.tryRefresh(token);
-      if (!token) throw new NotAuthenticatedError(`Your LinkedIn sign-in has expired. ${SIGN_IN_HINT}`);
+      if (!token) throw new NotAuthenticatedError(`Your LinkedIn sign-in has expired.${this.lastFailure()} ${SIGN_IN_HINT}`);
     }
     return { accessToken: token.accessToken, scopes: token.scopes, expiresAt: token.expiresAt, ...memberFields(token.member) };
+  }
+
+  /** Why the last browser sign-in failed, which only the browser showed: otherwise Claude just hands out another link. */
+  private lastFailure(): string {
+    const error = this.loopback?.lastError;
+    return error ? ` The last sign-in attempt failed: ${error.message.replace(/\.?$/, '.')}` : '';
   }
 
   private async tryRefresh(token: StoredToken): Promise<StoredToken | undefined> {
@@ -110,13 +116,20 @@ export class LocalAuth implements LinkedInAuth {
       return { authenticated: false, source: 'none', scopes: [], message: error.message };
     }
     const expires = session.expiresAt === undefined ? '' : ` until ${new Date(session.expiresAt).toISOString().slice(0, 10)}`;
+    // Scopes added to LINKEDIN_SCOPES after signing in (e.g. for comments) need a new sign-in to take effect.
+    const missingScopes = this.config.scopes.filter((scope) => !session.scopes.includes(scope));
+    const missing =
+      missingScopes.length === 0
+        ? ''
+        : ` That sign-in predates the ${missingScopes.join(', ')} permission${missingScopes.length > 1 ? 's' : ''} now configured: sign in again to grant ${missingScopes.length > 1 ? 'them' : 'it'}.`;
     return {
       authenticated: true,
       source: 'token-file',
       scopes: session.scopes,
+      ...(missingScopes.length > 0 ? { missingScopes } : {}),
       expiresAt: session.expiresAt === undefined ? undefined : new Date(session.expiresAt).toISOString(),
       ...statusMember(session.memberId ? { id: session.memberId, name: session.name, email: session.email } : undefined),
-      message: `Signed in${session.name ? ` as ${session.name}` : ''}${expires} (token stored in ${this.store.path}).`,
+      message: `Signed in${session.name ? ` as ${session.name}` : ''}${expires} (token stored in ${this.store.path}).${missing}`,
     };
   }
 

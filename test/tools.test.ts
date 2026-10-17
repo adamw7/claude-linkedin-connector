@@ -17,6 +17,7 @@ const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
 class StubAuth implements LinkedInAuth {
   member: MemberInfo | undefined;
   signedIn = true;
+  missingScopes: string[] | undefined;
   logins = 0;
 
   async getSession(): Promise<LinkedInSession> {
@@ -28,7 +29,7 @@ class StubAuth implements LinkedInAuth {
   }
   async status(): Promise<AuthStatus> {
     return this.signedIn
-      ? { authenticated: true, source: 'token-file', scopes: DEFAULT_SCOPES, message: 'Signed in as Ada.' }
+      ? { authenticated: true, source: 'token-file', scopes: DEFAULT_SCOPES, missingScopes: this.missingScopes, message: 'Signed in as Ada.' }
       : { authenticated: false, source: 'none', scopes: [], message: 'Not signed in.' };
   }
 }
@@ -281,13 +282,13 @@ describe('linkedin_create_post', () => {
     expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({ content: { media: { altText: 'Me' } } });
   });
 
-  it('uploads a document from a URL, titled after the file', async () => {
+  it('uploads a document from a URL, titled after the file without its extension', async () => {
     const h = await harness();
     const result = await call(h, 'linkedin_create_post', { text: 'Slides', document: { source: `${web.url}/talk.pdf` } });
     expect(result.data).toMatchObject({ attachment: 'document' });
     expect(h.linkedin.find('POST', '/rest/documents')).toHaveLength(1);
     expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({
-      content: { media: { id: expect.stringMatching(/^urn:li:document:/), title: 'talk.pdf' } },
+      content: { media: { id: expect.stringMatching(/^urn:li:document:/), title: 'talk' } },
     });
   });
 
@@ -386,7 +387,8 @@ describe('linkedin_delete_post', () => {
     const h = await harness();
     h.linkedin.override((r) => (r.method === 'DELETE' ? new Response('{"message":"Invalid post id"}', { status: 400 }) : undefined));
     const result = await call(h, 'linkedin_delete_post', { post: 'urn:li:activity:7' });
-    expect(result).toMatchObject({ isError: true, text: expect.stringContaining('not an activity URN') });
+    expect(result).toMatchObject({ isError: true, text: expect.stringContaining('not the activity URN that links copied from linkedin.com often contain') });
+    expect(result.text).toContain('"Embed this post"');
   });
 });
 
@@ -458,6 +460,14 @@ describe('authentication tools', () => {
     const forced = await call(h, 'linkedin_login', { force: true });
     expect(forced.data).toMatchObject({ alreadySignedIn: false, authorizationUrl: expect.stringContaining('linkedin.com'), expiresInSeconds: 600 });
     expect(forced.data!.message).toContain('valid for 10 minutes');
+  });
+
+  it('signs in again when the stored sign-in predates scopes that are now configured', async () => {
+    const h = await harness();
+    h.auth.missingScopes = ['w_member_social_feed'];
+    expect((await call(h, 'linkedin_auth_status')).data).toMatchObject({ authenticated: true, missingScopes: ['w_member_social_feed'] });
+    expect((await call(h, 'linkedin_login')).data).toMatchObject({ alreadySignedIn: false, authorizationUrl: expect.any(String) });
+    expect(h.auth.logins).toBe(1);
   });
 
   it('signs out', async () => {

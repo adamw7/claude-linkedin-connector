@@ -28,8 +28,8 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function setup(args: string[], env: Record<string, string> = {}) {
-    const result = spawnSync(process.execPath, [SCRIPT, '--skip-build', '--no-login', ...args], {
+  function setup(args: string[], env: Record<string, string> = {}, { login = false } = {}) {
+    const result = spawnSync(process.execPath, [SCRIPT, '--skip-build', ...(login ? [] : ['--no-login']), ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -89,7 +89,7 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
   it('refuses to overwrite an existing server unless --yes is given', () => {
     const refused = setup([], { FAKE_EXISTS: '1' });
     expect(refused.status).toBe(1);
-    expect(refused.stderr).toContain('already exists');
+    expect(refused.stderr).toContain('already exists. Run "node scripts/setup-claude-code.mjs --yes" to replace it');
     expect(refused.calls.some((call) => call.startsWith('mcp add-json'))).toBe(false);
 
     rmSync(log);
@@ -112,5 +112,32 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
     const { status, stderr } = setup(['--scope', 'project']);
     expect(status).toBe(1);
     expect(stderr).toContain('--scope must be "user" or "local"');
+  });
+
+  it('explains bad options instead of printing a stack trace', () => {
+    const typo = setup(['--client_id', 'id-123']);
+    expect(typo.status).toBe(1);
+    expect(typo.stderr).toContain(`Unknown option '--client_id'. Run "node scripts/setup-claude-code.mjs --help" to see the options.`);
+    expect(typo.stderr).not.toContain('    at ');
+    expect(setup(['--scope', 'openid profile w_member_social_feed']).stderr).toContain('LinkedIn permissions go in --scopes.');
+  });
+
+  it('notices options npm kept for itself because -- was left out', () => {
+    // What `npm run setup --scope local --no-login` runs the script with: no arguments, the options as npm config.
+    const kept = setup([], { npm_lifecycle_event: 'setup', npm_config_scope: 'local', npm_config_login: '' });
+    expect(kept.status).toBe(1);
+    expect(kept.stderr).toContain('npm kept --scope, --no-login for itself');
+    expect(kept.stderr).toContain('npm run setup -- <options>');
+    expect(kept.calls.some((call) => call.startsWith('mcp add-json'))).toBe(false);
+    // An npm scope, e.g. from .npmrc, is npm's own.
+    expect(setup([], { npm_lifecycle_event: 'setup', npm_config_scope: '@acme' }).status).toBe(0);
+  });
+
+  it('says what to do when signing in fails after registering', () => {
+    const { status, stderr, calls } = setup([], { LINKEDIN_REDIRECT_URI: 'not a url' }, { login: true });
+    expect(status).toBe(1);
+    expect(calls.some((call) => call.startsWith('mcp add-json'))).toBe(true);
+    expect(stderr).toContain('LINKEDIN_REDIRECT_URI "not a url" is not a valid URL.');
+    expect(stderr).toContain('Signing in to LinkedIn failed (see above). "linkedin" is registered with Claude Code');
   });
 });

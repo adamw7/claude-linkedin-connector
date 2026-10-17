@@ -107,9 +107,19 @@ function trustProxy(raw: string | undefined): boolean | number | string {
  * The folders local files may come from unless LINKEDIN_FILE_DIRS says otherwise: where downloads (such as
  * LinkedIn's data export), screenshots and photos usually land, plus the working directory (Claude Code
  * starts the server in the project), unless that contains the home directory (Claude Desktop starts it in /).
+ * On Windows, OneDrive's folder backup (on by default on many PCs) moves Desktop and Pictures into OneDrive.
  */
-export function defaultFileDirs(cwd: string = process.cwd(), home: string = homedir()): string[] {
+export function defaultFileDirs(
+  cwd: string = process.cwd(),
+  home: string = homedir(),
+  env: Env = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
   const dirs = ['Downloads', 'Desktop', 'Pictures'].map((name) => join(home, name));
+  if (platform === 'win32') {
+    const oneDrives = new Set([env.OneDrive, env.OneDriveConsumer, env.OneDriveCommercial].filter((dir): dir is string => !!dir));
+    for (const oneDrive of oneDrives) dirs.push(join(oneDrive, 'Desktop'), join(oneDrive, 'Pictures'));
+  }
   return isInside(cwd, home) ? dirs : [...dirs, cwd];
 }
 
@@ -119,7 +129,7 @@ export function loadLocalConfig(env: Env = process.env, cwd: string = process.cw
     redirectUri: value(env, 'LINKEDIN_REDIRECT_URI') ?? DEFAULT_LOCAL_REDIRECT_URI,
     tokenFile: value(env, 'LINKEDIN_TOKEN_FILE') ?? defaultTokenFile(env),
     accessToken: value(env, 'LINKEDIN_ACCESS_TOKEN'),
-    fileDirs: list(env, 'LINKEDIN_FILE_DIRS')?.map((dir) => resolve(cwd, expandHome(dir))) ?? defaultFileDirs(cwd),
+    fileDirs: list(env, 'LINKEDIN_FILE_DIRS')?.map((dir) => resolve(cwd, expandHome(dir))) ?? defaultFileDirs(cwd, homedir(), env),
   };
 }
 

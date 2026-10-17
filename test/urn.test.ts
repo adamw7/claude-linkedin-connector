@@ -11,6 +11,10 @@ describe('parsePostReference', () => {
     ['https://www.linkedin.com/feed/update/urn%3Ali%3AugcPost%3A7123456789012345678?utm_source=share', 'urn:li:ugcPost:7123456789012345678'],
     ['https://www.linkedin.com/posts/ada-lovelace_engines-activity-7123456789012345678-AbCd?utm_source=x', 'urn:li:activity:7123456789012345678'],
     ['https://www.linkedin.com/posts/ada-lovelace_engines-ugcPost-7123456789012345678-AbCd', 'urn:li:ugcPost:7123456789012345678'],
+    [
+      '<iframe src="https://www.linkedin.com/embed/feed/update/urn:li:share:7123456789012345678?collapsed=1" height="543" width="504" frameborder="0" allowfullscreen="" title="Embedded post"></iframe>',
+      'urn:li:share:7123456789012345678',
+    ],
   ])('parses %s', (input, expected) => {
     expect(parsePostReference(input)).toBe(expected);
   });
