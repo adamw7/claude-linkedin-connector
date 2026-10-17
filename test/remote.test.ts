@@ -386,6 +386,13 @@ describe('remote connector discovery', () => {
     expect(response.status).toBe(401);
   });
 
+  it('rejects tokens issued by another deployment, even one sharing SERVER_SECRET', async () => {
+    const [first, second] = await Promise.all([startRemote(), startRemote()]);
+    const bearer = await accessToken(first);
+    expect((await ping(first, bearer)).status).toBe(200);
+    expect((await ping(second, bearer)).status).toBe(401);
+  });
+
   it('serves protected resource and authorization server metadata', async () => {
     const remote = await startRemote();
     for (const path of ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']) {
@@ -675,6 +682,24 @@ describe('token endpoint', () => {
     const basic = Buffer.from(`${encodeURIComponent(client.client_id)}:${encodeURIComponent(client.client_secret)}`).toString('base64');
     const ok = await token(remote, form, { Authorization: `Basic ${basic}` });
     expect(ok.status).toBe(200);
+  });
+
+  it('rejects a client_id that contradicts the Authorization header', async () => {
+    const remote = await startRemote();
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const basic = Buffer.from(`someone-else:secret`).toString('base64');
+    const result = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier }, { Authorization: `Basic ${basic}` });
+    expect(result).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+  });
+
+  it('issues no token for a LinkedIn grant that has already expired', async () => {
+    const remote = await startRemote();
+    remote.linkedin.override(({ url }) =>
+      url.pathname === '/oauth/v2/accessToken' ? Response.json({ access_token: 'li-token', expires_in: 0, scope: remote.linkedin.grantedScope }) : undefined,
+    );
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const result = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+    expect(result.body).toMatchObject({ error: 'invalid_grant', error_description: expect.stringContaining('already expired') });
   });
 
   it('only supports the authorization_code grant', async () => {

@@ -37,6 +37,15 @@ describe('safeFetch', () => {
     server = await startServer((req, res) => {
       if (req.url === '/hello') res.end('hello world');
       else if (req.url === '/big') res.end(Buffer.alloc(10_000, 'a'));
+      else if (req.url === '/chunked') {
+        // No Content-Length, so the limit can only be enforced while reading.
+        res.write(Buffer.alloc(800, 'a'));
+        setTimeout(() => res.end(Buffer.alloc(800, 'b')), 10);
+      } else if (req.url === '/drip') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        const timer = setInterval(() => res.write('x'), 50);
+        res.on('close', () => clearInterval(timer));
+      } else if (req.url === '/to-file') res.writeHead(302, { Location: 'file:///etc/passwd' }).end();
       else if (req.url?.startsWith('/redirect/')) {
         const remaining = Number(req.url.split('/')[2]);
         res.writeHead(302, { Location: remaining > 0 ? `/redirect/${remaining - 1}` : '/hello' }).end();
@@ -61,6 +70,22 @@ describe('safeFetch', () => {
     await expect(safeFetch(`${server.url}/big`, open)).rejects.toThrow(/larger than/);
     const truncated = await safeFetch(`${server.url}/big`, { ...open, truncate: true });
     expect(truncated.data.length).toBe(1_000);
+  });
+
+  it('enforces the size limit on bodies without a Content-Length', async () => {
+    await expect(safeFetch(`${server.url}/chunked`, open)).rejects.toThrow(/larger than/);
+    const truncated = await safeFetch(`${server.url}/chunked`, { ...open, truncate: true });
+    expect(truncated.data.toString()).toBe('a'.repeat(800) + 'b'.repeat(200));
+  });
+
+  it('gives up on a slowly trickling body at the overall deadline', async () => {
+    const start = Date.now();
+    await expect(safeFetch(`${server.url}/drip`, { ...open, timeoutMs: 300 })).rejects.toThrow(/Timed out/);
+    expect(Date.now() - start).toBeLessThan(2_000);
+  });
+
+  it('re-checks redirect targets', async () => {
+    await expect(safeFetch(`${server.url}/to-file`, open)).rejects.toThrow(/Only http/);
   });
 
   it('reports HTTP errors', async () => {

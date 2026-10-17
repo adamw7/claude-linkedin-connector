@@ -247,6 +247,16 @@ describe('linkedin_create_post', () => {
     expect(h.linkedin.find('POST', '/rest/posts')[1]!.json).toMatchObject({ visibility: 'CONNECTIONS' });
   });
 
+  it('explains a missing openid/profile scope and publishes nothing', async () => {
+    const h = await harness();
+    h.linkedin.override(({ url }) =>
+      url.pathname === '/v2/userinfo' ? Response.json({ message: 'Not enough permissions' }, { status: 403 }) : undefined,
+    );
+    const result = await call(h, 'linkedin_create_post', { text: 'Hello' });
+    expect(result).toMatchObject({ isError: true, text: expect.stringContaining('"openid" and "profile" scopes') });
+    expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
+  });
+
   it('uploads several images as a multi-image post', async () => {
     const h = await harness();
     const dataUri = `data:image/png;base64,${PNG.toString('base64')}`;
