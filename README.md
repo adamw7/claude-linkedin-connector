@@ -215,9 +215,11 @@ See [`.env.example`](.env.example) for a template.
 
 ```sh
 npm ci
-npm run check     # typecheck + tests
-npm run build     # dist/
-npm run bundle    # single-file build for the .mcpb
+npm run check          # typecheck + tests
+npm run test:coverage  # tests with a coverage report in coverage/
+npm run test:mutation  # Stryker mutation tests, report in reports/mutation/ (slow)
+npm run build          # dist/
+npm run bundle         # single-file build for the .mcpb
 ```
 
 ```
@@ -232,7 +234,8 @@ src/
 ```
 
 Tests run against an in-memory fake of LinkedIn, including an end-to-end OAuth flow driven by the
-official MCP client SDK.
+official MCP client SDK. CI reports coverage on every push and pull request; mutation tests run
+nightly (and on demand) in the `Mutation tests` workflow.
 
 ---
 
