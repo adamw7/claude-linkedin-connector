@@ -1,0 +1,46 @@
+# CLAUDE.md
+
+An MCP connector for LinkedIn (profile, posts, media, comments, reactions, `Connections.csv` search) in
+TypeScript on Node.js 24. One code base, two modes: **local** (`stdio`, token file on disk) and **remote**
+(`http`, Express, stateless, OAuth 2.1 authorization server; the LinkedIn token is sealed inside the access
+token with `SERVER_SECRET`). User docs: `README.md`, `docs/usage.md`. Design: `docs/architecture.md`.
+
+## Commands
+
+```bash
+npm run check        # typecheck + tests: run before every push (there is no separate linter)
+npm run typecheck    # tsc over src and test
+npm test             # vitest; one file: npx vitest run test/text.test.ts
+npm run build        # tsc -p tsconfig.build.json -> dist/
+npm run test:mutation  # Stryker; slow, CI runs it incrementally
+npm run pack:mcpb    # bundle the Claude Desktop extension
+```
+
+## Layout and layering
+
+Each layer imports only from layers below it; `test/architecture.test.ts` enforces this.
+
+| Layer | Path | Rule |
+|---|---|---|
+| Leaf | `src/errors.ts`, `src/version.ts`, `src/html.ts` | No project imports |
+| Network | `src/net/` | `safeFetch` refuses private/loopback addresses; no LinkedIn or MCP knowledge |
+| LinkedIn | `src/linkedin/` | REST + OAuth clients; the only code that may call the global `fetch` |
+| Auth, config | `src/auth/`, `src/config.ts` | Local sign-in, token storage, `LINKEDIN_*` env vars |
+| MCP | `src/mcp/` | Tools (`server.ts`), transport agnostic |
+| Remote | `src/remote/` | The only code that may use Express; never uses local token storage |
+| Composition root | `src/index.ts` | CLI; imported by nothing |
+
+## Conventions
+
+- Tools are named `linkedin_<verb>_<noun>`; tools needing extra scopes are only registered when the scope is
+  configured. See `.claude/skills/add-linkedin-tool/SKILL.md` before adding or changing a tool.
+- User-written text sent to LinkedIn goes through `escapeLittleText` (`src/linkedin/text.ts`).
+- Errors the user can fix are `UserInputError`; their message reaches Claude verbatim, so write it for the user.
+- Security is load-bearing: third-party URLs go through `safeFetch`; local files are read only from
+  `LINKEDIN_FILE_DIRS` (never in remote mode); media is checked by content, not extension.
+- Tests run against `test/helpers/fake-linkedin.ts` (an in-memory LinkedIn used as `fetch`), never the real API.
+  Assert exact request bodies and messages so mutation testing passes.
+- ESM with `.js` import suffixes, `strict` + `noUncheckedIndexedAccess`, `verbatimModuleSyntax` (use `import type`).
+- Every user-visible change gets a `CHANGELOG.md` entry under `## [Unreleased]`, written for users.
+  The version lives in `package.json`, `package-lock.json`, `src/version.ts` and `mcpb/manifest.json`; `test/release.test.ts`
+  keeps them in sync.
