@@ -6,31 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
-
-- **Breaking:** the remote server now refuses to start without `LINKEDIN_ALLOWED_MEMBERS`. List the
-  LinkedIn emails or member IDs allowed to connect, or set it to `*` to keep allowing anyone. Servers
-  with a localhost `PUBLIC_URL` still allow anyone by default.
-- The remote server logs JSON lines to stderr instead of plain text.
-
-### Added
-
-- `npm run setup` sets the connector up in Claude Code in one command: it builds, registers the server
-  with `claude mcp add` and signs you in to LinkedIn.
-- `linkedin_read_connections` reads the `Connections.csv` from LinkedIn's data export (LinkedIn's API doesn't
-  offer connections) and returns your connections newest first, filtered by text, company or connection
-  date and paged. It matches regardless of case and accents ("Lodz" finds "Łódź"), filters by several
-  companies at once, and can count connections per company. It needs no LinkedIn sign-in.
-- Structured logs for the remote server: requests, sign-ins, an audit entry for every tool call (who,
-  which tool, outcome) and server errors with stack traces. Tokens, codes and post text are never logged.
-- Rate limits for the remote server: `RATE_LIMIT_OAUTH` per client IP on the OAuth endpoints and
-  `RATE_LIMIT_MCP` per connected account on `/mcp`, plus `TRUST_PROXY` to see client IPs behind a proxy.
-
-### Fixed
-
-- The remote server now lets in-flight requests finish on `SIGTERM`/`SIGINT` (up to `SHUTDOWN_TIMEOUT`
-  seconds) instead of exiting immediately and cutting off uploads and posts.
-
 ## [0.1.0] - 2026-10-17
 
 First release.
@@ -48,6 +23,17 @@ First release.
 - Claude Desktop extension (`.mcpb`) and a Dockerfile for the remote server.
 - Escaping of LinkedIn's markup characters, link preview generation, content-checked media uploads
   and automatic fallback when LinkedIn retires an API version.
+- `linkedin_read_connections` reads the `Connections.csv` from LinkedIn's data export (LinkedIn's API doesn't
+  offer connections) and returns your connections newest first, filtered by text, company or connection
+  date and paged. It matches regardless of case and accents ("Lodz" finds "Łódź"), filters by several
+  companies at once, and can count connections per company. It needs no LinkedIn sign-in.
+- `npm run setup` sets the connector up in Claude Code in one command: it builds, registers the server
+  with `claude mcp add` and signs you in to LinkedIn.
+- For the remote server: `LINKEDIN_ALLOWED_MEMBERS` lists the LinkedIn accounts allowed to connect (`*`
+  for anyone; required unless `PUBLIC_URL` is localhost); structured JSON logs on stderr, with an audit
+  entry for every tool call and no tokens, codes or post text; rate limits (`RATE_LIMIT_OAUTH` per client
+  IP, `RATE_LIMIT_MCP` per connected account, `TRUST_PROXY` to see client IPs behind a proxy); and a
+  graceful shutdown that lets in-flight requests finish for up to `SHUTDOWN_TIMEOUT` seconds.
 
 [Unreleased]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/adamw7/claude-linkedin-connector/releases/tag/v0.1.0
