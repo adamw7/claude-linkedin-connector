@@ -17,6 +17,7 @@ It runs two ways:
 | Tool | What it does | Needs |
 |---|---|---|
 | `linkedin_get_profile` | Your name, email, photo, locale and member URN | default scopes |
+| `linkedin_read_connections` | Searches your connections in the `Connections.csv` from LinkedIn's data export | nothing: no sign-in |
 | `linkedin_create_post` | Publishes a post: text plus optionally **one** of a link preview, 1–20 images, or a document (PDF, PPT(X), DOC(X)) | default scopes |
 | `linkedin_edit_post` | Replaces the text of a post you authored (by URN or URL) | default scopes |
 | `linkedin_delete_post` | Deletes a post you authored (by URN or URL) | default scopes |
@@ -38,6 +39,11 @@ commenting or deleting, and Claude also asks you to confirm each call. A few thi
   description and image and uploads them with the link.
 - **Media.** Images and documents can be local file paths (local mode), `http(s)` URLs or base64 `data:` URIs.
   Files are checked by content, so only real images and documents are ever uploaded.
+- **Connections.** LinkedIn's API doesn't give apps your list of connections, so the connector reads the
+  `Connections.csv` from your data export instead: on LinkedIn, open **Settings → Data privacy → Get a copy
+  of your data**, choose **Connections**, then unzip the archive LinkedIn emails you. Pass the file's path
+  (local mode), a URL, or attach or paste its contents. Claude can search it by name, company, position
+  or connection date. Email addresses appear only for connections who allow it.
 - **API versions.** LinkedIn retires each monthly API version after about a year. When that happens the
   connector switches to the newest live version automatically.
 
@@ -253,7 +259,7 @@ src/
   index.ts            CLI: stdio | http | login | logout | status
   config.ts           environment variables
   mcp/server.ts       MCP tools
-  linkedin/           REST client, OAuth, text escaping, media, link previews, API versions
+  linkedin/           REST client, OAuth, text escaping, media, link previews, API versions, Connections.csv
   auth/               local token storage and browser sign-in
   remote/             HTTP app, OAuth authorization server, client registration, logging, rate limits
   net/safe-fetch.ts   fetching URLs without reaching private networks

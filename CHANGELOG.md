@@ -15,6 +15,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `linkedin_read_connections` reads the `Connections.csv` from LinkedIn's data export (LinkedIn's API doesn't
+  offer connections) and returns your connections newest first, filtered by text, company or connection
+  date and paged. It needs no LinkedIn sign-in.
 - Structured logs for the remote server: requests, sign-ins, an audit entry for every tool call (who,
   which tool, outcome) and server errors with stack traces. Tokens, codes and post text are never logged.
 - Rate limits for the remote server: `RATE_LIMIT_OAUTH` per client IP on the OAuth endpoints and

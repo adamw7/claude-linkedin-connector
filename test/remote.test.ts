@@ -276,6 +276,7 @@ describe('remote connector end to end', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual([
       'linkedin_get_profile',
+      'linkedin_read_connections',
       'linkedin_create_post',
       'linkedin_edit_post',
       'linkedin_delete_post',

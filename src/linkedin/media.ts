@@ -58,15 +58,20 @@ function expandHome(path: string): string {
   return path === '~' || path.startsWith('~/') || path.startsWith('~\\') ? homedir() + path.slice(1) : path;
 }
 
-async function readSource(source: string, kind: MediaKind, options: MediaSourceOptions): Promise<{ data: Buffer; filename?: string }> {
-  const maxBytes = MAX_BYTES[kind];
+/** Reads up to `maxBytes` from a local path (when allowed), an http(s) URL or a base64 data: URI. */
+export async function readSource(
+  source: string,
+  maxBytes: number,
+  noun: string,
+  options: MediaSourceOptions,
+): Promise<{ data: Buffer; filename?: string }> {
   const trimmed = source.trim();
 
   const dataUri = /^data:([^;,]*)(;base64)?,(.*)$/s.exec(trimmed);
   if (dataUri) {
     if (!dataUri[2]) throw new UserInputError('Only base64-encoded data: URIs are supported.');
     const data = Buffer.from(dataUri[3]!, 'base64');
-    if (data.length > maxBytes) throw new UserInputError(`The ${kind} is larger than ${maxBytes / 1024 / 1024} MB.`);
+    if (data.length > maxBytes) throw new UserInputError(`The ${noun} is larger than ${maxBytes / 1024 / 1024} MB.`);
     return { data };
   }
 
@@ -105,7 +110,7 @@ async function readSource(source: string, kind: MediaKind, options: MediaSourceO
  * LinkedIn accepts, so arbitrary files can never be uploaded.
  */
 export async function loadMedia(source: string, kind: MediaKind, options: MediaSourceOptions): Promise<LoadedMedia> {
-  const { data, filename } = await readSource(source, kind, options);
+  const { data, filename } = await readSource(source, MAX_BYTES[kind], kind, options);
   const mimeType = kind === 'image' ? sniffImage(data) : sniffDocument(data);
   if (!mimeType) {
     const expected = kind === 'image' ? 'JPEG, PNG or GIF image' : `${DOCUMENT_TYPES} document`;

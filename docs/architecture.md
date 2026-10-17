@@ -84,7 +84,7 @@ C4Component
     Component(localAuth, "LocalAuth", "src/auth/local-auth.ts", "Implements LinkedInAuth: session lookup, token refresh, login, logout, status")
     Component(loopback, "LoopbackLogin", "src/auth/loopback-login.ts", "Temporary localhost listener that receives LinkedIn's redirect")
     Component(store, "TokenStore", "src/auth/token-store.ts", "Persists tokens in the per-user config directory")
-    Component(client, "LinkedIn clients", "src/linkedin/*", "REST client, OAuth, API version fallback, text escaping, URNs, media and link previews")
+    Component(client, "LinkedIn clients", "src/linkedin/*", "REST client, OAuth, API version fallback, text escaping, URNs, media, link previews and the Connections.csv export")
     Component(safeFetch, "safeFetch", "src/net/safe-fetch.ts", "Outbound fetch that refuses private and loopback addresses")
   }
 
@@ -125,7 +125,7 @@ C4Component
     Component(pages, "Pages", "src/remote/pages.ts", "Consent and error pages")
     Component(connAuth, "ConnectorAuth", "src/remote/connector-auth.ts", "Implements LinkedInAuth from the verified access token's sealed LinkedIn grant")
     Component(mcp, "Connector MCP server", "src/mcp/server.ts", "Same tools as local mode, created per request")
-    Component(client, "LinkedIn clients", "src/linkedin/*", "REST client, OAuth, API versions, text, URNs, media, link previews")
+    Component(client, "LinkedIn clients", "src/linkedin/*", "REST client, OAuth, API versions, text, URNs, media, link previews, Connections.csv")
     Component(safeFetch, "safeFetch", "src/net/safe-fetch.ts", "Outbound fetch that refuses private and loopback addresses")
   }
 
