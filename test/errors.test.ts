@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SIGN_IN_HINT } from '../src/auth/local-auth.js';
+import { REAUTH_HINT } from '../src/auth/local-auth.js';
 import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, UserInputError } from '../src/errors.js';
 import { describeError, errorResult } from '../src/mcp/errors.js';
 import { FetchError } from '../src/net/safe-fetch.js';
@@ -18,7 +18,7 @@ describe('describeError', () => {
 
   it('tells local users to sign in again and remote users to reconnect', () => {
     const error = new LinkedInApiError(401, 'Revoked');
-    expect(describeError(error, 'local')).toContain(SIGN_IN_HINT);
+    expect(describeError(error, 'local')).toContain(REAUTH_HINT);
     expect(describeError(error, 'remote')).toMatch(/Disconnect and reconnect/);
     expect(describeError(new LinkedInApiError(403, 'Not enough permissions'), 'remote')).toMatch(
       /^LinkedIn denied permission for this action: Not enough permissions\. .*Disconnect and reconnect/,
@@ -47,6 +47,9 @@ describe('describeError', () => {
     );
     expect(describeError(new DOMException('timed out', 'TimeoutError'), 'local')).toBe('LinkedIn did not respond in time. Try again.');
     expect(describeError(new DOMException('aborted', 'AbortError'), 'local')).toBe('LinkedIn did not respond in time. Try again.');
+    const offline = new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }) });
+    expect(describeError(offline, 'local')).toBe('Could not reach LinkedIn (ENOTFOUND). Check the internet connection and try again.');
+    expect(describeError(new TypeError('fetch failed'), 'local')).toBe('Could not reach LinkedIn. Check the internet connection and try again.');
     expect(describeError(new Error('boom'), 'local')).toBe('Unexpected error: boom');
     expect(describeError('plain string', 'local')).toBe('Unexpected error: plain string');
   });

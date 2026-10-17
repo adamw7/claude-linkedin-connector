@@ -14,6 +14,11 @@ const EXPIRY_MARGIN_MS = 60_000;
 export const SIGN_IN_HINT =
   'Ask Claude to run the linkedin_login tool to get a sign-in link, or run "claude-linkedin-connector login" in a terminal.';
 
+/** For a stored token LinkedIn rejects: linkedin_login alone would report "already signed in". */
+export const REAUTH_HINT =
+  'To sign in again, run the linkedin_login tool with force: true, or run "claude-linkedin-connector login" in a terminal. ' +
+  'If LINKEDIN_ACCESS_TOKEN is set, replace it with a fresh token instead.';
+
 export interface LocalAuthOptions {
   config: LocalConfig;
   version: ApiVersion;

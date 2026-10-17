@@ -198,6 +198,7 @@ See [`.env.example`](.env.example) for a template.
   profiles requires partner-level access, so the connector can't do it.
 - Only a post's text can be edited; attachments can't be changed after publishing. Video posts aren't supported yet.
 - A post can have one kind of attachment: a link preview, images, or a document.
+- In remote mode, media sent as `data:` URIs is limited to about 20 MB per request; pass larger files as URLs.
 - LinkedIn applies daily rate limits per member and per app.
 - Posts are plain text. LinkedIn doesn't render Markdown; line breaks and `#hashtags` work.
 

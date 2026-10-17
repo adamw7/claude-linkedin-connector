@@ -62,7 +62,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const engagement = memberEngagement || organizations;
   const sleep = options.sleep ?? defaultSleep;
   const mediaSources =
-    mode === 'local' ? 'a local file path, an http(s) URL or a base64 data: URI' : 'an http(s) URL or a base64 data: URI';
+    mode === 'local'
+      ? 'an absolute local file path, an http(s) URL or a base64 data: URI'
+      : 'an http(s) URL or a base64 data: URI (data: URIs up to about 20 MB; use a URL for larger files)';
 
   const server = new McpServer(
     { name: NAME, title: 'LinkedIn', version: VERSION },
@@ -242,6 +244,10 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         author: z.string(),
         visibility: z.string(),
         attachment: z.enum(['none', 'article', 'image', 'images', 'document']),
+        linkPreview: z
+          .object({ title: z.string(), description: z.string().optional(), thumbnail: z.boolean() })
+          .optional()
+          .describe('The preview card published with an article, so the user can be told if it came out bare.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -260,6 +266,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
 
         let content: PostContent | undefined;
         let attachment: 'none' | 'article' | 'image' | 'images' | 'document' = 'none';
+        let linkPreview: { title: string; description?: string; thumbnail: boolean } | undefined;
         if (args.article) {
           const { url, title, description, thumbnail } = args.article;
           const preview: LinkPreview =
@@ -275,15 +282,15 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
               .then((media) => upload(client, 'images', author, media))
               .catch(() => undefined);
           }
-          content = {
-            article: {
-              source: url,
-              title: title ?? preview.title ?? new URL(url).hostname,
-              description: description ?? preview.description,
-              thumbnail: thumbnailUrn,
-            },
+          const article = {
+            source: url,
+            title: title ?? preview.title ?? new URL(url).hostname,
+            description: description ?? preview.description,
+            thumbnail: thumbnailUrn,
           };
+          content = { article };
           attachment = 'article';
+          linkPreview = { title: article.title, description: article.description, thumbnail: thumbnailUrn !== undefined };
         } else if (images && args.images) {
           const entries: Array<{ id: string; altText?: string }> = [];
           for (const [index, media] of images.entries()) {
@@ -298,7 +305,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         }
 
         const postUrn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
-        return json({ postUrn, url: postUrl(postUrn), author, visibility: args.visibility, attachment });
+        return json({ postUrn, url: postUrl(postUrn), author, visibility: args.visibility, attachment, linkPreview });
       }),
   );
 
@@ -455,7 +462,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         description:
           'Starts LinkedIn sign-in and returns a link for the user to open in their browser. Use it when another tool says the user is not signed in, or when they ask to connect or switch LinkedIn accounts. Show the link to the user; once they say they approved access, retry what they asked for.',
         inputSchema: z.object({
-          force: z.boolean().default(false).describe('Start a new sign-in even if already signed in (e.g. to switch accounts).'),
+          force: z.boolean().default(false).describe('Start a new sign-in even if already signed in, e.g. to switch accounts or when LinkedIn rejected the stored token.'),
         }),
         outputSchema: z.object({
           alreadySignedIn: z.boolean(),

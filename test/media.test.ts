@@ -54,7 +54,15 @@ describe('loadMedia', () => {
   it('rejects files that are not the expected type', async () => {
     await expect(loadMedia(join(dir, 'notes.txt'), 'image', { allowLocalFiles: true })).rejects.toThrow(UserInputError);
     await expect(loadMedia(join(dir, 'pixel.png'), 'document', { allowLocalFiles: true })).rejects.toThrow(/is not a PDF/);
-    await expect(loadMedia(join(dir, 'missing.png'), 'image', { allowLocalFiles: true })).rejects.toThrow(/Cannot read/);
+    await expect(loadMedia(join(dir, 'missing.png'), 'image', { allowLocalFiles: true })).rejects.toThrow(
+      `Cannot read ${join(dir, 'missing.png')}: the file does not exist.`,
+    );
+  });
+
+  it('suggests an absolute path when a relative one is not found', async () => {
+    await expect(loadMedia('missing.png', 'image', { allowLocalFiles: true, cwd: dir })).rejects.toThrow(
+      `"missing.png" was resolved against ${dir}; pass an absolute path instead.`,
+    );
   });
 
   it('decodes base64 data URIs', async () => {

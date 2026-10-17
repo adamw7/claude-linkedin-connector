@@ -1,4 +1,4 @@
-import express, { type Express, type RequestHandler } from 'express';
+import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express';
 import {
   getOAuthProtectedResourceMetadataUrl,
   hostHeaderValidation,
@@ -38,6 +38,35 @@ export interface RemoteApp {
 
 const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1']);
 
+/** Request bodies above this are rejected; base64 inflates media by a third, so data: URIs top out around 20 MB. */
+const MAX_BODY = '30mb';
+
+/**
+ * Answers body-parser failures (and anything else unhandled) with JSON instead
+ * of Express's HTML page, which MCP clients show verbatim and which includes a
+ * stack trace outside production.
+ */
+const jsonErrors: ErrorRequestHandler = (error: { status?: number; type?: string }, req, res, next) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+  const status = typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
+  const message =
+    error.type === 'entity.too.large'
+      ? `The request is larger than ${MAX_BODY.toUpperCase()}. Pass large images or documents as an http(s) URL instead of a data: URI.`
+      : error.type === 'entity.parse.failed'
+        ? 'The request body is not valid JSON.'
+        : status < 500
+          ? 'The request could not be processed.'
+          : 'Internal server error.';
+  if (req.path === '/mcp') {
+    res.status(status).json({ jsonrpc: '2.0', error: { code: status < 500 ? -32600 : -32603, message }, id: null });
+  } else {
+    res.status(status).json({ error: status < 500 ? 'invalid_request' : 'server_error', error_description: message });
+  }
+};
+
 /** Browser-based MCP clients need CORS; tokens travel in a header, not cookies, so any origin is fine. */
 const mcpCors: RequestHandler = (req, res, next) => {
   res.set({
@@ -71,7 +100,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
     (LOOPBACK_BINDS.has(config.host) ? [config.publicUrl.hostname, 'localhost', '127.0.0.1', '[::1]'] : undefined);
   if (allowedHosts) app.use(hostHeaderValidation(allowedHosts));
   // Tool calls can carry base64 images, so allow large JSON bodies.
-  app.use(express.json({ limit: '30mb' }));
+  app.use(express.json({ limit: MAX_BODY }));
 
   const metadataOptions = {
     oauthMetadata: oauth.metadata,
@@ -120,6 +149,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
 <p><a href="${escapeHtml(HOMEPAGE)}">Documentation</a></p>`,
     );
   });
+  app.use(jsonErrors);
 
   return { app, mcpUrl, close: () => handler.close() };
 }
