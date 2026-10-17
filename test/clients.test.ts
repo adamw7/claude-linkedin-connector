@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClientRegistry, isValidRedirectUri, RedirectPolicy, redirectUriMatches, type OAuthClient } from '../src/remote/clients.js';
 import { Sealer } from '../src/remote/crypto.js';
+import { fakeTransport } from './helpers/fake-transport.js';
 
 const sealer = new Sealer('s'.repeat(32));
 const CLAUDE = 'https://claude.ai/api/mcp/auth_callback';
@@ -215,6 +216,53 @@ describe('ClientRegistry', () => {
         },
       });
       expect(await reg.resolve(DOC_URL)).toBeUndefined();
+    });
+
+    it('keeps at most 500 documents cached, dropping the oldest', async () => {
+      const fetched: string[] = [];
+      const reg = registry([CLAUDE], {
+        fetchDocument: async (url) => {
+          fetched.push(url);
+          return JSON.stringify({ client_id: url, redirect_uris: [CLAUDE] });
+        },
+      });
+      const ids = Array.from({ length: 501 }, (_, i) => `https://client.example/${i}`);
+      for (const id of ids) await reg.resolve(id);
+      await reg.resolve(ids[1]!);
+      expect(fetched).toHaveLength(501);
+      await reg.resolve(ids[0]!);
+      expect(fetched).toHaveLength(502);
+    });
+
+    describe('fetched over the network', () => {
+      afterEach(() => vi.restoreAllMocks());
+      const DOCUMENT = JSON.stringify({ client_id: DOC_URL, redirect_uris: [CLAUDE] });
+      const host = ['client.example'];
+
+      it('fetches the document as JSON', async () => {
+        const requests = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/json' }, body: DOCUMENT }), host);
+        expect(await registry([CLAUDE]).resolve(DOC_URL)).toMatchObject({ clientId: DOC_URL, kind: 'metadata-document' });
+        expect(requests[0]).toMatchObject({ url: new URL(DOC_URL), headers: { Accept: 'application/json' } });
+      });
+
+      it('does not follow redirects', async () => {
+        const requests = fakeTransport(() => ({ status: 302, headers: { Location: 'https://client.example/elsewhere.json' } }), host);
+        expect(await registry([CLAUDE]).resolve(DOC_URL)).toBeUndefined();
+        expect(requests).toHaveLength(1);
+      });
+
+      it('refuses documents over 64 KB', async () => {
+        const padded = JSON.stringify({ client_id: DOC_URL, redirect_uris: [CLAUDE], padding: 'x'.repeat(70 * 1024) });
+        fakeTransport(() => ({ status: 200, body: padded }), host);
+        expect(await registry([CLAUDE]).resolve(DOC_URL)).toBeUndefined();
+      });
+
+      it('refuses client IDs on private addresses', async () => {
+        const requests = fakeTransport(() => ({ status: 200, body: DOCUMENT }), []);
+        expect(await registry([CLAUDE]).resolve('https://localhost/oauth/metadata.json')).toBeUndefined();
+        expect(await registry([CLAUDE]).resolve('https://10.0.0.1/oauth/metadata.json')).toBeUndefined();
+        expect(requests).toEqual([]);
+      });
     });
 
     it('caches documents, and failures for a shorter time', async () => {

@@ -549,6 +549,21 @@ describe('authorization endpoint', () => {
     expect(crossOrigin.status).toBe(400);
   });
 
+  it('re-checks the client when the consent is approved', async () => {
+    const allowedRedirectUris = [...CLAUDE_REDIRECT_URIS, 'loopback'];
+    const remote = await startRemote({ allowedRedirectUris });
+    const clientId = await client(remote);
+    const browser = new Browser();
+    const html = await (
+      await browser.get(authorizeUrl(remote, { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256' }))
+    ).text();
+    // The operator stops allowing loopback redirects while the consent page is open.
+    allowedRedirectUris.splice(allowedRedirectUris.indexOf('loopback'), 1);
+    const response = await browser.post(`${remote.base}/authorize`, { consent: hiddenField(html, 'consent'), csrf: hiddenField(html, 'csrf'), decision: 'approve' }, remote.base);
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('no longer allowed to connect');
+  });
+
   it('accepts an approval sent with an opaque Origin, since the CSRF cookie is what protects it', async () => {
     const remote = await startRemote();
     const clientId = await client(remote);
