@@ -72,12 +72,11 @@ Alternatively, `npm install -g github:adamw7/claude-linkedin-connector` installs
 
 ### Claude Desktop: install as an extension
 
-```sh
-npm run pack:mcpb
-```
-
-Double-click the resulting `claude-linkedin-connector.mcpb` (or drag it onto Claude Desktop's
-**Settings → Extensions** page) and enter your LinkedIn Client ID and Client Secret.
+Download `claude-linkedin-connector.mcpb` from the
+[latest release](https://github.com/adamw7/claude-linkedin-connector/releases/latest), or build it from a
+clone with `npm run pack:mcpb`. Double-click the file (or drag it onto Claude Desktop's
+**Settings → Extensions** page) and enter your LinkedIn Client ID and Client Secret. The extension bundles
+everything it needs, so no clone or `npm ci` is required.
 
 ### Claude Desktop: manual configuration
 
@@ -242,6 +241,20 @@ to keep the module layering above in place: no import cycles, `linkedin/` and `n
 or sign-in, `mcp/` doesn't depend on the HTTP transport, and remote mode never touches local token storage.
 CI reports coverage on every push and pull request; mutation tests run
 nightly (and on demand) in the `Mutation tests` workflow.
+
+### Releasing
+
+1. Set the new version in `package.json` (`npm version --no-git-tag-version <version>` also updates
+   `package-lock.json`), `mcpb/manifest.json` and `src/version.ts`; a test fails if they disagree.
+2. Move the `Unreleased` notes in [`CHANGELOG.md`](CHANGELOG.md) under a `## [<version>] - <date>` heading.
+3. Merge to `main`, then tag and push: `git tag v<version> && git push origin v<version>`.
+
+The `Release` workflow checks the tag against the version, runs the tests, builds the `.mcpb` and publishes
+a GitHub release with it attached and the changelog entry as notes.
+
+## License
+
+[MIT](LICENSE)
 
 ---
 
