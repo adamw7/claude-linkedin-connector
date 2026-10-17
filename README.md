@@ -159,26 +159,30 @@ LinkedIn's OAuth token generator in the developer portal.
 
 ## 2b. Remote setup (Claude custom connector)
 
-Run the server somewhere with a public HTTPS URL:
+Run the server somewhere with a public HTTPS URL. Releases after 0.1.0 publish a Docker image for amd64 and
+arm64; you can also build one from a clone with `docker build -t claude-linkedin-connector .`:
 
 ```sh
-docker build -t claude-linkedin-connector .
+openssl rand -base64 32   # once: the SERVER_SECRET that seals tokens; keep it with your other secrets
 docker run -p 3000:3000 \
   -e LINKEDIN_CLIENT_ID=your-client-id \
   -e LINKEDIN_CLIENT_SECRET=your-client-secret \
   -e PUBLIC_URL=https://linkedin-mcp.example.com \
-  -e SERVER_SECRET="$(openssl rand -base64 32)" \
+  -e SERVER_SECRET=your-generated-secret \
   -e LINKEDIN_ALLOWED_MEMBERS=you@example.com \
   -e TRUST_PROXY=1 \
-  claude-linkedin-connector
+  ghcr.io/adamw7/claude-linkedin-connector:latest
 ```
 
 Without Docker, set the same variables and run `HOST=0.0.0.0 node dist/index.js http`.
+The [deployment guide](docs/deployment.md) has a production checklist and ready-made setups: Docker Compose with
+automatic HTTPS, Kubernetes, and other container platforms.
 Put it behind a TLS-terminating proxy or use a platform that provides HTTPS, and set `TRUST_PROXY` to the
 number of proxies in front of it so rate limits and logs see real client addresses.
 `LINKEDIN_ALLOWED_MEMBERS` is required: list the LinkedIn emails or member IDs that may connect, or set
 it to `*` to let anyone use your LinkedIn app. An email only matches if the account has verified it on
-LinkedIn. Then:
+LinkedIn. `SERVER_SECRET` is required too: generate it once and keep it, since changing it disconnects everyone
+(see [rotating it](docs/deployment.md#rotating-server_secret) to change it without that). Then:
 
 1. Add `https://linkedin-mcp.example.com/oauth/callback` to your LinkedIn app's authorized redirect URLs.
 2. In Claude, open **Settings → Connectors → Add custom connector** and enter
@@ -210,14 +214,16 @@ connector, and delegates the actual sign-in to LinkedIn:
   someone (and restarting) cuts off the tokens they already have.
 
 The server keeps no database, so it can be restarted or scaled freely as long as `SERVER_SECRET` stays the
-same. Changing the secret disconnects everyone.
+same. Changing the secret disconnects everyone, unless the old one stays in `SERVER_SECRET_PREVIOUS` for a while.
 
 ### Operating the remote server
 
 - **Logs.** The server writes one JSON object per line to stderr: every request (method, path, status,
   duration, client IP), sign-ins (`member_authorized`, `member_not_allowed`), every tool call with the
-  member who made it and whether it succeeded (`tool_call`), and server errors with stack traces. Query
+  member who made it and whether it succeeded (`tool_call`), and server errors with stack traces. Each response
+  has an `X-Request-Id` (your proxy's, if it sends one) that appears in the entries for that request. Query
   strings, request bodies, tokens and post text are never logged.
+  The [deployment guide](docs/deployment.md#monitoring) lists every event.
 - **Rate limits.** The OAuth endpoints allow `RATE_LIMIT_OAUTH` requests per minute per client IP, and
   `/mcp` allows `RATE_LIMIT_MCP` per connected LinkedIn account; over the limit the server answers `429`
   with `Retry-After`. Counts are kept in memory per instance, so with several replicas each one counts
@@ -225,6 +231,10 @@ same. Changing the secret disconnects everyone.
 - **Shutdown.** On `SIGTERM` or `SIGINT` the server stops accepting connections and lets in-flight requests
   (uploads and posts can take a while) finish for up to `SHUTDOWN_TIMEOUT` seconds before cancelling them.
   Keep it below your platform's grace period (10 seconds for `docker stop`).
+- **Health checks.** `GET /healthz` answers `{"status":"ok"}` whatever the `Host` header, so load balancer and
+  Kubernetes probes work with `ALLOWED_HOSTS` set. The Docker image has a `HEALTHCHECK` built in.
+- **Keep-alive.** Idle connections stay open for `KEEP_ALIVE_TIMEOUT` seconds (65). Keep it above your proxy's
+  upstream idle timeout, or the proxy reuses connections the server is closing and some requests fail with 502.
 
 ## Configuration
 
@@ -239,7 +249,8 @@ same. Changing the secret disconnects everyone.
 | `LINKEDIN_ACCESS_TOKEN` | local | | Use this token instead of signing in |
 | `LINKEDIN_FILE_DIRS` | local | `~/Downloads`, `~/Desktop`, `~/Pictures`, working directory | Comma-separated folders local images, documents and `Connections.csv` may be read from (symlinks out of them are refused) |
 | `PUBLIC_URL` | remote | | Public origin, e.g. `https://linkedin-mcp.example.com` (required) |
-| `SERVER_SECRET` | remote | random | At least 32 characters. If unset, connections break on every restart |
+| `SERVER_SECRET` | remote | | At least 32 characters; keep it the same across restarts and replicas. Required unless `PUBLIC_URL` is localhost, where a random one is used |
+| `SERVER_SECRET_PREVIOUS` | remote | | The secret used before `SERVER_SECRET`, still accepted for tokens issued with it, while [rotating](docs/deployment.md#rotating-server_secret) |
 | `HOST` / `PORT` | remote | `127.0.0.1` / `3000` | Listen address (the Docker image uses `0.0.0.0`) |
 | `LINKEDIN_ALLOWED_MEMBERS` | remote | | Comma-separated emails or member IDs allowed to connect, or `*` for anyone. Required unless `PUBLIC_URL` is localhost |
 | `OAUTH_ALLOWED_REDIRECT_URIS` | remote | Claude + `loopback` | Exact URIs, path prefixes like `https://host/path/*`, `loopback`, or `*` |
@@ -248,6 +259,10 @@ same. Changing the secret disconnects everyone.
 | `RATE_LIMIT_OAUTH` | remote | `60` | Requests per minute per client IP to the OAuth endpoints; `0` disables |
 | `RATE_LIMIT_MCP` | remote | `120` | Requests per minute per connected account to `/mcp`; `0` disables |
 | `SHUTDOWN_TIMEOUT` | remote | `8` | Seconds to let in-flight requests finish on shutdown |
+| `KEEP_ALIVE_TIMEOUT` | remote | `65` | Seconds idle connections stay open; keep it above your proxy's upstream idle timeout |
+
+`LINKEDIN_CLIENT_SECRET`, `SERVER_SECRET` and `SERVER_SECRET_PREVIOUS` can also be read from a file, as Docker
+and Kubernetes secrets are mounted: set `LINKEDIN_CLIENT_SECRET_FILE` (and so on) to its path instead.
 
 See [`.env.example`](.env.example) for a template.
 
@@ -274,7 +289,9 @@ See [`.env.example`](.env.example) for a template.
 | Editing or deleting a post fails with `not the activity URN` | Links copied from linkedin.com often point to the post's activity rather than the post. Use the URL Claude gave you when publishing, or the code from the post's **Embed this post** menu item |
 | `access token … expired or been revoked` | Sign in again (local) or reconnect the connector (remote) |
 | Remote connection fails after a restart | Set a fixed `SERVER_SECRET` |
+| `SERVER_SECRET is required` on startup | Generate one with `openssl rand -base64 32`, store it with your other secrets and keep it |
 | `LINKEDIN_ALLOWED_MEMBERS is required` on startup | List who may connect, or set it to `*` to allow anyone |
+| Some requests fail with `502` behind a proxy or load balancer | Set `KEEP_ALIVE_TIMEOUT` above the proxy's upstream idle timeout (e.g. `620` on Google Cloud) |
 | `Too many requests` (429) for everyone at once | The server is behind a proxy without `TRUST_PROXY`, so all clients share one address |
 
 ## Development
@@ -316,7 +333,14 @@ nightly (and on demand) in the `Mutation tests` workflow.
 3. Merge to `main`, then tag and push: `git tag v<version> && git push origin v<version>`.
 
 The `Release` workflow checks the tag against the version, runs the tests, builds the `.mcpb` and publishes
-a GitHub release with it attached and the changelog entry as notes.
+a GitHub release with it attached and the changelog entry as notes. It then smoke tests the Docker image
+(`scripts/smoke-test-image.sh`, which CI also runs) and pushes it for amd64 and arm64 to
+`ghcr.io/adamw7/claude-linkedin-connector` as `<version>`, `<major.minor>` and `latest`. After the first push,
+make the package public in its settings on GitHub (packages start out private), so `docker pull` works without
+signing in.
+
+Dependabot proposes dependency, GitHub Actions and base image updates weekly. Report vulnerabilities as described
+in [`SECURITY.md`](SECURITY.md).
 
 ## License
 

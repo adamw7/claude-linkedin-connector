@@ -16,7 +16,7 @@ import { HOMEPAGE } from '../version.js';
 import { ClientRegistry, RedirectPolicy } from './clients.js';
 import { ConnectorAuth, grantFromAuthInfo } from './connector-auth.js';
 import { Sealer } from './crypto.js';
-import { pathOf, requestLogger, silentLogger, type Logger } from './logger.js';
+import { pathOf, requestId, requestLogger, silentLogger, type Logger } from './logger.js';
 import { createOAuthServer } from './oauth-server.js';
 import { sendPage } from './pages.js';
 import { rateLimit } from './rate-limit.js';
@@ -67,7 +67,7 @@ function sendJsonError(req: Request, res: Response, status: number, message: str
  */
 const jsonErrors = (logger: Logger): ErrorRequestHandler => (error: { status?: number; type?: string }, req, res, next) => {
   const status = typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
-  if (status >= 500) logger('error', 'unhandled_error', { method: req.method, path: pathOf(req), error });
+  if (status >= 500) logger('error', 'unhandled_error', { method: req.method, path: pathOf(req), requestId: req.get('x-request-id'), error });
   if (res.headersSent) {
     next(error);
     return;
@@ -102,7 +102,7 @@ const mcpCors: RequestHandler = (req, res, next) => {
 export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   const { config } = options;
   const mcpUrl = new URL('/mcp', config.publicUrl);
-  const sealer = new Sealer(config.secret);
+  const sealer = new Sealer(config.secret, config.previousSecret);
   const { version, fetch, allowPrivateNetwork } = options;
   const logger = options.logger ?? silentLogger;
   const clients = new ClientRegistry(sealer, new RedirectPolicy(config.allowedRedirectUris), {
@@ -116,7 +116,11 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustProxy);
-  app.use(requestLogger(logger));
+  app.use(requestId, requestLogger(logger));
+  // Ahead of the Host check: load balancers and orchestrators probe the container's own address.
+  app.get('/healthz', (_req, res) => {
+    res.json({ status: 'ok' });
+  });
   // A loopback bind is usually reached through a tunnel, so accept the public hostname too.
   const allowedHosts =
     config.allowedHosts ??
@@ -161,6 +165,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
             durationMs,
             member: grant?.sub,
             clientId: ctx.authInfo?.clientId,
+            requestId: ctx.requestInfo?.headers.get('x-request-id') ?? undefined,
             error: ok ? undefined : describeError(error, 'remote'),
           }),
       });
@@ -187,9 +192,6 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   const mcpBody = express.json({ limit: MAX_BODY });
   app.all('/mcp', mcpCors, bearer, mcpLimit, mcpBody, (req, res) => void mcp(req, res, req.body));
 
-  app.get('/healthz', (_req, res) => {
-    res.json({ status: 'ok' });
-  });
   app.get('/', (_req, res) => {
     sendPage(
       res,

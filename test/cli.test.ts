@@ -240,6 +240,7 @@ describe.skipIf(process.platform === 'win32')('http command', () => {
         PUBLIC_URL: `http://127.0.0.1:${port}`,
         PORT: String(port),
         SERVER_SECRET: 'test-secret-that-is-at-least-32-characters-long',
+        KEEP_ALIVE_TIMEOUT: '61',
       }),
     });
     const events: Array<Record<string, unknown>> = [];
@@ -255,7 +256,9 @@ describe.skipIf(process.platform === 'win32')('http command', () => {
     try {
       await listening;
       expect(events.find((event) => event.event === 'listening')).toMatchObject({ version: VERSION, mcpUrl: `http://127.0.0.1:${port}/mcp`, allowedMembers: 'anyone' });
-      expect(await (await fetch(`http://127.0.0.1:${port}/healthz`)).json()).toEqual({ status: 'ok' });
+      const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+      expect(await health.json()).toEqual({ status: 'ok' });
+      expect(health.headers.get('keep-alive')).toBe('timeout=61');
 
       child.kill('SIGTERM');
       const [code] = await exited;

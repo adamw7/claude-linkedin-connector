@@ -1,0 +1,32 @@
+# Weekly dependency updates. Minor and patch npm updates arrive as one PR; majors one by one.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Types follow the Node.js version in engines, not the newest Node.js.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ['*']
+
+  # Keeps the digest-pinned base image in the Dockerfile current with security fixes.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Move to the next Node.js LTS on purpose, together with engines and CI.
+      - dependency-name: node
+        update-types: [version-update:semver-major]

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   Client,
@@ -20,6 +20,8 @@ interface Remote {
   mcpUrl: URL;
   linkedin: FakeLinkedIn;
   logs: Array<Record<string, unknown>>;
+  /** Replaces the app behind the same URL with one using changed settings, like a redeploy. */
+  restart: (changes: Partial<RemoteConfig>) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -49,6 +51,7 @@ async function startRemote(
     port,
     secret: 'test-secret-that-is-at-least-32-characters-long',
     ephemeralSecret: false,
+    previousSecret: undefined,
     allowedRedirectUris: [...CLAUDE_REDIRECT_URIS, 'loopback'],
     allowedMembers: ['*'],
     allowedHosts: undefined,
@@ -56,23 +59,30 @@ async function startRemote(
     oauthRateLimit: 0,
     mcpRateLimit: 0,
     shutdownTimeoutMs: 1000,
+    keepAliveTimeoutMs: 5000,
     ...overrides,
   };
   const logs: Array<Record<string, unknown>> = [];
-  const remote = createRemoteApp({
-    config,
-    version: new ApiVersion('202609'),
-    fetch: linkedin.fetch,
-    allowPrivateNetwork: true,
-    logger: (level, event, fields) => logs.push({ level, event, ...fields }),
-    ...(fetchClientMetadata ? { fetchClientMetadata } : {}),
-  });
-  server.on('request', remote.app);
+  const create = (settings: RemoteConfig) =>
+    createRemoteApp({
+      config: settings,
+      version: new ApiVersion('202609'),
+      fetch: linkedin.fetch,
+      allowPrivateNetwork: true,
+      logger: (level, event, fields) => logs.push({ level, event, ...fields }),
+      ...(fetchClientMetadata ? { fetchClientMetadata } : {}),
+    });
+  let remote = create(config);
+  server.on('request', (req, res) => remote.app(req, res));
   const instance: Remote = {
     base: publicUrl.origin,
     mcpUrl: remote.mcpUrl,
     linkedin,
     logs,
+    restart: async (changes) => {
+      await remote.close();
+      remote = create({ ...config, ...changes });
+    },
     close: async () => {
       await remote.close();
       server.closeAllConnections();
@@ -219,6 +229,18 @@ async function accessToken(remote: Remote): Promise<string> {
   return body.access_token as string;
 }
 
+/** A GET with a chosen Host header, which fetch() won't send. */
+function getWithHost(url: string, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    request(url, { headers: { Host: host } }, (res) => {
+      res.resume();
+      resolve(res.statusCode!);
+    })
+      .on('error', reject)
+      .end();
+  });
+}
+
 function ping(remote: Remote, bearer: string): Promise<Response> {
   return fetch(remote.mcpUrl, {
     method: 'POST',
@@ -315,6 +337,10 @@ describe('remote connector end to end', () => {
       expect.objectContaining({ level: 'info', event: 'tool_call', tool: 'linkedin_create_post', ok: true, member: 'abc123' }),
     );
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'GET', path: '/oauth/callback', status: 302 }));
+    // Each tool call can be matched with the request that carried it.
+    const call = remote.logs.find((entry) => entry.event === 'tool_call' && entry.tool === 'linkedin_create_post')!;
+    expect(call.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'POST', path: '/mcp', requestId: call.requestId }));
     // Neither tokens, codes nor post text reach the logs.
     const logged = JSON.stringify(remote.logs);
     for (const secret of ['li-token', 'li-code', provider.saved!.access_token, 'Hello from Claude']) expect(logged).not.toContain(secret);
@@ -416,6 +442,30 @@ describe('remote connector discovery', () => {
     expect(await (await fetch(`${remote.base}/healthz`)).json()).toEqual({ status: 'ok' });
   });
 
+  it('answers health checks whatever the Host header, which every other endpoint checks', async () => {
+    const remote = await startRemote({ allowedHosts: ['linkedin-mcp.example.com'] });
+    // Kubernetes probes and load balancers send the container's address.
+    expect(await getWithHost(`${remote.base}/healthz`, '10.0.0.7:3000')).toBe(200);
+    expect(await getWithHost(`${remote.base}/`, '10.0.0.7:3000')).toBe(403);
+    expect(await getWithHost(`${remote.base}/.well-known/oauth-authorization-server`, 'evil.example')).toBe(403);
+    expect(await getWithHost(`${remote.base}/`, 'linkedin-mcp.example.com')).toBe(200);
+  });
+
+  it('tags responses and logs with a request ID, keeping a proxy\'s if it looks like one', async () => {
+    const remote = await startRemote();
+    const generated = (await fetch(remote.base)).headers.get('x-request-id');
+    expect(generated).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect((await fetch(remote.base, { headers: { 'X-Request-Id': 'lb-1:a7f.3' } })).headers.get('x-request-id')).toBe('lb-1:a7f.3');
+    for (const unsuitable of ['has spaces', '<script>', 'x'.repeat(129)]) {
+      const id = (await fetch(remote.base, { headers: { 'X-Request-Id': unsuitable } })).headers.get('x-request-id');
+      expect(id, unsuitable).toMatch(/^[0-9a-f-]{36}$/);
+    }
+    expect((await fetch(`${remote.base}/healthz`)).headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+    await expect.poll(() => remote.logs.filter((entry) => entry.event === 'http_request')).toHaveLength(5);
+    expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', path: '/', requestId: generated }));
+    expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', path: '/', requestId: 'lb-1:a7f.3' }));
+  });
+
   it('reports oversized and malformed bodies as JSON, not an HTML stack trace', async () => {
     const remote = await startRemote();
     const post = (path: string, body: string) =>
@@ -444,6 +494,38 @@ describe('remote connector discovery', () => {
     const malformed = await post('/register', '{bad');
     expect(malformed.status).toBe(400);
     expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The request body is not valid JSON.' });
+  });
+});
+
+describe('SERVER_SECRET rotation', () => {
+  const OLD = 'old-secret-that-is-at-least-32-characters';
+  const NEW = 'new-secret-that-is-at-least-32-characters';
+
+  it('keeps connections and registrations working while the previous secret is listed', async () => {
+    const remote = await startRemote({ secret: OLD });
+    const before = await accessToken(remote);
+    const { body: client } = await register(remote, { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' });
+    const consent = () =>
+      new Browser().get(
+        authorizeUrl(remote, {
+          response_type: 'code',
+          client_id: client.client_id,
+          redirect_uri: REDIRECT,
+          code_challenge: pkce().challenge,
+          code_challenge_method: 'S256',
+        }),
+      );
+
+    await remote.restart({ secret: NEW, previousSecret: OLD });
+    expect((await ping(remote, before)).status).toBe(200);
+    expect((await consent()).status).toBe(200);
+    const after = await accessToken(remote);
+
+    // Dropping the previous secret ends what was issued with it, but not what came after the rotation.
+    await remote.restart({ secret: NEW });
+    expect((await ping(remote, before)).status).toBe(401);
+    expect((await consent()).status).toBe(400);
+    expect((await ping(remote, after)).status).toBe(200);
   });
 });
 
