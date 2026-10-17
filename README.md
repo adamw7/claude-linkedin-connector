@@ -135,11 +135,16 @@ docker run -p 3000:3000 \
   -e LINKEDIN_CLIENT_SECRET=your-client-secret \
   -e PUBLIC_URL=https://linkedin-mcp.example.com \
   -e SERVER_SECRET="$(openssl rand -base64 32)" \
+  -e LINKEDIN_ALLOWED_MEMBERS=you@example.com \
+  -e TRUST_PROXY=1 \
   claude-linkedin-connector
 ```
 
 Without Docker, set the same variables and run `HOST=0.0.0.0 node dist/index.js http`.
-Put it behind a TLS-terminating proxy or use a platform that provides HTTPS. Then:
+Put it behind a TLS-terminating proxy or use a platform that provides HTTPS, and set `TRUST_PROXY` to the
+number of proxies in front of it so rate limits and logs see real client addresses.
+`LINKEDIN_ALLOWED_MEMBERS` is required: list the LinkedIn emails or member IDs that may connect, or set
+it to `*` to let anyone use your LinkedIn app. Then:
 
 1. Add `https://linkedin-mcp.example.com/oauth/callback` to your LinkedIn app's authorized redirect URLs.
 2. In Claude, open **Settings → Connectors → Add custom connector** and enter
@@ -151,6 +156,7 @@ In Claude Code: `claude mcp add --transport http linkedin https://linkedin-mcp.e
 `/mcp` to sign in.
 
 To try it locally, set the LinkedIn variables, run `PUBLIC_URL=http://localhost:3000 node dist/index.js http`
+(with a localhost `PUBLIC_URL`, anyone may connect unless you set `LINKEDIN_ALLOWED_MEMBERS`)
 and point an MCP client at `http://localhost:3000/mcp`, or expose it through an HTTPS tunnel and use the
 tunnel's URL as `PUBLIC_URL`.
 
@@ -165,11 +171,25 @@ connector, and delegates the actual sign-in to LinkedIn:
   `SERVER_SECRET` (AES-256-GCM) inside the access token it issues to Claude, and never stores it.
 - Codes require PKCE (S256), expire after 5 minutes and are single-use (tracked per server instance). Access tokens are bound to the
   `/mcp` resource and expire with the LinkedIn token (at most 60 days), after which Claude asks you to reconnect.
-- By default only Claude's callback URLs and localhost redirects may register. Set `LINKEDIN_ALLOWED_MEMBERS`
-  to restrict which LinkedIn accounts can connect.
+- By default only Claude's callback URLs and localhost redirects may register, and only the LinkedIn accounts
+  in `LINKEDIN_ALLOWED_MEMBERS` can finish connecting.
 
 The server keeps no database, so it can be restarted or scaled freely as long as `SERVER_SECRET` stays the
 same. Changing the secret disconnects everyone.
+
+### Operating the remote server
+
+- **Logs.** The server writes one JSON object per line to stderr: every request (method, path, status,
+  duration, client IP), sign-ins (`member_authorized`, `member_not_allowed`), every tool call with the
+  member who made it and whether it succeeded (`tool_call`), and server errors with stack traces. Query
+  strings, request bodies, tokens and post text are never logged.
+- **Rate limits.** The OAuth endpoints allow `RATE_LIMIT_OAUTH` requests per minute per client IP, and
+  `/mcp` allows `RATE_LIMIT_MCP` per connected LinkedIn account; over the limit the server answers `429`
+  with `Retry-After`. Counts are kept in memory per instance, so with several replicas each one counts
+  separately. Behind a proxy, set `TRUST_PROXY`, or every client shares the proxy's address and limit.
+- **Shutdown.** On `SIGTERM` or `SIGINT` the server stops accepting connections and lets in-flight requests
+  (uploads and posts can take a while) finish for up to `SHUTDOWN_TIMEOUT` seconds before cancelling them.
+  Keep it below your platform's grace period (10 seconds for `docker stop`).
 
 ## Configuration
 
@@ -185,9 +205,13 @@ same. Changing the secret disconnects everyone.
 | `PUBLIC_URL` | remote | | Public origin, e.g. `https://linkedin-mcp.example.com` (required) |
 | `SERVER_SECRET` | remote | random | At least 32 characters. If unset, connections break on every restart |
 | `HOST` / `PORT` | remote | `127.0.0.1` / `3000` | Listen address (the Docker image uses `0.0.0.0`) |
-| `LINKEDIN_ALLOWED_MEMBERS` | remote | anyone | Comma-separated emails or member IDs allowed to connect |
+| `LINKEDIN_ALLOWED_MEMBERS` | remote | | Comma-separated emails or member IDs allowed to connect, or `*` for anyone. Required unless `PUBLIC_URL` is localhost |
 | `OAUTH_ALLOWED_REDIRECT_URIS` | remote | Claude + `loopback` | Exact URIs, path prefixes like `https://host/path/*`, `loopback`, or `*` |
 | `ALLOWED_HOSTS` | remote | | Reject requests whose `Host` header isn't listed |
+| `TRUST_PROXY` | remote | `false` | Trust `X-Forwarded-For` from proxies: a hop count, `true`, or subnets such as `loopback, 10.0.0.0/8` |
+| `RATE_LIMIT_OAUTH` | remote | `60` | Requests per minute per client IP to the OAuth endpoints; `0` disables |
+| `RATE_LIMIT_MCP` | remote | `120` | Requests per minute per connected account to `/mcp`; `0` disables |
+| `SHUTDOWN_TIMEOUT` | remote | `8` | Seconds to let in-flight requests finish on shutdown |
 
 See [`.env.example`](.env.example) for a template.
 
@@ -210,6 +234,8 @@ See [`.env.example`](.env.example) for a template.
 | `LinkedIn denied permission` (403) | The app lacks the product for that feature, or you signed in before adding the scope. Fix the app, then sign in again |
 | `access token … expired or been revoked` | Sign in again (local) or reconnect the connector (remote) |
 | Remote connection fails after a restart | Set a fixed `SERVER_SECRET` |
+| `LINKEDIN_ALLOWED_MEMBERS is required` on startup | List who may connect, or set it to `*` to allow anyone |
+| `Too many requests` (429) for everyone at once | The server is behind a proxy without `TRUST_PROXY`, so all clients share one address |
 
 ## Development
 
@@ -229,7 +255,7 @@ src/
   mcp/server.ts       MCP tools
   linkedin/           REST client, OAuth, text escaping, media, link previews, API versions
   auth/               local token storage and browser sign-in
-  remote/             HTTP app, OAuth authorization server, client registration
+  remote/             HTTP app, OAuth authorization server, client registration, logging, rate limits
   net/safe-fetch.ts   fetching URLs without reaching private networks
 ```
 

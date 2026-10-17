@@ -22,6 +22,16 @@ export interface ConnectorOptions {
   /** Permit fetching media from private networks (tests only). */
   allowPrivateNetwork?: boolean;
   sleep?: (ms: number) => Promise<void>;
+  /** Called after every tool call, e.g. for an audit log. */
+  onToolCall?: (event: ToolCallEvent) => void;
+}
+
+export interface ToolCallEvent {
+  tool: string;
+  ok: boolean;
+  durationMs: number;
+  /** The failure, when `ok` is false. */
+  error?: unknown;
 }
 
 const REACTIONS: Record<string, ReactionType> = {
@@ -71,10 +81,16 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     { instructions: instructions(mode, engagement) },
   );
 
-  const run = async (handler: () => Promise<CallToolResult>): Promise<CallToolResult> => {
+  const run = async (tool: string, handler: () => Promise<CallToolResult>): Promise<CallToolResult> => {
+    const start = performance.now();
+    const report = (error?: unknown) =>
+      options.onToolCall?.({ tool, ok: error === undefined, durationMs: Math.round(performance.now() - start), error });
     try {
-      return await handler();
+      const result = await handler();
+      report();
+      return result;
     } catch (error) {
+      report(error);
       return errorResult(error, mode);
     }
   };
@@ -165,7 +181,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     () =>
-      run(async () => {
+      run('linkedin_get_profile', async () => {
         const { client } = await connect();
         const info = await client.getUserInfo();
         await auth.rememberMember({ id: info.sub, name: info.name, email: info.email });
@@ -252,7 +268,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     (args) =>
-      run(async () => {
+      run('linkedin_create_post', async () => {
         const attachments = [args.article, args.images, args.document].filter((value) => value !== undefined);
         if (attachments.length > 1) {
           throw new UserInputError('A post can have only one of: article, images or document.');
@@ -337,7 +353,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     (args) =>
-      run(async () => {
+      run('linkedin_edit_post', async () => {
         const urn = parsePostReference(args.post);
         const { client } = await connect();
         await onOwnPost(urn, 'edit', () => client.updatePostText(urn, escapeLittleText(args.text)));
@@ -358,7 +374,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     (args) =>
-      run(async () => {
+      run('linkedin_delete_post', async () => {
         const urn = parsePostReference(args.post);
         const { client } = await connect();
         await onOwnPost(urn, 'delete', () => client.deletePost(urn));
@@ -391,7 +407,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
       (args) =>
-        run(async () => {
+        run('linkedin_comment_on_post', async () => {
           requireActor(args.organization);
           const target = parsePostReference(args.post);
           const { client, session } = await connect();
@@ -417,7 +433,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       },
       (args) =>
-        run(async () => {
+        run('linkedin_react_to_post', async () => {
           requireActor(args.organization);
           const target = parsePostReference(args.post);
           const { client, session } = await connect();
@@ -448,7 +464,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    () => run(async () => json({ ...(await auth.status()) })),
+    () => run('linkedin_auth_status', async () => json({ ...(await auth.status()) })),
   );
 
   if (auth.login && auth.logout) {
@@ -473,7 +489,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
       (args) =>
-        run(async () => {
+        run('linkedin_login', async () => {
           if (!args.force) {
             const status = await auth.status();
             if (status.authenticated) return json({ alreadySignedIn: true, message: status.message });
@@ -498,7 +514,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       },
       () =>
-        run(async () => {
+        run('linkedin_logout', async () => {
           const removed = await logout();
           return json({
             removed,

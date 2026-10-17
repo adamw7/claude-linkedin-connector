@@ -1,4 +1,4 @@
-import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express';
+import express, { type ErrorRequestHandler, type Express, type Request, type RequestHandler, type Response } from 'express';
 import {
   getOAuthProtectedResourceMetadataUrl,
   hostHeaderValidation,
@@ -10,13 +10,16 @@ import { buildOAuthProtectedResourceMetadata, createMcpHandler } from '@modelcon
 import type { RemoteConfig } from '../config.js';
 import { escapeHtml } from '../html.js';
 import type { ApiVersion } from '../linkedin/versions.js';
+import { describeError } from '../mcp/errors.js';
 import { createConnectorServer } from '../mcp/server.js';
 import { HOMEPAGE } from '../version.js';
 import { ClientRegistry, RedirectPolicy } from './clients.js';
 import { ConnectorAuth, grantFromAuthInfo } from './connector-auth.js';
 import { Sealer } from './crypto.js';
+import { pathOf, requestLogger, silentLogger, type Logger } from './logger.js';
 import { createOAuthServer } from './oauth-server.js';
 import { sendPage } from './pages.js';
+import { rateLimit } from './rate-limit.js';
 
 export interface RemoteAppOptions {
   config: RemoteConfig;
@@ -27,6 +30,8 @@ export interface RemoteAppOptions {
   allowPrivateNetwork?: boolean;
   /** Overrides how Client ID Metadata Documents are fetched (tests). */
   fetchClientMetadata?: (url: string) => Promise<string>;
+  /** Receives request, error and audit events; silent by default. */
+  logger?: Logger;
 }
 
 export interface RemoteApp {
@@ -41,17 +46,30 @@ const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1']);
 /** Request bodies above this are rejected; base64 inflates media by a third, so data: URIs top out around 20 MB. */
 const MAX_BODY = '30mb';
 
+/** Endpoints a browser or OAuth client calls before it has a token; limited per client IP. */
+const OAUTH_PATHS = ['/authorize', '/oauth/callback', '/token', '/register'];
+
+function sendJsonError(req: Request, res: Response, status: number, message: string): void {
+  if (pathOf(req) === '/mcp') {
+    res.status(status).json({ jsonrpc: '2.0', error: { code: status < 500 ? -32600 : -32603, message }, id: null });
+  } else {
+    const error = status === 429 ? 'too_many_requests' : status < 500 ? 'invalid_request' : 'server_error';
+    res.status(status).json({ error, error_description: message });
+  }
+}
+
 /**
  * Answers body-parser failures (and anything else unhandled) with JSON instead
  * of Express's HTML page, which MCP clients show verbatim and which includes a
- * stack trace outside production.
+ * stack trace outside production. Server errors are logged with their stack.
  */
-const jsonErrors: ErrorRequestHandler = (error: { status?: number; type?: string }, req, res, next) => {
+const jsonErrors = (logger: Logger): ErrorRequestHandler => (error: { status?: number; type?: string }, req, res, next) => {
+  const status = typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
+  if (status >= 500) logger('error', 'unhandled_error', { method: req.method, path: pathOf(req), error });
   if (res.headersSent) {
     next(error);
     return;
   }
-  const status = typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
   const message =
     error.type === 'entity.too.large'
       ? `The request is larger than ${MAX_BODY.toUpperCase()}. Pass large images or documents as an http(s) URL instead of a data: URI.`
@@ -60,11 +78,7 @@ const jsonErrors: ErrorRequestHandler = (error: { status?: number; type?: string
         : status < 500
           ? 'The request could not be processed.'
           : 'Internal server error.';
-  if (req.path === '/mcp') {
-    res.status(status).json({ jsonrpc: '2.0', error: { code: status < 500 ? -32600 : -32603, message }, id: null });
-  } else {
-    res.status(status).json({ error: status < 500 ? 'invalid_request' : 'server_error', error_description: message });
-  }
+  sendJsonError(req, res, status, message);
 };
 
 /** Browser-based MCP clients need CORS; tokens travel in a header, not cookies, so any origin is fine. */
@@ -86,14 +100,19 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   const mcpUrl = new URL('/mcp', config.publicUrl);
   const sealer = new Sealer(config.secret);
   const { version, fetch, allowPrivateNetwork } = options;
+  const logger = options.logger ?? silentLogger;
   const clients = new ClientRegistry(sealer, new RedirectPolicy(config.allowedRedirectUris), {
     allowPrivateNetwork,
     fetchDocument: options.fetchClientMetadata,
   });
-  const oauth = createOAuthServer({ config, sealer, clients, resource: mcpUrl, version, fetch });
+  const oauth = createOAuthServer({ config, sealer, clients, resource: mcpUrl, version, fetch, logger });
+  const tooMany = (req: Request, res: Response) =>
+    sendJsonError(req, res, 429, `Too many requests. Try again in ${res.get('Retry-After')} seconds.`);
 
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', config.trustProxy);
+  app.use(requestLogger(logger));
   // A loopback bind is usually reached through a tunnel, so accept the public hostname too.
   const allowedHosts =
     config.allowedHosts ??
@@ -114,18 +133,37 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
     res.set('Access-Control-Allow-Origin', '*').json(resourceMetadata);
   });
 
+  app.use(
+    OAUTH_PATHS,
+    rateLimit({ limit: config.oauthRateLimit, key: (req) => (req.method === 'OPTIONS' ? undefined : req.ip), reject: tooMany }),
+  );
   app.use(oauth.router);
 
-  const handler = createMcpHandler((ctx) =>
-    createConnectorServer({
-      mode: 'remote',
-      auth: new ConnectorAuth(grantFromAuthInfo(ctx.authInfo)),
-      version,
-      scopes: config.scopes,
-      apiBaseUrl: config.apiBaseUrl,
-      fetch,
-      allowPrivateNetwork,
-    }),
+  const handler = createMcpHandler(
+    (ctx) => {
+      const grant = grantFromAuthInfo(ctx.authInfo);
+      return createConnectorServer({
+        mode: 'remote',
+        auth: new ConnectorAuth(grant),
+        version,
+        scopes: config.scopes,
+        apiBaseUrl: config.apiBaseUrl,
+        fetch,
+        allowPrivateNetwork,
+        // The audit trail: who called which tool and how it went (never the arguments, which hold post text).
+        onToolCall: ({ tool, ok, durationMs, error }) =>
+          logger(ok ? 'info' : 'warn', 'tool_call', {
+            tool,
+            ok,
+            durationMs,
+            member: grant?.sub,
+            clientId: ctx.authInfo?.clientId,
+            error: ok ? undefined : describeError(error, 'remote'),
+          }),
+      });
+    },
+    // Also reports requests the SDK rejected (bad protocol version and the like), hence warn.
+    { onerror: (error) => logger('warn', 'mcp_error', { error }) },
   );
   const mcp = toNodeHandler(handler);
   const bearer = requireBearerAuth({
@@ -133,7 +171,15 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpUrl),
     expectedResource: mcpUrl,
   });
-  app.all('/mcp', mcpCors, bearer, (req, res) => void mcp(req, res, req.body));
+  const mcpLimit = rateLimit({
+    limit: config.mcpRateLimit,
+    key: (req) => {
+      const auth = req.auth;
+      return auth && (grantFromAuthInfo(auth)?.sub ?? auth.clientId);
+    },
+    reject: tooMany,
+  });
+  app.all('/mcp', mcpCors, bearer, mcpLimit, (req, res) => void mcp(req, res, req.body));
 
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
@@ -149,7 +195,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
 <p><a href="${escapeHtml(HOMEPAGE)}">Documentation</a></p>`,
     );
   });
-  app.use(jsonErrors);
+  app.use(jsonErrors(logger));
 
   return { app, mcpUrl, close: () => handler.close() };
 }
