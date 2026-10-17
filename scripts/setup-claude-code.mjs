@@ -40,18 +40,39 @@ function step(message) {
   console.log(`\n==> ${message}`);
 }
 
-/** Windows needs a shell to run npm.cmd / claude.cmd, so arguments are quoted for cmd.exe there. */
-function quote(arg) {
-  return IS_WINDOWS && /[\s"&|<>^]/.test(arg) ? `"${arg.replaceAll('"', '\\"')}"` : arg;
+// Windows can only run npm.cmd / claude.cmd through cmd.exe, which has its own quoting rules on top of the
+// usual ones; this follows cross-spawn. Executables (node.exe, a native claude.exe) are spawned directly.
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+
+function cmdArgument(arg) {
+  const quoted = `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
+  // Escaped once for cmd.exe /c and once more for the batch file it runs.
+  return quoted.replace(CMD_META, '^$1').replace(CMD_META, '^$1');
+}
+
+/** Resolves a command on the PATH to the file Windows would run, e.g. C:\...\npm.cmd. */
+function whereIs(command) {
+  const result = spawnSync('where', [command], { encoding: 'utf8', windowsHide: true });
+  return result.status === 0 ? result.stdout.split(/\r?\n/)[0].trim() : undefined;
+}
+
+function spawnArgs(command, args) {
+  if (!IS_WINDOWS) return [command, args, {}];
+  const file = /[\\/]/.test(command) ? command : whereIs(command);
+  if (!file) return [command, args, {}]; // fails with ENOENT below
+  if (!/\.(cmd|bat)$/i.test(file)) return [file, args, {}];
+  const line = [file.replace(CMD_META, '^$1'), ...args.map(cmdArgument)].join(' ');
+  return [process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], { windowsVerbatimArguments: true }];
 }
 
 function run(command, args, { env, quiet = false } = {}) {
-  const result = spawnSync(quote(command), IS_WINDOWS ? args.map(quote) : args, {
+  const [file, fileArgs, extra] = spawnArgs(command, args);
+  const result = spawnSync(file, fileArgs, {
     cwd: ROOT,
     env: env ? { ...process.env, ...env } : process.env,
     stdio: quiet ? 'pipe' : 'inherit',
-    shell: IS_WINDOWS,
     encoding: 'utf8',
+    ...extra,
   });
   if (result.error) {
     if (result.error.code === 'ENOENT') throw new SetupError(`\`${command}\` was not found on your PATH.`);
