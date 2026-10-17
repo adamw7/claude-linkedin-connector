@@ -234,7 +234,10 @@ src/
 ```
 
 Tests run against an in-memory fake of LinkedIn, including an end-to-end OAuth flow driven by the
-official MCP client SDK. CI reports coverage on every push and pull request; mutation tests run
+official MCP client SDK. `test/architecture.test.ts` uses [ArchUnitTS](https://github.com/LukasNiessen/ArchUnitTS)
+to keep the module layering above in place: no import cycles, `linkedin/` and `net/` know nothing of MCP
+or sign-in, `mcp/` doesn't depend on the HTTP transport, and remote mode never touches local token storage.
+CI reports coverage on every push and pull request; mutation tests run
 nightly (and on demand) in the `Mutation tests` workflow.
 
 ---

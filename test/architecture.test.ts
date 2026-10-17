@@ -1,0 +1,99 @@
+import { projectFiles, type FileInfo } from 'archunit';
+import { describe, expect, it } from 'vitest';
+
+// Architecture rules for src/, checked with ArchUnitTS. The intended layering, bottom to top:
+//
+//   errors, version, html  — leaf modules, no project imports
+//   net                    — outbound HTTP, no LinkedIn or MCP knowledge
+//   linkedin               — LinkedIn API and OAuth client
+//   auth, config           — local sign-in and token storage, configuration
+//   mcp                    — the MCP server and its tools, transport agnostic
+//   remote                 — the HTTP transport and connector OAuth server
+//   index                  — composition root
+//
+// Type-only imports count as dependencies too.
+
+// ArchUnitTS registers this matcher on Vitest's global expect (hence `globals: true`) but ships no types for it.
+declare module 'vitest' {
+  interface Matchers<R, T> {
+    toPassAsync(): Promise<void>;
+  }
+}
+
+const notImporting = (pattern: RegExp) => (file: FileInfo) => !pattern.test(file.content);
+
+// ArchUnitTS reports every file as depending on itself, so a target pattern must leave out the source file.
+const srcExcept = (file: string) => new RegExp(`^src/(?!${file.replaceAll('.', '\\.')}$)`);
+
+describe('architecture', () => {
+  it('has no circular dependencies', async () => {
+    await expect(projectFiles().inFolder('src/**').should().haveNoCycles()).toPassAsync();
+  });
+
+  it.each(['errors.ts', 'version.ts', 'html.ts'])('keeps src/%s free of project imports', async (leaf) => {
+    await expect(projectFiles().inPath(`src/${leaf}`).shouldNot().dependOnFiles().inPath(srcExcept(leaf))).toPassAsync();
+  });
+
+  it.each(['src/linkedin/**', 'src/auth/**', 'src/mcp/**', 'src/remote/**', 'src/config.ts'])(
+    'keeps src/net independent of %s',
+    async (target) => {
+      await expect(projectFiles().inFolder('src/net/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
+    },
+  );
+
+  it.each(['src/auth/**', 'src/mcp/**', 'src/remote/**', 'src/config.ts', 'src/html.ts'])(
+    'keeps src/linkedin independent of %s',
+    async (target) => {
+      await expect(projectFiles().inFolder('src/linkedin/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
+    },
+  );
+
+  it.each(['src/mcp/**', 'src/remote/**'])('keeps src/auth independent of %s', async (target) => {
+    await expect(projectFiles().inFolder('src/auth/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
+  });
+
+  it.each(['src/mcp/**', 'src/remote/**'])('keeps src/config.ts independent of %s', async (target) => {
+    await expect(projectFiles().inPath('src/config.ts').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
+  });
+
+  it.each(['src/remote/**', 'src/config.ts'])('keeps the MCP server transport agnostic of %s', async (target) => {
+    await expect(projectFiles().inFolder('src/mcp/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
+  });
+
+  it.each(['local-auth.ts', 'token-store.ts', 'loopback-login.ts'])(
+    'keeps remote mode off local sign-in (src/auth/%s)',
+    async (target) => {
+      await expect(projectFiles().inFolder('src/remote/**').shouldNot().dependOnFiles().inPath(`src/auth/${target}`)).toPassAsync();
+    },
+  );
+
+  it('imports the composition root from nowhere', async () => {
+    await expect(projectFiles().inPath(srcExcept('index.ts')).shouldNot().dependOnFiles().inPath('src/index.ts')).toPassAsync();
+  });
+
+  it('never imports test code from src', async () => {
+    await expect(projectFiles().inFolder('src/**').shouldNot().dependOnFiles().inFolder('test/**')).toPassAsync();
+  });
+
+  it('uses Express only in src/remote', async () => {
+    const rule = projectFiles()
+      .inFolder('src/**')
+      .should()
+      .adhereTo(
+        (file) => file.path.includes('src/remote/') || notImporting(/from '(express|@modelcontextprotocol\/express)'/)(file),
+        'only src/remote may import express',
+      );
+    await expect(rule).toPassAsync();
+  });
+
+  it('calls the global fetch only from the LinkedIn clients; other outbound requests go through safeFetch', async () => {
+    const rule = projectFiles()
+      .inFolder('src/**')
+      .should()
+      .adhereTo(
+        (file) => file.path.includes('src/linkedin/') || notImporting(/(?<!typeof )globalThis\.fetch\b|(?<![\w.])fetch\(/)(file),
+        'only src/linkedin may call the global fetch',
+      );
+    await expect(rule).toPassAsync();
+  });
+});
