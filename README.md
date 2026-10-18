@@ -94,8 +94,8 @@ cd claude-linkedin-connector
 npm ci          # also builds dist/
 ```
 
-Alternatively, `npm install -g github:adamw7/claude-linkedin-connector` installs a
-`claude-linkedin-connector` command.
+Alternatively, `npm install -g claude-linkedin-connector` installs a `claude-linkedin-connector` command from
+[npm](https://www.npmjs.com/package/claude-linkedin-connector).
 
 ### Claude Desktop: install as an extension
 

@@ -6,8 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
 ### Added
 
+- The connector is published to npm: `npm install -g claude-linkedin-connector` installs the
+  `claude-linkedin-connector` command without cloning the repository.
 - Signing in no longer needs a round trip through the chat. In Claude Desktop and Claude Code the connector opens
   LinkedIn's sign-in page in your browser and notices when you've approved, so you don't have to tell Claude
   you're done. Asking for something that needs LinkedIn before signing in starts the sign-in too. If the page
@@ -145,5 +149,6 @@ First release.
   IP, `RATE_LIMIT_MCP` per connected account, `TRUST_PROXY` to see client IPs behind a proxy); and a
   graceful shutdown that lets in-flight requests finish for up to `SHUTDOWN_TIMEOUT` seconds.
 
-[Unreleased]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/adamw7/claude-linkedin-connector/releases/tag/v0.1.0
