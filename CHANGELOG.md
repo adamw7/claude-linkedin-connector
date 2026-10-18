@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The README is shorter and starts with a three-step quick start for Claude Desktop, Claude Code and Claude on
+  the web. Details moved to the guides: what the connector does with files and connections to the
+  [usage guide](docs/usage.md), how remote sign-in and rate limits work to the
+  [deployment guide](docs/deployment.md), and development and releasing to [docs/development.md](docs/development.md).
+
 ### Fixed
 
 - Stack traces from the npm package can be mapped back to the TypeScript source: its source maps now carry the

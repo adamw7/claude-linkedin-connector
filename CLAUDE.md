@@ -4,7 +4,7 @@ An MCP connector for LinkedIn (profile, posts, media, comments, reactions, `Conn
 TypeScript on Node.js 24. One code base, two modes: **local** (`stdio`, token file on disk) and **remote**
 (`http`, Express, stateless, OAuth 2.1 authorization server; the LinkedIn token is sealed inside the access
 token with `SERVER_SECRET`). User docs: `README.md`, `docs/usage.md`, `docs/deployment.md` (remote mode in
-production). Design: `docs/architecture.md`.
+production). Contributors: `docs/development.md` (tests, releasing). Design: `docs/architecture.md`.
 
 ## Commands
 
