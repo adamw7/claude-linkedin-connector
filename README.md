@@ -372,7 +372,7 @@ the version it published from the registry, checks that `--version` and `--help`
 (and `npm deprecate claude-linkedin-connector@<version> "<reason>"` the broken one) rather than re-running the
 job.
 
-Dependabot proposes dependency, GitHub Actions and base image updates weekly. Report vulnerabilities as described
+Renovate proposes dependency, GitHub Actions and base image updates weekly. Report vulnerabilities as described
 in [`SECURITY.md`](SECURITY.md).
 
 ## License
