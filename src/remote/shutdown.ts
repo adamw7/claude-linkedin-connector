@@ -13,11 +13,9 @@ export async function drainServer(server: Server, abort: () => Promise<void>, ti
   // (a proxy's, typically) would otherwise hold the server open until the timeout.
   server.closeIdleConnections();
   const sweep = setInterval(() => server.closeIdleConnections(), 100);
-  let timer: NodeJS.Timeout | undefined;
-  const timedOut = new Promise<boolean>((resolve) => {
-    timer = setTimeout(() => resolve(true), timeoutMs);
-  });
-  const late = await Promise.race([closed.then(() => false), timedOut]);
+  const timedOut = Promise.withResolvers<boolean>();
+  const timer = setTimeout(() => timedOut.resolve(true), timeoutMs);
+  const late = await Promise.race([closed.then(() => false), timedOut.promise]);
   clearInterval(sweep);
   clearTimeout(timer);
   if (late) logger('warn', 'shutdown_timeout', { timeoutMs, message: 'Aborting requests still in flight.' });

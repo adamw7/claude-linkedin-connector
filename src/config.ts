@@ -163,12 +163,8 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
   const missing = Object.entries(required).filter(([, setting]) => !setting).map(([name]) => name);
   if (missing.length > 0) throw new ConfigError(`Missing required environment variables: ${missing.join(', ')}.`);
 
-  let publicUrl: URL;
-  try {
-    publicUrl = new URL(value(env, 'PUBLIC_URL')!);
-  } catch {
-    throw new ConfigError(`PUBLIC_URL "${value(env, 'PUBLIC_URL')}" is not a valid URL.`);
-  }
+  const publicUrl = URL.parse(value(env, 'PUBLIC_URL')!);
+  if (!publicUrl) throw new ConfigError(`PUBLIC_URL "${value(env, 'PUBLIC_URL')}" is not a valid URL.`);
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash) {
     throw new ConfigError('PUBLIC_URL must be an origin without a path, e.g. https://linkedin-mcp.example.com');
   }

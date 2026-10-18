@@ -109,11 +109,7 @@ export class LinkedInClient {
   async upload(uploadUrl: string, data: Uint8Array): Promise<void> {
     const response = await this.fetchImpl(uploadUrl, {
       method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${this.options.accessToken}`,
-        'Content-Type': 'application/octet-stream',
-        'User-Agent': USER_AGENT,
-      },
+      headers: { ...this.authHeaders(), 'Content-Type': 'application/octet-stream' },
       body: data,
       signal: AbortSignal.timeout(Math.max(this.timeoutMs, 300_000)),
     });
@@ -124,8 +120,7 @@ export class LinkedInClient {
   /** Processing status of an uploaded asset, e.g. PROCESSING or AVAILABLE. */
   async getAssetStatus(kind: AssetKind, urn: string): Promise<string | undefined> {
     const response = await this.call('GET', `/rest/${kind}/${encodeURIComponent(urn)}`);
-    const json = (await response.json()) as { status?: string };
-    return json.status;
+    return ((await response.json()) as { status?: string }).status;
   }
 
   /** Comments on a post (or replies to a comment) and returns the comment ID if LinkedIn provides one. */
@@ -147,10 +142,19 @@ export class LinkedInClient {
     return response;
   }
 
+  private authHeaders(): Record<string, string> {
+    return { Authorization: `Bearer ${this.options.accessToken}`, 'User-Agent': USER_AGENT };
+  }
+
   private async call(method: string, path: string, options: CallOptions = {}): Promise<Response> {
-    const url = this.apiBase + path;
     const body = options.body === undefined ? undefined : JSON.stringify(options.body);
-    const send = (version: string | undefined) => this.send(method, url, body, version, options.restliMethod);
+    const send = (version: string | undefined) => {
+      const headers: Record<string, string> = { ...this.authHeaders(), 'X-Restli-Protocol-Version': '2.0.0' };
+      if (version) headers['LinkedIn-Version'] = version;
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      if (options.restliMethod) headers['X-RestLi-Method'] = options.restliMethod;
+      return this.fetchImpl(this.apiBase + path, { method, headers, body, signal: AbortSignal.timeout(this.timeoutMs) });
+    };
     if (options.versioned === false) return this.check(await send(undefined), method, path);
     const version = this.options.version.value;
     let response = await send(version);
@@ -162,24 +166,6 @@ export class LinkedInClient {
       }
     }
     return this.check(response, method, path);
-  }
-
-  private send(
-    method: string,
-    url: string,
-    body: string | undefined,
-    version: string | undefined,
-    restliMethod: string | undefined,
-  ): Promise<Response> {
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.options.accessToken}`,
-      'X-Restli-Protocol-Version': '2.0.0',
-      'User-Agent': USER_AGENT,
-    };
-    if (version) headers['LinkedIn-Version'] = version;
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (restliMethod) headers['X-RestLi-Method'] = restliMethod;
-    return this.fetchImpl(url, { method, headers, body, signal: AbortSignal.timeout(this.timeoutMs) });
   }
 
   private async check(response: Response, method: string, path: string): Promise<Response> {

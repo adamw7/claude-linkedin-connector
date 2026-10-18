@@ -29,15 +29,6 @@ Commands:
 Configuration is read from environment variables; see the README:
   https://github.com/adamw7/claude-linkedin-connector#configuration`;
 
-/** The options each command takes besides --help, which shows the help instead of running it. Anything else is an error. */
-const COMMAND_OPTIONS: Record<string, ParseArgsOptionsConfig> = {
-  stdio: {},
-  http: {},
-  login: { 'no-browser': { type: 'boolean' } },
-  logout: {},
-  status: {},
-};
-
 /** stdout belongs to the MCP protocol in stdio mode, so diagnostics go to stderr. */
 function log(message: string): void {
   process.stderr.write(`[${NAME}] ${message}\n`);
@@ -158,46 +149,34 @@ async function runStatus(): Promise<void> {
   if (!status.authenticated || status.missingScopes) process.exitCode = 1;
 }
 
+interface Command {
+  /** The options it takes besides --help, which shows the help instead of running it. Anything else is an error. */
+  options?: ParseArgsOptionsConfig;
+  run: (values: Record<string, unknown>) => void | Promise<void>;
+}
+
+const COMMANDS = new Map<string, Command>([
+  ['stdio', { run: runStdio }],
+  ['http', { run: runHttp }],
+  ['login', { options: { 'no-browser': { type: 'boolean' } }, run: (values) => runLogin(!values['no-browser']) }],
+  ['logout', { run: runLogout }],
+  ['status', { run: runStatus }],
+]);
+
 async function main(argv: string[]): Promise<void> {
   const [command = 'stdio', ...rest] = argv;
-  let values: Record<string, unknown> = {};
-  const options = COMMAND_OPTIONS[command];
-  if (options) {
-    try {
-      ({ values } = parseArgs({ args: rest, options: { ...options, help: { type: 'boolean', short: 'h' } } }));
-    } catch (error) {
-      // The first sentence names the problem; the rest is about positional arguments starting with "-".
-      return usageError(`${command}: ${(error as Error).message.split('. ')[0]}.`);
-    }
-    if (values.help) {
-      console.log(HELP);
-      return;
-    }
+  if (['help', '--help', '-h'].includes(command)) return console.log(HELP);
+  if (['version', '--version', '-v'].includes(command)) return console.log(VERSION);
+  const entry = COMMANDS.get(command);
+  if (!entry) return usageError(`Unknown command "${command}".`);
+  let values: Record<string, unknown>;
+  try {
+    ({ values } = parseArgs({ args: rest, options: { ...entry.options, help: { type: 'boolean', short: 'h' } } }));
+  } catch (error) {
+    // The first sentence names the problem; the rest is about positional arguments starting with "-".
+    return usageError(`${command}: ${(error as Error).message.split('. ')[0]}.`);
   }
-  switch (command) {
-    case 'stdio':
-      return runStdio();
-    case 'http':
-      return runHttp();
-    case 'login':
-      return runLogin(!values['no-browser']);
-    case 'logout':
-      return runLogout();
-    case 'status':
-      return runStatus();
-    case 'help':
-    case '--help':
-    case '-h':
-      console.log(HELP);
-      return;
-    case 'version':
-    case '--version':
-    case '-v':
-      console.log(VERSION);
-      return;
-    default:
-      usageError(`Unknown command "${command}".`);
-  }
+  return values.help ? console.log(HELP) : entry.run(values);
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {

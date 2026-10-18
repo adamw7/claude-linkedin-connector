@@ -26,14 +26,8 @@ export function defaultTokenFile(env: NodeJS.ProcessEnv = process.env, platform:
 }
 
 function isStoredToken(value: unknown): value is StoredToken {
-  const token = value as Partial<StoredToken> | null;
-  return (
-    typeof token === 'object' &&
-    token !== null &&
-    token.version === 1 &&
-    typeof token.accessToken === 'string' &&
-    Array.isArray(token.scopes)
-  );
+  const token = value as Partial<StoredToken> | null | undefined;
+  return token?.version === 1 && typeof token.accessToken === 'string' && Array.isArray(token.scopes);
 }
 
 /** Persists the LinkedIn token in a JSON file readable only by the current user. */

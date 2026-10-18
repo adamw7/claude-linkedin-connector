@@ -23,13 +23,9 @@ for (const [family, ranges] of Object.entries(BLOCKED_RANGES) as Array<['ipv4' |
 }
 
 function ipv6Hextets(address: string): number[] | undefined {
-  let host: string;
-  try {
-    // WHATWG URL parsing canonicalizes IPv6, including dotted IPv4 suffixes.
-    host = new URL(`http://[${address.split('%')[0]}]`).hostname.slice(1, -1);
-  } catch {
-    return undefined;
-  }
+  // WHATWG URL parsing canonicalizes IPv6, including dotted IPv4 suffixes.
+  const host = URL.parse(`http://[${address.split('%')[0]}]`)?.hostname.slice(1, -1);
+  if (host === undefined) return undefined;
   const [head = '', tail] = host.split('::');
   const headParts = head ? head.split(':') : [];
   const tailParts = tail ? tail.split(':') : [];
@@ -102,12 +98,8 @@ export interface SafeFetchResult {
 }
 
 export function parseHttpUrl(input: string): URL {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new FetchError(`"${input}" is not a valid URL.`);
-  }
+  const url = URL.parse(input);
+  if (!url) throw new FetchError(`"${input}" is not a valid URL.`);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new FetchError(`Only http(s) URLs can be fetched, got "${url.protocol}".`);
   }
@@ -141,8 +133,10 @@ function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Pro
   if (!allowPrivate && isIP(hostname) && isBlockedAddress(hostname)) {
     return Promise.reject(new FetchError(`Refusing to fetch from ${url.host}: it is a private or reserved address.`));
   }
+  const timedOut = () => new FetchError(`Timed out fetching ${url.toString()}.`);
+  const failed = (error: Error) => new FetchError(`Fetching ${url.toString()} failed: ${error.message}`);
   const remaining = deadline - Date.now();
-  if (remaining <= 0) return Promise.reject(new FetchError(`Timed out fetching ${url.toString()}.`));
+  if (remaining <= 0) return Promise.reject(timedOut());
 
   return new Promise((resolve, reject) => {
     const transport = url.protocol === 'https:' ? https : http;
@@ -200,19 +194,15 @@ function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Pro
         });
         response.on('end', finish);
         response.on('error', (error) => {
-          if (!settled) {
-            settled = true;
-            reject(new FetchError(`Fetching ${url.toString()} failed: ${error.message}`));
-          }
+          if (!settled) reject(failed(error));
+          settled = true;
         });
       },
     );
-    const timer = setTimeout(() => request.destroy(new FetchError(`Timed out fetching ${url.toString()}.`)), remaining);
+    const timer = setTimeout(() => request.destroy(timedOut()), remaining);
     request.on('close', () => clearTimeout(timer));
-    request.on('timeout', () => request.destroy(new FetchError(`Timed out fetching ${url.toString()}.`)));
-    request.on('error', (error) => {
-      reject(error instanceof FetchError ? error : new FetchError(`Fetching ${url.toString()} failed: ${error.message}`));
-    });
+    request.on('timeout', () => request.destroy(timedOut()));
+    request.on('error', (error) => reject(error instanceof FetchError ? error : failed(error)));
     request.end();
   });
 }
