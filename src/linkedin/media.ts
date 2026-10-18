@@ -154,11 +154,57 @@ export async function loadMedia(source: string, kind: MediaKind, options: MediaS
   const mimeType = kind === 'image' ? sniffImage(data) : sniffDocument(data);
   if (!mimeType) {
     const expected = kind === 'image' ? 'JPEG, PNG or GIF image' : `${DOCUMENT_TYPES} document`;
-    throw new UserInputError(`"${shorten(source)}" is not a ${expected}.`);
+    const actual = identifyUnsupported(data, kind);
+    throw new UserInputError(`"${shorten(source)}" is ${actual ? `${actual.what}, ` : ''}not a ${expected}.${actual ? ` ${actual.fix}` : ''}`);
   }
   return { data, mimeType, filename };
 }
 
+const CONVERT = 'Convert it to JPEG or PNG first (on a Mac, open it in Preview and choose File → Export).';
+const EXPORT_PDF = 'Export it as PDF first.';
+const NAMES: Record<string, string> = {
+  'image/jpeg': 'a JPEG image',
+  'image/png': 'a PNG image',
+  'image/gif': 'a GIF image',
+  'application/pdf': 'a PDF',
+  'application/x-ole-storage': 'an Office document',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'a Word document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'a PowerPoint presentation',
+};
+
+/** Recognizes files people often try to post that LinkedIn won't take, so the error can say what to do instead. */
+function identifyUnsupported(data: Buffer, kind: MediaKind): { what: string; fix: string } | undefined {
+  const other = kind === 'image' ? sniffDocument(data) : sniffImage(data);
+  if (other) return { what: NAMES[other]!, fix: kind === 'image' ? "Attach it as the post's document instead." : 'Attach it under images instead.' };
+  const head = data.subarray(0, 1024).toString('latin1');
+  // ISO media files (HEIC, AVIF, MP4, MOV) name their format in the `ftyp` box.
+  const brand = head.slice(4, 8) === 'ftyp' ? head.slice(8, 12) : '';
+  if (/<!doctype html|<html[\s>]/i.test(head)) {
+    return {
+      what: 'a web page',
+      fix: 'Pass a link to the file itself: for a picture on a web page, right-click it and copy the image address. Share links from cloud drives usually lead to a page.',
+    };
+  }
+  if (/^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(brand)) return { what: 'a HEIC image', fix: CONVERT };
+  if (/^avi[fs]$/.test(brand)) return { what: 'an AVIF image', fix: CONVERT };
+  if (/^(isom|iso\d|mp4[12]|avc1|qt {2}|M4V |3gp\d|mmp4|dash)$/.test(brand)) return { what: 'a video', fix: 'Video posts are not supported yet.' };
+  if (head.startsWith('RIFF') && head.slice(8, 12) === 'WEBP') return { what: 'a WebP image', fix: CONVERT };
+  if (head.startsWith('II*\0') || head.startsWith('MM\0*')) return { what: 'a TIFF image', fix: CONVERT };
+  if (head.startsWith('BM') && data.length >= 6 && data.readUInt32LE(2) === data.length) return { what: 'a BMP image', fix: CONVERT };
+  if (/<svg[\s>]/i.test(head)) return { what: 'an SVG image', fix: 'Convert it to PNG first.' };
+  if (head.startsWith('PK\x03\x04')) {
+    if (data.includes('Index/Document.iwa')) return { what: 'a Keynote, Pages or Numbers file', fix: EXPORT_PDF };
+    if (head.slice(30, 38) === 'mimetype' && head.includes('application/vnd.oasis.opendocument')) {
+      return { what: 'an OpenDocument file', fix: EXPORT_PDF };
+    }
+    if (data.includes('[Content_Types].xml') && data.includes('xl/')) return { what: 'an Excel spreadsheet', fix: EXPORT_PDF };
+    return { what: 'a zip archive', fix: 'Extract the file from it first.' };
+  }
+  return undefined;
+}
+
+/** Keeps the start of a long data: URI (its media type) and the end of a long path or URL (the file name). */
 function shorten(source: string): string {
-  return source.length > 80 ? `${source.slice(0, 77)}...` : source;
+  if (source.length <= 80) return source;
+  return source.startsWith('data:') ? `${source.slice(0, 77)}...` : `...${source.slice(-77)}`;
 }

@@ -314,6 +314,7 @@ describe('remote connector end to end', () => {
     expect(tools.map((t) => t.name)).toEqual([
       'linkedin_get_profile',
       'linkedin_read_connections',
+      'linkedin_preview_post',
       'linkedin_create_post',
       'linkedin_edit_post',
       'linkedin_delete_post',

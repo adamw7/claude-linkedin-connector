@@ -36,9 +36,11 @@
   "tools": [
     { "name": "linkedin_get_profile", "description": "Read your basic LinkedIn profile." },
     { "name": "linkedin_read_connections", "description": "Search your connections in LinkedIn's Connections.csv export." },
+    { "name": "linkedin_preview_post", "description": "Check a post and its link preview card before publishing." },
     { "name": "linkedin_create_post", "description": "Publish a post with optional link preview, images or document." },
     { "name": "linkedin_edit_post", "description": "Change the text of one of your posts." },
     { "name": "linkedin_delete_post", "description": "Delete one of your posts." },
+    { "name": "linkedin_list_posts", "description": "List the posts you published from Claude, to edit or delete them later." },
     { "name": "linkedin_comment_on_post", "description": "Comment on a post (needs Community Management API access)." },
     { "name": "linkedin_react_to_post", "description": "React to a post (needs Community Management API access)." },
     { "name": "linkedin_auth_status", "description": "Show whether LinkedIn is connected." },

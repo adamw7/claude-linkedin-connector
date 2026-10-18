@@ -21,9 +21,11 @@ It runs two ways:
 |---|---|---|
 | `linkedin_get_profile` | Your name, email, photo, locale and member URN | default scopes |
 | `linkedin_read_connections` | Searches your connections in the `Connections.csv` from LinkedIn's data export | nothing: no sign-in |
+| `linkedin_preview_post` | Checks a post before publishing: loads its attachments, shows the link preview card it will get, and warns about Markdown and `@mentions` | nothing: no sign-in |
 | `linkedin_create_post` | Publishes a post: text plus optionally **one** of a link preview, 1–20 images, or a document (PDF, PPT(X), DOC(X)) | default scopes |
 | `linkedin_edit_post` | Replaces the text of a post you authored (by URN or URL) | default scopes |
 | `linkedin_delete_post` | Deletes a post you authored (by URN or URL) | default scopes |
+| `linkedin_list_posts` | Lists the posts published from Claude on this computer, with their text, so later conversations can edit or delete them (local mode only) | nothing: no sign-in |
 | `linkedin_comment_on_post` | Comments on a post | `w_member_social_feed` or `w_organization_social` |
 | `linkedin_react_to_post` | Like, celebrate, support, love, insightful or funny | `w_member_social_feed` or `w_organization_social` |
 | `linkedin_auth_status` | Shows whether LinkedIn is connected, as whom and until when | |
@@ -34,18 +36,23 @@ With the `w_organization_social` scope, posting, commenting and reacting also ac
 argument to act as a LinkedIn Page you administer. Tools whose scopes you haven't configured are not offered to Claude.
 
 The connector tells Claude to show you the exact text and get your approval before publishing, editing,
-commenting or deleting, and Claude also asks you to confirm each call. A few things it handles for you:
+commenting or deleting, and Claude also asks you to confirm each call. Before you approve a post, Claude checks
+it with `linkedin_preview_post`, so a missing file, an unsupported format or a link preview without an image
+shows up while you can still fix it. A few things it handles for you:
 
 - **Text formatting.** LinkedIn treats characters such as `( ) [ ] * _ @ #` as markup and can silently cut a
   post off at the first one. The connector escapes them, keeping `#hashtags` clickable.
 - **Link previews.** LinkedIn's API doesn't build previews itself, so the connector reads the page's title,
-  description and image and uploads them with the link.
+  description and image and uploads them with the link. If the page has no usable title or image, the preview
+  says so and you can supply your own.
 - **Media.** Images and documents can be local file paths (local mode), `http(s)` URLs or base64 `data:` URIs.
   Local files (including `Connections.csv`) are only read from your Downloads, Desktop and Pictures folders
   (also the ones OneDrive keeps on Windows) and the server's working directory (unless that is your home
   directory or above it), so a page or document Claude reads can't get it to post other files on your
   computer. Set `LINKEDIN_FILE_DIRS` to change this.
-  Files are checked by content, so only real images and documents are ever uploaded.
+  Files are checked by content, so only real images and documents are ever uploaded. If a file is a format
+  LinkedIn doesn't take, such as an iPhone HEIC photo, a WebP image, a video or a Keynote file, or a link leads to
+  a web page rather than the file, the connector says so and what to do instead.
 - **Connections.** LinkedIn's API doesn't give apps your list of connections, so the connector reads the
   `Connections.csv` from your data export instead: on LinkedIn, open **Settings → Data privacy → Get a copy
   of your data**, choose **Connections**, then unzip the archive LinkedIn emails you. Pass the file's path
@@ -53,6 +60,9 @@ commenting or deleting, and Claude also asks you to confirm each call. A few thi
   several, e.g. everyone at xyz or abc), position or connection date, and count how many connections you
   have at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear
   only for connections who allow it.
+- **Your posts.** LinkedIn's API doesn't let apps read your posts, so in local mode the connector remembers the
+  last 100 it published (their link and text, kept with the sign-in token). "Fix the typo in my post about the
+  launch" or "delete yesterday's post" then works in a new conversation too.
 - **API versions.** LinkedIn retires each monthly API version after about a year. When that happens the
   connector switches to the newest live version automatically.
 
@@ -152,7 +162,8 @@ claude-linkedin-connector logout
 ```
 
 The token is stored in `~/.config/claude-linkedin-connector/token.json` (`%APPDATA%\claude-linkedin-connector\`
-on Windows), readable only by you. LinkedIn tokens last 60 days; after that, sign in again.
+on Windows), readable only by you. LinkedIn tokens last 60 days; after that, sign in again. The posts you publish
+are remembered in `posts.json` next to it; delete that file to make the connector forget them.
 
 To skip the sign-in flow, set `LINKEDIN_ACCESS_TOKEN` to a token you obtained elsewhere, for example from
 LinkedIn's OAuth token generator in the developer portal.
@@ -269,7 +280,8 @@ See [`.env.example`](.env.example) for a template.
 ## Limitations
 
 - LinkedIn only lets ordinary apps **write**. Reading your feed, your past posts, or other people's
-  profiles requires partner-level access, so the connector can't do it.
+  profiles requires partner-level access, so the connector can't do it. In local mode it remembers the posts it
+  published itself; posts made on linkedin.com or in remote mode aren't among them.
 - Only a post's text can be edited; attachments can't be changed after publishing. Video posts aren't supported yet.
 - A post can have one kind of attachment: a link preview, images, or a document.
 - In remote mode, media sent as `data:` URIs is limited to about 20 MB per request; pass larger files as URLs.
@@ -286,7 +298,7 @@ See [`.env.example`](.env.example) for a template.
 | `invalid_client: Client authentication failed` when signing in | The Client ID or Client Secret is wrong, or the secret was regenerated: copy both again from the app's **Auth** tab |
 | `LinkedIn denied permission` (403) | The app lacks the product for that feature, or you signed in before adding the scope. Fix the app, then sign in again |
 | A file `is outside the folders this connector may read files from` | Move it to Downloads, Desktop or Pictures, or add its folder to `LINKEDIN_FILE_DIRS` (**Folders for local files** in the Claude Desktop extension's settings) |
-| Editing or deleting a post fails with `not the activity URN` | Links copied from linkedin.com often point to the post's activity rather than the post. Use the URL Claude gave you when publishing, or the code from the post's **Embed this post** menu item |
+| Editing or deleting a post fails with `not the activity URN` | Links copied from linkedin.com often point to the post's activity rather than the post. In local mode, ask Claude to find the post among the ones it published; otherwise use the URL Claude gave you when publishing, or the code from the post's **Embed this post** menu item |
 | `access token … expired or been revoked` | Sign in again (local) or reconnect the connector (remote) |
 | Remote connection fails after a restart | Set a fixed `SERVER_SECRET` |
 | `SERVER_SECRET is required` on startup | Generate one with `openssl rand -base64 32`, store it with your other secrets and keep it |
@@ -311,7 +323,7 @@ src/
   config.ts           environment variables
   mcp/server.ts       MCP tools
   linkedin/           REST client, OAuth, text escaping, media, link previews, API versions, Connections.csv
-  auth/               local token storage and browser sign-in
+  auth/               local token storage, post history and browser sign-in
   remote/             HTTP app, OAuth authorization server, client registration, logging, rate limits
   net/safe-fetch.ts   fetching URLs without reaching private networks
 ```

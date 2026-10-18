@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { LocalAuth } from './auth/local-auth.js';
+import { PostHistory } from './auth/post-history.js';
 import { loadLocalConfig, loadRemoteConfig } from './config.js';
 import { ConfigError } from './errors.js';
 import { ApiVersion } from './linkedin/versions.js';
@@ -75,6 +76,7 @@ function runStdio(): void {
         scopes: config.scopes,
         apiBaseUrl: config.apiBaseUrl,
         localFileDirs: config.fileDirs,
+        history: new PostHistory(config.postHistoryFile),
       }),
     { onerror: (error) => log(`MCP error: ${error.message}`) },
   );
