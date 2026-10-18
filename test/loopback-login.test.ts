@@ -121,6 +121,16 @@ describe('LoopbackLogin', () => {
     expect(await loopback.start()).toBe(flow);
   });
 
+  it('answers requests whose path is not a valid URL without ending the flow', async () => {
+    const { loopback, port } = await login();
+    const flow = await loopback.start();
+    pending.push(flow);
+    // Node accepts request targets such as `//[` that don't parse as URLs; one used to crash the whole server.
+    const response = await fetch(`http://127.0.0.1:${port}//[`);
+    expect(response.status).toBe(404);
+    expect(await loopback.start()).toBe(flow);
+  });
+
   it('reports a failed code exchange', async () => {
     const { loopback } = await login();
     const flow = await loopback.start();

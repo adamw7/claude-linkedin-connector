@@ -15,6 +15,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Asking to post, comment or react as a LinkedIn Page when posting as Pages isn't turned on now fails with an
+  explanation. Before, the Page was ignored and the post, comment or reaction went out as you. The tools that
+  publish now also refuse other arguments they don't know, such as a mistyped one, instead of ignoring them.
+- A malformed request to the page the connector opens on your computer while you sign in to LinkedIn no longer
+  crashes the connector.
+- A link or image URL that redirects to an invalid address, and a `file://` URL that names no file on your computer
+  (such as one on a network share), now get an explanation instead of "Unexpected error".
 - Stack traces from the npm package can be mapped back to the TypeScript source: its source maps now carry the
   source they point to, which the package doesn't include.
 

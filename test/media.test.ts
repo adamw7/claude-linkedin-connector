@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { UserInputError } from '../src/errors.js';
 import { loadMedia, sniffDocument, sniffImage } from '../src/linkedin/media.js';
@@ -176,6 +177,13 @@ describe('loadMedia', () => {
     await expect(loadMedia(`data:text/plain;base64,${bmpLookalike.toString('base64')}`, 'image', {})).rejects.toThrow(
       /^"data:text\/plain;base64,[^"]+" is not a JPEG, PNG or GIF image\.$/,
     );
+  });
+
+  it('reads file: URLs, and explains the ones that name no local file', async () => {
+    expect((await loadMedia(pathToFileURL(join(dir, 'pixel.png')).href, 'image', { localFileDirs: [dir] })).mimeType).toBe('image/png');
+    const failure = loadMedia('file://server/share/photo.png', 'image', { localFileDirs: [dir] });
+    await expect(failure).rejects.toThrow(UserInputError);
+    await expect(failure).rejects.toThrow(/^"file:\/\/server\/share\/photo\.png" is not a local file URL \(.+\)\. Pass the file's path instead\.$/);
   });
 
   it('suggests an absolute path when a relative one is not found', async () => {
