@@ -1,7 +1,7 @@
 # Using the LinkedIn connector
 
 A walkthrough from installing the connector to everyday requests. It assumes you've created a LinkedIn app
-as described in [the README](../README.md#1-create-a-linkedin-app); the screenshots use Claude Code, but the
+as described in the [quick start](../README.md#quick-start); the screenshots use Claude Code, but the
 requests work the same in Claude Desktop and Claude on the web.
 
 ## 1. Install it
@@ -13,7 +13,7 @@ builds the connector and registers it with Claude Code. `claude mcp list` then s
 
 In Claude Desktop, install the `.mcpb` extension from the
 [latest release](https://github.com/adamw7/claude-linkedin-connector/releases/latest) instead. For Claude on
-the web or mobile, see [remote setup](../README.md#2b-remote-setup-claude-custom-connector).
+the web or mobile, see [Remote server](../README.md#remote-server).
 
 ## 2. Sign in to LinkedIn
 
@@ -82,8 +82,25 @@ More things to try:
   you can edit or delete them from any conversation later. For other posts, or in remote mode, keep the URL
   Claude gives you after publishing: a link copied from linkedin.com often won't work, but the code from the
   post's **Embed this post** menu item will.
+- **Attach files by path, link or upload.** Images and documents can be local files (local mode), `http(s)` links
+  or files you attach in the chat. Local files are only read from your Downloads, Desktop and Pictures folders
+  (also the ones OneDrive keeps on Windows) and the folder the connector runs in, so a page or document Claude
+  reads can't get it to post other files from your computer. To allow other folders, set `LINKEDIN_FILE_DIRS`
+  (**Folders for local files** in the Claude Desktop extension's settings).
 - **Images must be JPEG, PNG or GIF, and documents PDF or Office files.** Convert iPhone photos (HEIC) and WebP
   images to JPEG or PNG, and export Keynote or Pages files as PDF; the connector tells you what it got. Video
   posts aren't supported.
+
+## Your connections
+
+LinkedIn's API doesn't give apps your list of connections, so the connector reads your data export instead: on
+LinkedIn, open **Settings → Data privacy → Get a copy of your data**, choose **Connections**, and save the zip
+archive LinkedIn emails you. In local mode, just ask: the connector finds the newest export in your Downloads,
+Desktop and Pictures folders, zipped or not. You can also give its path or a link, or attach or paste
+`Connections.csv`.
+
+Claude can search it by name, company (one or several), position or connection date, and count your connections
+at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear only for
+connections who allow it.
 
 If something goes wrong, see [Troubleshooting](../README.md#troubleshooting).

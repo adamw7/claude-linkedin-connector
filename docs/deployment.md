@@ -1,13 +1,13 @@
 # Deploying the remote server
 
 How to run the connector as a remote MCP server (a Claude custom connector) in production. The
-[README](../README.md#2b-remote-setup-claude-custom-connector) explains what remote mode is and how to add it to
+[README](../README.md#remote-server) explains what remote mode is and how to add it to
 Claude. Every setting is listed in its [configuration table](../README.md#configuration).
 
 You need:
 
 - a LinkedIn app with your server's callback URL, `https://<your-domain>/oauth/callback`, among its authorized
-  redirect URLs (see [Create a LinkedIn app](../README.md#1-create-a-linkedin-app));
+  redirect URLs (see the [quick start](../README.md#quick-start));
 - a domain name, served over HTTPS;
 - somewhere to run a container: a VM with Docker, Kubernetes, or a container platform.
 
@@ -185,6 +185,30 @@ disconnects everyone, which is what you want if it leaked. For a routine rotatio
 3. After 60 days, the longest an access token lives, remove `SERVER_SECRET_PREVIOUS`. Clients that registered
    before the rotation and have not registered again since are then unknown. In Claude, reconnecting such a connector
    shows "Unknown application"; removing and adding the connector again fixes it.
+
+## How sign-in works
+
+The server is its own small OAuth 2.1 authorization server, which is what Claude expects from a custom
+connector, and delegates the actual sign-in to LinkedIn:
+
+- Claude registers itself through dynamic client registration (or a client ID metadata document), then
+  sends you to `/authorize`, which shows a consent screen naming the application and where it will redirect.
+- After you approve, LinkedIn asks you to sign in. The server receives LinkedIn's token, encrypts it with
+  `SERVER_SECRET` (AES-256-GCM) inside the access token it issues to Claude, and never stores it.
+- Codes require PKCE (S256), expire after 5 minutes and are single-use (tracked per server instance). Access tokens are bound to the
+  `/mcp` resource and expire with the LinkedIn token (at most 60 days), after which Claude asks you to reconnect.
+- By default only Claude's callback URLs and localhost redirects may register, and only the LinkedIn accounts
+  in `LINKEDIN_ALLOWED_MEMBERS` can finish connecting. The list is checked on every request too, so removing
+  someone (and restarting) cuts off the tokens they already have.
+
+The server keeps no database, so it can be restarted or scaled freely as long as `SERVER_SECRET` stays the
+same. Changing the secret disconnects everyone, unless the old one stays in `SERVER_SECRET_PREVIOUS` for a while.
+
+## Rate limits
+
+The OAuth endpoints allow `RATE_LIMIT_OAUTH` requests per minute per client IP, and `/mcp` allows
+`RATE_LIMIT_MCP` per connected LinkedIn account; over the limit the server answers `429` with `Retry-After`.
+Behind a proxy, set `TRUST_PROXY`, or every client shares the proxy's address and limit.
 
 ## Updating
 
