@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { defaultTokenFile } from './auth/token-store.js';
 import { ConfigError } from './errors.js';
 import { LINKEDIN_API_BASE } from './linkedin/client.js';
@@ -28,6 +28,8 @@ export interface CommonConfig {
 export interface LocalConfig extends CommonConfig {
   redirectUri: string;
   tokenFile: string;
+  /** Posts published through the connector, next to the token file. */
+  postHistoryFile: string;
   /** A pre-issued token that bypasses the sign-in flow entirely. */
   accessToken: string | undefined;
   /** Folders tools may read local images, documents and connection exports from. */
@@ -148,10 +150,12 @@ export function defaultFileDirs(
 }
 
 export function loadLocalConfig(env: Env = process.env, cwd: string = process.cwd()): LocalConfig {
+  const tokenFile = value(env, 'LINKEDIN_TOKEN_FILE') ?? defaultTokenFile(env);
   return {
     ...common(env),
     redirectUri: value(env, 'LINKEDIN_REDIRECT_URI') ?? DEFAULT_LOCAL_REDIRECT_URI,
-    tokenFile: value(env, 'LINKEDIN_TOKEN_FILE') ?? defaultTokenFile(env),
+    tokenFile,
+    postHistoryFile: join(dirname(tokenFile), 'posts.json'),
     accessToken: value(env, 'LINKEDIN_ACCESS_TOKEN'),
     fileDirs: list(env, 'LINKEDIN_FILE_DIRS')?.map((dir) => resolve(cwd, expandHome(dir))) ?? defaultFileDirs(cwd, homedir(), env),
   };

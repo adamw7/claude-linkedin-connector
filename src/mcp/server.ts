@@ -1,12 +1,13 @@
 import { McpServer, type CallToolResult, type ToolAnnotations, type ToolCallback } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
 import { countCompanies, foldText, MAX_CONNECTIONS_BYTES, parseConnections } from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
-import { escapeLittleText } from '../linkedin/text.js';
+import { escapeLittleText, textWarnings } from '../linkedin/text.js';
 import { organizationUrn, parsePostReference, personUrn, postUrl } from '../linkedin/urn.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { NAME, VERSION } from '../version.js';
@@ -24,6 +25,8 @@ export interface ConnectorOptions {
   allowPrivateNetwork?: boolean;
   /** Local mode: folders local file paths may point into. */
   localFileDirs?: string[];
+  /** Local mode: remembers published posts, so later conversations can find them to edit or delete. */
+  history?: PostHistory;
   sleep?: (ms: number) => Promise<void>;
   /** Called after every tool call, e.g. for an audit log. */
   onToolCall?: (event: ToolCallEvent) => void;
@@ -50,14 +53,29 @@ const ASSET_WAIT_MS: Record<AssetKind, number> = { images: 15_000, documents: 60
 
 const ATTACHMENTS = ['none', 'article', 'image', 'images', 'document'] as const;
 
+/** A post's attachments, loaded and checked, ready to upload. */
+interface PreparedPost {
+  attachment: (typeof ATTACHMENTS)[number];
+  images?: Array<{ media: LoadedMedia; altText?: string }>;
+  document?: { media: LoadedMedia; title: string };
+  /** `pageImageUrl` is where `thumbnail` came from when the page provided it. */
+  article?: { url: string; title: string; description?: string; thumbnail?: LoadedMedia; pageImageUrl?: string };
+  /** What would come out differently than the user may expect. */
+  warnings: string[];
+}
+
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function instructions(mode: Mode, engagement: boolean): string {
+function instructions(mode: Mode, engagement: boolean, history: boolean): string {
   return [
     "Tools for the user's own LinkedIn account: read their profile and their exported list of connections, publish posts (text, a link, images or a document), and edit or delete them" +
       (engagement ? ', and comment on or react to posts.' : '.'),
     'Publishing is public and immediate. Show the user the exact text (and any media) and get their explicit approval before publishing, editing, commenting on or deleting anything.',
+    'Before asking for approval of a post, check it with linkedin_preview_post and tell the user about its link preview card and any warnings.',
     'Write post text as plain text: LinkedIn does not render Markdown. Use line breaks for structure and a few #hashtags at most.',
+    ...(history
+      ? ["LinkedIn doesn't let apps read the user's posts. To edit or delete a post from an earlier conversation, find it with linkedin_list_posts, which remembers the posts published from this computer."]
+      : []),
     mode === 'local'
       ? 'If a tool says the user is not signed in, call linkedin_login and give them the sign-in link; retry once they confirm they approved access.'
       : 'If a tool says the LinkedIn authorization expired, ask the user to reconnect the connector in Claude.',
@@ -66,7 +84,7 @@ function instructions(mode: Mode, engagement: boolean): string {
 
 /** Builds the MCP server exposing the LinkedIn tools. */
 export function createConnectorServer(options: ConnectorOptions): McpServer {
-  const { mode, auth } = options;
+  const { mode, auth, history } = options;
   const scopes = new Set(options.scopes);
   const organizations = scopes.has('w_organization_social');
   const memberEngagement = scopes.has('w_member_social_feed');
@@ -81,7 +99,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
 
   const server = new McpServer(
     { name: NAME, title: 'LinkedIn', version: VERSION },
-    { instructions: instructions(mode, engagement) },
+    { instructions: instructions(mode, engagement, history !== undefined) },
   );
 
   /** Registers a tool whose handler returns its structured result. Failures become error results; every call is reported to `onToolCall`. */
@@ -355,6 +373,111 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       .describe('Attach a document, shown as a swipeable carousel.'),
   });
 
+  /** Loads and checks everything a post needs without touching LinkedIn, so bad inputs fail before anything is published. */
+  const preparePost = async (args: z.output<typeof createPostInput>): Promise<PreparedPost> => {
+    if ([args.article, args.images, args.document].filter((value) => value !== undefined).length > 1) {
+      throw new UserInputError('A post can have only one of: article, images or document.');
+    }
+    if (args.organization) organizationUrn(args.organization);
+    const warnings = textWarnings(args.text);
+    if (args.images) {
+      const images = await Promise.all(
+        args.images.map(async ({ source, altText }) => ({ media: await load(source, 'image'), altText: altText || undefined })),
+      );
+      return { attachment: images.length === 1 ? 'image' : 'images', images, warnings };
+    }
+    if (args.document) {
+      const media = await load(args.document.source, 'document');
+      // LinkedIn shows the title above the carousel: "Q3 results", not "Q3 results.pdf".
+      const title = args.document.title ?? (media.filename?.replace(/\.(pdf|docx?|pptx?)$/i, '') || 'Document');
+      return { attachment: 'document', document: { media, title }, warnings };
+    }
+    if (!args.article) return { attachment: 'none', warnings };
+
+    const { url, title, description, thumbnail } = args.article;
+    const hostname = new URL(url).hostname;
+    // Undefined when the page can't be read.
+    const page: LinkPreview | undefined =
+      title && description && thumbnail
+        ? {}
+        : await fetchLinkPreview(url, { allowPrivateNetwork: options.allowPrivateNetwork }).catch(() => undefined);
+    // The page's own preview image is a nice-to-have; post without it if it can't be used.
+    const pageImage = !thumbnail && page?.imageUrl ? await load(page.imageUrl, 'image').catch(() => undefined) : undefined;
+    const image = thumbnail ? await load(thumbnail, 'image') : pageImage;
+    if (!title && !page?.title) {
+      warnings.push(
+        `The link preview's title is just "${hostname}": ${page ? 'the page has none' : `${url} could not be read`}. Pass article.title (and description) to set it.`,
+      );
+    }
+    if (!image) {
+      warnings.push(`The link preview has no image${page ? ': the page offers none in JPEG, PNG or GIF' : ''}. Pass article.thumbnail to add one.`);
+    }
+    return {
+      attachment: 'article',
+      article: {
+        url,
+        title: title ?? page?.title ?? hostname,
+        description: description ?? page?.description,
+        thumbnail: image,
+        pageImageUrl: pageImage && page?.imageUrl,
+      },
+      warnings,
+    };
+  };
+
+  /** Keeps the post history up to date. A post that was published must never be reported as failed because it couldn't be remembered. */
+  const remember = async (update: (history: PostHistory) => Promise<void>): Promise<void> => {
+    if (history) await update(history).catch(() => {});
+  };
+
+  tool(
+    'linkedin_preview_post',
+    {
+      title: 'Preview a LinkedIn post',
+      description:
+        'Checks a post without publishing it or signing in: loads and verifies its images or document, builds the link preview card LinkedIn will show for an article, and warns about text LinkedIn would show literally, such as Markdown. ' +
+        'Takes the same arguments as linkedin_create_post. Call it before asking the user to approve a post, and tell them about the preview card and any warnings.',
+      inputSchema: createPostInput,
+      outputSchema: z.object({
+        characters: z.number().describe('Length of the text; LinkedIn allows 3000.'),
+        visibility: z.string(),
+        attachment: z.enum(ATTACHMENTS),
+        images: z.number().optional().describe('Number of images, all checked.'),
+        document: z.object({ title: z.string() }).optional(),
+        linkPreview: z
+          .object({
+            url: z.string(),
+            title: z.string(),
+            description: z.string().optional(),
+            thumbnail: z.boolean(),
+            imageUrl: z.string().optional().describe("The page's own preview image, when the card uses it."),
+          })
+          .optional()
+          .describe('The card LinkedIn will show for an article.'),
+        warnings: z.array(z.string()).describe('What would come out differently than the user may expect. Tell the user before they approve.'),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      const { attachment, images, document, article, warnings } = await preparePost(args);
+      return {
+        characters: args.text.length,
+        visibility: args.visibility,
+        attachment,
+        images: images?.length,
+        document: document && { title: document.title },
+        linkPreview: article && {
+          url: article.url,
+          title: article.title,
+          description: article.description,
+          thumbnail: article.thumbnail !== undefined,
+          imageUrl: article.pageImageUrl,
+        },
+        warnings,
+      };
+    },
+  );
+
   tool(
     'linkedin_create_post',
     {
@@ -362,7 +485,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       description:
         'Publishes a post to LinkedIn immediately, as the signed-in member' +
         (organizations ? ' or a LinkedIn Page they administer' : '') +
-        '. Optionally attach ONE of: a link preview (article), images, or a document. Only call this after the user has approved the exact text and attachments. Returns the post URN and URL.',
+        '. Optionally attach ONE of: a link preview (article), images, or a document. Check it with linkedin_preview_post first, and only call this after the user has approved the exact text and attachments. Returns the post URN and URL.',
       inputSchema: createPostInput,
       outputSchema: z.object({
         postUrn: z.string(),
@@ -378,58 +501,32 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
-      if ([args.article, args.images, args.document].filter((value) => value !== undefined).length > 1) {
-        throw new UserInputError('A post can have only one of: article, images or document.');
-      }
-      // Load media before touching LinkedIn so bad inputs fail without side effects.
-      const images = args.images ? await Promise.all(args.images.map((image) => load(image.source, 'image'))) : undefined;
-      const document = args.document ? await load(args.document.source, 'document') : undefined;
-
+      const post = await preparePost(args);
       const { client, session } = await connect();
       const author = await actorUrn(client, session, args.organization);
-      const publish = async (
-        attachment: (typeof ATTACHMENTS)[number],
-        content?: PostContent,
-        linkPreview?: { title: string; description?: string; thumbnail: boolean },
-      ) => {
-        const postUrn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
-        return { postUrn, url: postUrl(postUrn), author, visibility: args.visibility, attachment, linkPreview };
-      };
 
-      if (args.article) {
-        const { url, title, description, thumbnail } = args.article;
-        const preview: LinkPreview =
-          title && description && thumbnail
-            ? {}
-            : await fetchLinkPreview(url, { allowPrivateNetwork: options.allowPrivateNetwork }).catch(() => ({}));
-        // The page's own preview image is a nice-to-have; post without it if it can't be used.
-        const thumbnailUrn = thumbnail
-          ? await upload(client, 'images', author, await load(thumbnail, 'image'))
-          : preview.imageUrl
-            ? await load(preview.imageUrl, 'image').then((media) => upload(client, 'images', author, media)).catch(() => undefined)
-            : undefined;
-        const article = {
-          source: url,
-          title: title ?? preview.title ?? new URL(url).hostname,
-          description: description ?? preview.description,
-          thumbnail: thumbnailUrn,
-        };
-        return publish('article', { article }, { title: article.title, description: article.description, thumbnail: thumbnailUrn !== undefined });
+      let content: PostContent | undefined;
+      let linkPreview: { title: string; description?: string; thumbnail: boolean } | undefined;
+      if (post.images) {
+        const images: Array<{ id: string; altText?: string }> = [];
+        for (const { media, altText } of post.images) images.push({ id: await upload(client, 'images', author, media), altText });
+        content = images.length === 1 ? { media: images[0]! } : { multiImage: { images } };
+      } else if (post.document) {
+        content = { media: { id: await upload(client, 'documents', author, post.document.media), title: post.document.title } };
+      } else if (post.article) {
+        const { url, title, description, thumbnail, pageImageUrl } = post.article;
+        const uploading = thumbnail && upload(client, 'images', author, thumbnail);
+        // As when loading it, the page's own image is optional: post without it if LinkedIn won't take it.
+        const thumbnailUrn = await (pageImageUrl ? uploading?.catch(() => undefined) : uploading);
+        content = { article: { source: url, title, description, thumbnail: thumbnailUrn } };
+        linkPreview = { title, description, thumbnail: thumbnailUrn !== undefined };
       }
-      if (images && args.images) {
-        const entries: Array<{ id: string; altText?: string }> = [];
-        for (const [index, media] of images.entries()) {
-          entries.push({ id: await upload(client, 'images', author, media), altText: args.images[index]!.altText || undefined });
-        }
-        return entries.length === 1 ? publish('image', { media: entries[0]! }) : publish('images', { multiImage: { images: entries } });
-      }
-      if (document && args.document) {
-        const id = await upload(client, 'documents', author, document);
-        // LinkedIn shows the title above the carousel: "Q3 results", not "Q3 results.pdf".
-        const title = args.document.title ?? (document.filename?.replace(/\.(pdf|docx?|pptx?)$/i, '') || 'Document');
-        return publish('document', { media: { id, title } });
-      }
-      return publish('none');
+
+      const postUrn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
+      const url = postUrl(postUrn);
+      const { attachment } = post;
+      await remember((history) => history.add({ postUrn, url, author, text: args.text, visibility: args.visibility, attachment }));
+      return { postUrn, url, author, visibility: args.visibility, attachment, linkPreview };
     },
   );
 
@@ -451,12 +548,15 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     return urn;
   };
 
+  const findPost = history
+    ? 'Accepts the post URN returned by linkedin_create_post or linkedin_list_posts (which finds posts from earlier conversations), or the post URL.'
+    : 'Accepts the post URN returned by linkedin_create_post or the post URL.';
+
   tool(
     'linkedin_edit_post',
     {
       title: 'Edit a LinkedIn post',
-      description:
-        "Replaces the text of a post the signed-in member (or their Page) authored; attachments stay as they are. Accepts the post URN returned by linkedin_create_post or the post URL. Only call this after the user has approved the new text.",
+      description: `Replaces the text of a post the signed-in member (or their Page) authored; attachments stay as they are. ${findPost} Only call this after the user has approved the new text.`,
       inputSchema: z.object({
         post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
         text: z.string().min(1).max(3000).describe('The complete new post text, max 3000 characters. Plain text only.'),
@@ -466,6 +566,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     },
     async (args) => {
       const urn = await onOwnPost(args.post, 'edit', (client, urn) => client.updatePostText(urn, escapeLittleText(args.text)));
+      await remember((history) => history.edited(urn, args.text));
       return { updated: true, postUrn: urn, url: postUrl(urn) };
     },
   );
@@ -474,16 +575,56 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     'linkedin_delete_post',
     {
       title: 'Delete a LinkedIn post',
-      description:
-        'Permanently deletes a post the signed-in member (or their Page) authored. Accepts the post URN returned by linkedin_create_post or the post URL. Confirm with the user first.',
+      description: `Permanently deletes a post the signed-in member (or their Page) authored. ${findPost} Confirm with the user first.`,
       inputSchema: z.object({
         post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
       }),
       outputSchema: z.object({ deleted: z.boolean(), postUrn: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async (args) => ({ deleted: true, postUrn: await onOwnPost(args.post, 'delete', (client, urn) => client.deletePost(urn)) }),
+    async (args) => {
+      const urn = await onOwnPost(args.post, 'delete', (client, urn) => client.deletePost(urn));
+      await remember((history) => history.deleted(urn));
+      return { deleted: true, postUrn: urn };
+    },
   );
+
+  if (history) {
+    tool(
+      'linkedin_list_posts',
+      {
+        title: 'List posts published from Claude',
+        description:
+          "Lists the posts published with linkedin_create_post on this computer, newest first, with their URN and current text. LinkedIn's API doesn't let apps read the member's posts, so posts made elsewhere aren't included. " +
+          'Use it to find a post from an earlier conversation to edit or delete; to edit one, change the text it returns.',
+        inputSchema: z.object({
+          query: z.string().optional().describe('Only posts whose text contains this. Ignores case and accents.'),
+          limit: z.number().int().min(1).max(MAX_REMEMBERED_POSTS).default(10).describe('Maximum posts to return.'),
+        }),
+        outputSchema: z.object({
+          posts: z.array(
+            z.object({
+              postUrn: z.string(),
+              url: z.string(),
+              author: z.string(),
+              text: z.string(),
+              visibility: z.string(),
+              attachment: z.string(),
+              publishedAt: z.string(),
+              editedAt: z.string().optional(),
+            }),
+          ),
+          matched: z.number().describe('Remembered posts matching the query.'),
+        }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (args) => {
+        const query = args.query === undefined ? '' : foldText(args.query);
+        const matches = (await history.list()).filter((post) => !query || foldText(post.text).includes(query));
+        return { posts: matches.slice(0, args.limit), matched: matches.length };
+      },
+    );
+  }
 
   // ---------------------------------------------------------------- engagement (Community Management API)
 

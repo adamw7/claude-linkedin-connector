@@ -1,9 +1,9 @@
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import type { MemberInfo } from './types.js';
 import { NAME } from '../version.js';
+import { readJsonFile, writePrivateJsonFile } from './json-file.js';
 
 export interface StoredToken {
   version: 1;
@@ -35,34 +35,12 @@ export class TokenStore {
   constructor(readonly path: string) {}
 
   async read(): Promise<StoredToken | undefined> {
-    let text: string;
-    try {
-      text = await readFile(this.path, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw error;
-    }
-    try {
-      const parsed: unknown = JSON.parse(text);
-      return isStoredToken(parsed) ? parsed : undefined;
-    } catch {
-      return undefined;
-    }
+    const parsed = await readJsonFile(this.path);
+    return isStoredToken(parsed) ? parsed : undefined;
   }
 
-  async write(token: StoredToken): Promise<void> {
-    const directory = dirname(this.path);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${randomBytes(6).toString('hex')}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(token, null, 2)}\n`, { mode: 0o600 });
-    try {
-      await rename(temporary, this.path);
-    } catch (error) {
-      await rm(temporary, { force: true });
-      throw error;
-    }
-    // writeFile's mode only applies to new files; enforce it for overwritten ones too.
-    await chmod(this.path, 0o600).catch(() => {});
+  write(token: StoredToken): Promise<void> {
+    return writePrivateJsonFile(this.path, token);
   }
 
   async clear(): Promise<boolean> {

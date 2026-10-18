@@ -61,8 +61,8 @@ describe('architecture', () => {
     await expect(projectFiles().inFolder('src/mcp/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
   });
 
-  it.each(['local-auth.ts', 'token-store.ts', 'loopback-login.ts'])(
-    'keeps remote mode off local sign-in (src/auth/%s)',
+  it.each(['local-auth.ts', 'token-store.ts', 'loopback-login.ts', 'post-history.ts', 'json-file.ts'])(
+    'keeps remote mode off local sign-in and storage (src/auth/%s)',
     async (target) => {
       await expect(projectFiles().inFolder('src/remote/**').shouldNot().dependOnFiles().inPath(`src/auth/${target}`)).toPassAsync();
     },

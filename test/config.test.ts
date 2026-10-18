@@ -21,8 +21,10 @@ describe('configuration', () => {
       scopes: DEFAULT_SCOPES,
       redirectUri: 'http://localhost:8723/callback',
       tokenFile: '/cfg/claude-linkedin-connector/token.json',
+      postHistoryFile: '/cfg/claude-linkedin-connector/posts.json',
       accessToken: undefined,
     });
+    expect(loadLocalConfig({ LINKEDIN_TOKEN_FILE: '/secrets/linkedin.json' }).postHistoryFile).toBe('/secrets/posts.json');
   });
 
   it('reads overrides and treats blank values as unset', () => {

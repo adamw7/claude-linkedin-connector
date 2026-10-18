@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `linkedin_list_posts` (local mode) lists the last 100 posts published from Claude on this computer, with their
+  text. LinkedIn doesn't let apps read your posts, so until now a post from an earlier conversation could only
+  be edited or deleted with a link you had kept, and fixing a typo meant pasting the whole text back. Now "fix
+  the typo in my post about the launch" works in any conversation. The posts are kept in `posts.json` next to the
+  sign-in token; delete it to make the connector forget them.
+- `linkedin_preview_post` checks a post without publishing it, and Claude uses it before asking for your
+  approval: it loads the images or document, so a wrong path or format shows up before you approve rather than
+  after, shows the link preview card a link will get, and warns when the card would have no title or image, or
+  when the text has Markdown or `@mentions` that LinkedIn would show literally.
 - Each release publishes a Docker image of the remote server for amd64 and arm64 at
   `ghcr.io/adamw7/claude-linkedin-connector`, with an SBOM and build provenance. The image has a health check,
   runs as the unprivileged user 1000 (so Kubernetes' `runAsNonRoot` accepts it) and works with a read-only root
@@ -24,6 +33,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- When an image or document isn't a format LinkedIn accepts, the error says what it is and what to do: convert
+  an iPhone HEIC photo, a WebP, AVIF, TIFF, BMP or SVG image to JPEG or PNG; export a Keynote, Pages, Numbers,
+  OpenDocument or Excel file as PDF; extract the file from a zip archive; attach a PDF as the document rather
+  than an image (and vice versa). Videos are named as such, and a link that leads to a web page rather than the
+  file (such as a cloud drive share link) is explained instead of reported as "not a JPEG, PNG or GIF image".
+  A long path in these errors keeps its file name instead of being cut off before it.
 - The remote server refuses to start without `SERVER_SECRET` unless `PUBLIC_URL` is localhost. The random secret
   it used instead changed with every restart and differed between replicas, so connections broke seemingly at
   random.

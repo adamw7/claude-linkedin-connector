@@ -1,9 +1,10 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { PostHistory } from '../src/auth/post-history.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from '../src/auth/types.js';
 import { NotAuthenticatedError } from '../src/errors.js';
 import { ApiVersion } from '../src/linkedin/versions.js';
@@ -52,7 +53,9 @@ interface Harness {
   auth: StubAuth;
 }
 
-async function harness(options: { scopes?: string[]; mode?: 'local' | 'remote'; auth?: StubAuth } = {}): Promise<Harness> {
+async function harness(
+  options: { scopes?: string[]; mode?: 'local' | 'remote'; auth?: StubAuth; history?: PostHistory } = {},
+): Promise<Harness> {
   const linkedin = new FakeLinkedIn();
   const mode = options.mode ?? 'local';
   const auth = options.auth ?? (mode === 'local' ? new StubLocalAuth() : new StubAuth());
@@ -65,6 +68,7 @@ async function harness(options: { scopes?: string[]; mode?: 'local' | 'remote'; 
     fetch: linkedin.fetch,
     allowPrivateNetwork: true,
     localFileDirs: [files],
+    history: options.history,
     sleep: async () => {},
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -82,6 +86,8 @@ async function call(h: Harness, name: string, args: Record<string, unknown> = {}
 
 let web: TestServer;
 let files: string;
+/** Requests for /counted, a page with full preview metadata. */
+let pageFetches = 0;
 
 beforeAll(async () => {
   files = await mkdtemp(join(tmpdir(), 'linkedin-tools-'));
@@ -91,7 +97,19 @@ beforeAll(async () => {
     if (req.url === '/article') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end('<html><head><meta property="og:title" content="Engines &amp; Ideas"><meta property="og:description" content="A note."><meta property="og:image" content="/card.png"></head></html>');
-    } else if (req.url === '/card.png') res.end(PNG);
+    } else if (req.url === '/counted') {
+      pageFetches += 1;
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<html><head><meta property="og:title" content="Counted"><meta property="og:image" content="/card.png"></head></html>');
+    } else if (req.url?.startsWith('/docs/')) res.end(PDF);
+    else if (req.url === '/bare') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<html><body>No metadata here</body></html>');
+    } else if (req.url === '/webp-card') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<html><head><title>Modern</title><meta property="og:image" content="/card.webp"></head></html>');
+    } else if (req.url === '/card.webp') res.end(Buffer.from('RIFF\x24\0\0\0WEBPVP8 '));
+    else if (req.url === '/card.png') res.end(PNG);
     else if (req.url === '/talk.pdf') res.end(PDF);
     else if (req.url === '/Connections.csv') res.end(CONNECTIONS_CSV);
     else res.writeHead(404).end();
@@ -106,6 +124,7 @@ describe('tool list', () => {
     expect(tools.map((t) => t.name)).toEqual([
       'linkedin_get_profile',
       'linkedin_read_connections',
+      'linkedin_preview_post',
       'linkedin_create_post',
       'linkedin_edit_post',
       'linkedin_delete_post',
@@ -113,6 +132,7 @@ describe('tool list', () => {
       'linkedin_login',
       'linkedin_logout',
     ]);
+    expect(tools.find((t) => t.name === 'linkedin_preview_post')!.annotations).toMatchObject({ readOnlyHint: true });
     const create = tools.find((t) => t.name === 'linkedin_create_post')!;
     expect(Object.keys(create.inputSchema.properties ?? {})).toEqual(['text', 'visibility', 'article', 'images', 'document']);
     expect(create.annotations).toMatchObject({ readOnlyHint: false, openWorldHint: true });
@@ -125,6 +145,33 @@ describe('tool list', () => {
     expect(tools.map((t) => t.name)).toContain('linkedin_comment_on_post');
     expect(tools.map((t) => t.name)).toContain('linkedin_react_to_post');
     expect(Object.keys(tools.find((t) => t.name === 'linkedin_create_post')!.inputSchema.properties ?? {})).toContain('organization');
+  });
+
+  it('tells clients what each tool does to the account, so read-only ones can run without asking', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_member_social_feed'], history: new PostHistory(join(files, 'unused-posts.json')) });
+    const tools = (await h.client.listTools()).tools;
+    const contract = Object.fromEntries(tools.map((t) => [t.name, [t.title, t.annotations]]));
+    const reads = { readOnlyHint: true, openWorldHint: false };
+    const publishes = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+    const changes = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
+    expect(contract).toEqual({
+      linkedin_get_profile: ['Get LinkedIn profile', reads],
+      linkedin_read_connections: ['Read exported LinkedIn connections', reads],
+      linkedin_preview_post: ['Preview a LinkedIn post', { readOnlyHint: true, openWorldHint: true }],
+      linkedin_create_post: ['Publish a LinkedIn post', publishes],
+      linkedin_edit_post: ['Edit a LinkedIn post', changes],
+      linkedin_delete_post: ['Delete a LinkedIn post', changes],
+      linkedin_list_posts: ['List posts published from Claude', reads],
+      linkedin_comment_on_post: ['Comment on a LinkedIn post', publishes],
+      linkedin_react_to_post: ['React to a LinkedIn post', { ...publishes, idempotentHint: true }],
+      linkedin_auth_status: ['LinkedIn sign-in status', reads],
+      linkedin_login: ['Sign in to LinkedIn', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+      linkedin_logout: ['Sign out of LinkedIn', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }],
+    });
+    const outputs = (name: string) => Object.keys(tools.find((t) => t.name === name)!.outputSchema?.properties ?? {});
+    expect(outputs('linkedin_preview_post')).toEqual(['characters', 'visibility', 'attachment', 'images', 'document', 'linkPreview', 'warnings']);
+    expect(outputs('linkedin_list_posts')).toEqual(['posts', 'matched']);
+    expect(outputs('linkedin_delete_post')).toEqual(['deleted', 'postUrn']);
   });
 
   it('has no login/logout tools in remote mode', async () => {
@@ -316,6 +363,51 @@ describe('linkedin_create_post', () => {
     expect(h.linkedin.find('POST', '/rest/images')).toHaveLength(0);
   });
 
+  it("posts without the page's own image when LinkedIn won't take it", async () => {
+    const h = await harness();
+    h.linkedin.override((r) => (r.url.pathname === '/rest/images' ? Response.json({ message: 'Upload unavailable' }, { status: 500 }) : undefined));
+    const url = `${web.url}/article`;
+    const result = await call(h, 'linkedin_create_post', { text: 'Read this', article: { url } });
+    expect(result).toMatchObject({ isError: false, data: { linkPreview: { title: 'Engines & Ideas', description: 'A note.', thumbnail: false } } });
+    expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({
+      content: { article: { source: url, title: 'Engines & Ideas', description: 'A note.' } },
+    });
+    expect((h.linkedin.find('POST', '/rest/posts')[0]!.json as any).content.article).not.toHaveProperty('thumbnail');
+  });
+
+  it("fails without publishing when LinkedIn won't take the thumbnail the user chose", async () => {
+    const h = await harness();
+    h.linkedin.override((r) => (r.url.pathname === '/rest/images' ? Response.json({ message: 'Upload unavailable' }, { status: 500 }) : undefined));
+    const result = await call(h, 'linkedin_create_post', {
+      text: 'Read this',
+      article: { url: `${web.url}/article`, thumbnail: join(files, 'photo.png') },
+    });
+    expect(result).toMatchObject({ isError: true, text: 'LinkedIn had an internal problem (HTTP 500): Upload unavailable. Try again in a moment.' });
+    expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
+  });
+
+  it('reads the page only for the parts of the preview not given', async () => {
+    const h = await harness();
+    const url = `${web.url}/counted`;
+    pageFetches = 0;
+    const given = await call(h, 'linkedin_create_post', {
+      text: 'Mine',
+      article: { url, title: 'My title', description: 'My description', thumbnail: join(files, 'photo.png') },
+    });
+    expect(given.data).toMatchObject({ linkPreview: { title: 'My title', description: 'My description', thumbnail: true } });
+    expect(pageFetches).toBe(0);
+
+    const partly = await call(h, 'linkedin_create_post', { text: 'Mine', article: { url, description: 'My description' } });
+    expect(partly.data).toMatchObject({ linkPreview: { title: 'Counted', description: 'My description', thumbnail: true } });
+    expect(pageFetches).toBe(1);
+  });
+
+  it('titles a document without a file name "Document"', async () => {
+    const h = await harness();
+    await call(h, 'linkedin_create_post', { text: 'Deck', document: { source: `data:application/pdf;base64,${PDF.toString('base64')}` } });
+    expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({ content: { media: { title: 'Document' } } });
+  });
+
   it('allows only one kind of attachment', async () => {
     const h = await harness();
     const result = await call(h, 'linkedin_create_post', {
@@ -366,12 +458,319 @@ describe('linkedin_create_post', () => {
   });
 });
 
+describe('linkedin_preview_post', () => {
+  it('checks a post without signing in or calling LinkedIn, and flags Markdown', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    const h = await harness({ auth });
+    const result = await call(h, 'linkedin_preview_post', { text: 'Big **news** from @Grace', visibility: 'CONNECTIONS' });
+    expect(result.isError).toBe(false);
+    expect(result.data).toEqual({
+      characters: 24,
+      visibility: 'CONNECTIONS',
+      attachment: 'none',
+      warnings: [
+        'The text uses Markdown bold (**like this**), which LinkedIn shows literally, asterisks and all.',
+        '@mentions don\'t tag anyone: "@Name" shows as plain text and nobody is notified.',
+      ],
+    });
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('shows the link preview card the post will get', async () => {
+    const h = await harness();
+    const url = `${web.url}/article`;
+    const { data } = await call(h, 'linkedin_preview_post', { text: 'Read this', article: { url } });
+    expect(data).toEqual({
+      characters: 9,
+      visibility: 'PUBLIC',
+      attachment: 'article',
+      linkPreview: { url, title: 'Engines & Ideas', description: 'A note.', thumbnail: true, imageUrl: `${web.url}/card.png` },
+      warnings: [],
+    });
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('warns when the link preview would come out bare', async () => {
+    const h = await harness();
+    const hostname = new URL(web.url).hostname;
+    const bare = await call(h, 'linkedin_preview_post', { text: 'Look', article: { url: `${web.url}/bare` } });
+    expect(bare.data!.linkPreview).toEqual({ url: `${web.url}/bare`, title: hostname, thumbnail: false });
+    expect(bare.data!.warnings).toEqual([
+      `The link preview's title is just "${hostname}": the page has none. Pass article.title (and description) to set it.`,
+      'The link preview has no image: the page offers none in JPEG, PNG or GIF. Pass article.thumbnail to add one.',
+    ]);
+
+    const webp = await call(h, 'linkedin_preview_post', { text: 'Look', article: { url: `${web.url}/webp-card` } });
+    expect(webp.data!.linkPreview).toEqual({ url: `${web.url}/webp-card`, title: 'Modern', thumbnail: false });
+    expect(webp.data!.warnings).toEqual(['The link preview has no image: the page offers none in JPEG, PNG or GIF. Pass article.thumbnail to add one.']);
+
+    const missing = `${web.url}/missing-page`;
+    const unreadable = await call(h, 'linkedin_preview_post', { text: 'Look', article: { url: missing } });
+    expect(unreadable.data!.warnings).toEqual([
+      `The link preview's title is just "${hostname}": ${missing} could not be read. Pass article.title (and description) to set it.`,
+      'The link preview has no image. Pass article.thumbnail to add one.',
+    ]);
+    const withThumbnail = await call(h, 'linkedin_preview_post', {
+      text: 'Look',
+      article: { url: missing, title: 'Mine', thumbnail: join(files, 'photo.png') },
+    });
+    expect(withThumbnail.data!.linkPreview).toEqual({ url: missing, title: 'Mine', thumbnail: true });
+    expect(withThumbnail.data!.warnings).toEqual([]);
+  });
+
+  it('checks images and documents, and reports problems before anything is approved', async () => {
+    const h = await harness();
+    const images = await call(h, 'linkedin_preview_post', {
+      text: 'Album',
+      images: [{ source: join(files, 'photo.png') }, { source: `data:image/png;base64,${PNG.toString('base64')}` }],
+    });
+    expect(images.data).toMatchObject({ attachment: 'images', images: 2, warnings: [] });
+    const document = await call(h, 'linkedin_preview_post', { text: 'Slides', document: { source: `${web.url}/talk.pdf` } });
+    expect(document.data).toMatchObject({ attachment: 'document', document: { title: 'talk' } });
+    const wrong = await call(h, 'linkedin_preview_post', { text: 'Slides', images: [{ source: `${web.url}/talk.pdf` }] });
+    expect(wrong).toMatchObject({ isError: true, text: expect.stringContaining("is a PDF, not a JPEG, PNG or GIF image. Attach it as the post's document instead.") });
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('does not read the page when the whole preview is given, but checks the thumbnail', async () => {
+    const h = await harness();
+    const url = `${web.url}/counted`;
+    pageFetches = 0;
+    const given = await call(h, 'linkedin_preview_post', {
+      text: 'Mine',
+      article: { url, title: 'My title', description: 'My description', thumbnail: join(files, 'photo.png') },
+    });
+    expect(given.data).toMatchObject({
+      linkPreview: { url, title: 'My title', description: 'My description', thumbnail: true },
+      warnings: [],
+    });
+    expect(given.data!.linkPreview.imageUrl).toBeUndefined();
+    expect(pageFetches).toBe(0);
+
+    const unusable = await call(h, 'linkedin_preview_post', {
+      text: 'Mine',
+      article: { url, title: 'My title', description: 'My description', thumbnail: `${web.url}/talk.pdf` },
+    });
+    expect(unusable).toMatchObject({ isError: true, text: expect.stringContaining('/talk.pdf" is a PDF, not a JPEG, PNG or GIF image.') });
+  });
+
+  it('shows the title a document will get', async () => {
+    const h = await harness();
+    const untitled = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `data:application/pdf;base64,${PDF.toString('base64')}` } });
+    expect(untitled.data).toMatchObject({ attachment: 'document', document: { title: 'Document' } });
+    const titled = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `${web.url}/talk.pdf`, title: 'Q3 results' } });
+    expect(titled.data).toMatchObject({ document: { title: 'Q3 results' } });
+  });
+
+  it.each([
+    ['notes.doc', 'notes'],
+    ['deck.ppt', 'deck'],
+    ['Deck.PPTX', 'Deck'],
+    ['report.docx', 'report'],
+    ['q3.pdf.final.pdf', 'q3.pdf.final'],
+    ['slides.key', 'slides.key'],
+  ])('titles a document named %s "%s"', async (name, title) => {
+    const h = await harness();
+    const { data } = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `${web.url}/docs/${name}` } });
+    expect(data!.document).toEqual({ title });
+  });
+
+  it('is what Claude is told to check posts with', async () => {
+    const h = await harness();
+    expect(h.client.getInstructions()).toContain('Before asking for approval of a post, check it with linkedin_preview_post');
+    const create = (await h.client.listTools()).tools.find((t) => t.name === 'linkedin_create_post')!;
+    expect(create.description).toContain('Check it with linkedin_preview_post first');
+  });
+
+  it('checks the Page ID', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    const result = await call(h, 'linkedin_preview_post', { text: 'News', organization: 'acme' });
+    expect(result).toMatchObject({ isError: true, text: expect.stringContaining('"acme" is not a LinkedIn organization ID') });
+  });
+});
+
+describe('post history', () => {
+  let historyFile: string;
+  let clock: number;
+  const at = (iso: string) => {
+    clock = Date.parse(iso);
+  };
+  const withHistory = async (options: { scopes?: string[] } = {}) => harness({ ...options, history: new PostHistory(historyFile, () => clock) });
+
+  beforeEach(async () => {
+    historyFile = join(await mkdtemp(join(tmpdir(), 'linkedin-history-')), 'posts.json');
+  });
+
+  it('is offered, and mentioned to Claude, only when there is a history', async () => {
+    const h = await withHistory();
+    expect((await h.client.listTools()).tools.map((t) => t.name)).toContain('linkedin_list_posts');
+    expect(h.client.getInstructions()).toContain('find it with linkedin_list_posts');
+    expect((await harness()).client.getInstructions()).not.toContain('linkedin_list_posts');
+  });
+
+  it('remembers published posts, follows edits and forgets deleted ones', async () => {
+    const h = await withHistory();
+    at('2026-10-01T09:00:00Z');
+    const first = (await call(h, 'linkedin_create_post', { text: 'Launch day (finally)!' })).data!;
+    at('2026-10-02T09:00:00Z');
+    const second = (await call(h, 'linkedin_create_post', { text: 'Slides', document: { source: `${web.url}/talk.pdf` }, visibility: 'CONNECTIONS' })).data!;
+
+    expect((await call(h, 'linkedin_list_posts')).data).toEqual({
+      matched: 2,
+      posts: [
+        {
+          postUrn: second.postUrn,
+          url: second.url,
+          author: 'urn:li:person:abc123',
+          text: 'Slides',
+          visibility: 'CONNECTIONS',
+          attachment: 'document',
+          publishedAt: '2026-10-02T09:00:00.000Z',
+        },
+        {
+          postUrn: first.postUrn,
+          url: first.url,
+          author: 'urn:li:person:abc123',
+          text: 'Launch day (finally)!',
+          visibility: 'PUBLIC',
+          attachment: 'none',
+          publishedAt: '2026-10-01T09:00:00.000Z',
+        },
+      ],
+    });
+
+    at('2026-10-03T09:00:00Z');
+    expect((await call(h, 'linkedin_edit_post', { post: first.url, text: 'Launch day!' })).isError).toBe(false);
+    expect((await call(h, 'linkedin_delete_post', { post: second.postUrn })).isError).toBe(false);
+    expect((await call(h, 'linkedin_list_posts')).data).toEqual({
+      matched: 1,
+      posts: [expect.objectContaining({ postUrn: first.postUrn, text: 'Launch day!', editedAt: '2026-10-03T09:00:00.000Z' })],
+    });
+    expect(JSON.parse(await readFile(historyFile, 'utf8'))).toMatchObject({ version: 1, posts: [{ postUrn: first.postUrn }] });
+  });
+
+  it('finds posts by their text and limits how many it returns', async () => {
+    const h = await withHistory();
+    at('2026-10-01T09:00:00Z');
+    for (const text of ['Hiring in Łódź', 'Our Q3 results', 'Hiring in Kraków']) await call(h, 'linkedin_create_post', { text });
+    const texts = (data: Record<string, any> | undefined) => data!.posts.map((post: { text: string }) => post.text);
+    const hiring = (await call(h, 'linkedin_list_posts', { query: 'HIRING IN LODZ' })).data;
+    expect(texts(hiring)).toEqual(['Hiring in Łódź']);
+    const limited = (await call(h, 'linkedin_list_posts', { query: 'hiring', limit: 1 })).data;
+    expect(limited).toMatchObject({ matched: 2 });
+    expect(texts(limited)).toEqual(['Hiring in Kraków']);
+  });
+
+  it('remembers who published a post as a Page', async () => {
+    const h = await withHistory({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183' });
+    expect((await call(h, 'linkedin_list_posts')).data!.posts[0]).toMatchObject({ author: 'urn:li:organization:2414183' });
+  });
+
+  it('never fails a published post because the history cannot be written', async () => {
+    const h = await harness({ history: new PostHistory(join(files, 'photo.png', 'posts.json')) });
+    const result = await call(h, 'linkedin_create_post', { text: 'Still published' });
+    expect(result).toMatchObject({ isError: false, data: { postUrn: expect.stringMatching(/^urn:li:share:/) } });
+    expect((await call(h, 'linkedin_edit_post', { post: result.data!.postUrn, text: 'Edited' })).isError).toBe(false);
+    expect((await call(h, 'linkedin_delete_post', { post: result.data!.postUrn })).isError).toBe(false);
+  });
+
+  it('keeps a post as it was when editing or deleting it fails', async () => {
+    const h = await withHistory();
+    at('2026-10-01T09:00:00Z');
+    const { postUrn } = (await call(h, 'linkedin_create_post', { text: 'Original' })).data!;
+    h.linkedin.override((r) =>
+      r.url.pathname.startsWith('/rest/posts/') ? Response.json({ message: 'Not enough permissions' }, { status: 403 }) : undefined,
+    );
+    at('2026-10-02T09:00:00Z');
+    expect((await call(h, 'linkedin_edit_post', { post: postUrn, text: 'Changed' })).isError).toBe(true);
+    expect((await call(h, 'linkedin_delete_post', { post: postUrn })).isError).toBe(true);
+    expect((await call(h, 'linkedin_list_posts')).data).toEqual({
+      matched: 1,
+      posts: [expect.objectContaining({ postUrn, text: 'Original', publishedAt: '2026-10-01T09:00:00.000Z' })],
+    });
+    expect((await call(h, 'linkedin_list_posts')).data!.posts[0].editedAt).toBeUndefined();
+  });
+
+  it('returns the 10 newest posts unless asked for more', async () => {
+    const h = await withHistory();
+    at('2026-10-01T09:00:00Z');
+    for (let n = 1; n <= 12; n++) await call(h, 'linkedin_create_post', { text: `Post ${n}` });
+    const texts = (data: Record<string, any> | undefined) => data!.posts.map((post: { text: string }) => post.text);
+    const recent = (await call(h, 'linkedin_list_posts')).data;
+    expect(recent).toMatchObject({ matched: 12 });
+    expect(texts(recent)).toEqual(['Post 12', 'Post 11', 'Post 10', 'Post 9', 'Post 8', 'Post 7', 'Post 6', 'Post 5', 'Post 4', 'Post 3']);
+    expect(texts((await call(h, 'linkedin_list_posts', { limit: 12 })).data)).toHaveLength(12);
+    expect((await call(h, 'linkedin_list_posts', { query: '  ' })).data).toMatchObject({ matched: 12 });
+    expect((await call(h, 'linkedin_list_posts', { limit: 0 })).isError).toBe(true);
+  });
+
+  it('remembers what each post carried', async () => {
+    const h = await withHistory();
+    await call(h, 'linkedin_create_post', { text: 'Link', article: { url: `${web.url}/article` } });
+    await call(h, 'linkedin_create_post', { text: 'Pic', images: [{ source: join(files, 'photo.png') }] });
+    await call(h, 'linkedin_create_post', { text: 'Album', images: [{ source: join(files, 'photo.png') }, { source: join(files, 'photo.png') }] });
+    const posts = (await call(h, 'linkedin_list_posts')).data!.posts as Array<{ text: string; attachment: string }>;
+    expect(posts.map(({ text, attachment }) => [text, attachment])).toEqual([
+      ['Album', 'images'],
+      ['Pic', 'image'],
+      ['Link', 'article'],
+    ]);
+  });
+
+  it('points the edit and delete tools at it only when there is one', async () => {
+    const descriptions = async (h: Harness) =>
+      Object.fromEntries((await h.client.listTools()).tools.map((t) => [t.name, t.description ?? '']));
+    const withList = await descriptions(await withHistory());
+    const without = await descriptions(await harness());
+    for (const name of ['linkedin_edit_post', 'linkedin_delete_post']) {
+      expect(withList[name]).toContain('linkedin_list_posts (which finds posts from earlier conversations)');
+      expect(without[name]).toContain('Accepts the post URN returned by linkedin_create_post or the post URL.');
+      expect(without[name]).not.toContain('linkedin_list_posts');
+    }
+  });
+
+  it('does not remember posts that failed', async () => {
+    const h = await withHistory();
+    h.linkedin.override((r) => (r.method === 'POST' && r.url.pathname === '/rest/posts' ? Response.json({ message: 'Duplicate' }, { status: 422 }) : undefined));
+    expect((await call(h, 'linkedin_create_post', { text: 'Twice' })).isError).toBe(true);
+    expect((await call(h, 'linkedin_list_posts')).data).toEqual({ matched: 0, posts: [] });
+  });
+});
+
 describe('linkedin_edit_post', () => {
   it('replaces the text, escaped', async () => {
     const h = await harness();
     const result = await call(h, 'linkedin_edit_post', { post: 'urn:li:share:42', text: 'Now with (fixed) typos' });
     expect(result.data).toEqual({ updated: true, postUrn: 'urn:li:share:42', url: 'https://www.linkedin.com/feed/update/urn:li:share:42/' });
     expect(h.linkedin.find('POST', '/rest/posts/')[0]!.json).toEqual({ patch: { $set: { commentary: 'Now with \\(fixed\\) typos' } } });
+  });
+});
+
+describe('editing and deleting errors', () => {
+  const failWith = (h: Harness, status: number) =>
+    h.linkedin.override((r) => (r.url.pathname.startsWith('/rest/posts/') ? Response.json({ message: 'Invalid post id' }, { status }) : undefined));
+
+  it("reports LinkedIn's answer as is for a post's own URN", async () => {
+    const h = await harness();
+    failWith(h, 400);
+    expect((await call(h, 'linkedin_edit_post', { post: 'urn:li:share:42', text: 'New' })).text).toBe(
+      'LinkedIn rejected the request (HTTP 400): Invalid post id.',
+    );
+  });
+
+  it('explains activity URNs for editing too, but not when LinkedIn itself failed', async () => {
+    const h = await harness();
+    failWith(h, 400);
+    expect((await call(h, 'linkedin_edit_post', { post: 'urn:li:activity:7', text: 'New' })).text).toMatch(
+      /^LinkedIn could not edit urn:li:activity:7\. This needs the post's share or ugcPost URN .* LinkedIn said: Invalid post id$/,
+    );
+    const failing = await harness();
+    failWith(failing, 500);
+    expect((await call(failing, 'linkedin_delete_post', { post: 'urn:li:activity:7' })).text).toBe(
+      'LinkedIn had an internal problem (HTTP 500): Invalid post id. Try again in a moment.',
+    );
   });
 });
 
@@ -388,6 +787,7 @@ describe('linkedin_delete_post', () => {
     h.linkedin.override((r) => (r.method === 'DELETE' ? new Response('{"message":"Invalid post id"}', { status: 400 }) : undefined));
     const result = await call(h, 'linkedin_delete_post', { post: 'urn:li:activity:7' });
     expect(result).toMatchObject({ isError: true, text: expect.stringContaining('not the activity URN that links copied from linkedin.com often contain') });
+    expect(result.text).toMatch(/^LinkedIn could not delete urn:li:activity:7\. /);
     expect(result.text).toContain('"Embed this post"');
   });
 });

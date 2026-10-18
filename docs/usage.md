@@ -56,6 +56,8 @@ More things to try:
 | "Publish slides.pdf as a LinkedIn carousel titled 'Q3 results'." | `linkedin_create_post` (document) |
 | "Fix the typo in the post you just published." | `linkedin_edit_post` |
 | "Delete that post." | `linkedin_delete_post` |
+| "What have I posted on LinkedIn this month?" (local mode) | `linkedin_list_posts` |
+| "In my post about the 2.0 release, change 'Tuesday' to 'Wednesday'." (local mode, any conversation) | `linkedin_list_posts`, then `linkedin_edit_post` |
 | "Comment 'Congratulations!' on <post URL>" / "Like <post URL>" | `linkedin_comment_on_post` / `linkedin_react_to_post` (need extra LinkedIn access) |
 | "Sign me out of LinkedIn." | `linkedin_logout` |
 
@@ -64,13 +66,22 @@ More things to try:
 - **You approve every post.** Claude shows you the exact text, and any image, link or document, and waits
   for your OK before publishing, editing, commenting or deleting. Claude also asks you to allow each tool
   call unless you've allowed it permanently.
+- **Claude checks the post first.** Before asking for your OK, Claude previews the post without publishing it:
+  it loads the images or document, so a wrong path or format shows up now rather than after you've approved,
+  and tells you what the link preview card will show. If the page has no usable title or image, you can give
+  your own (for example "use cover.png from my Downloads as the preview image").
 - **Write plain text.** LinkedIn doesn't render Markdown. Line breaks, emoji and `#hashtags` work, and the
   connector escapes characters such as `( ) * _` so LinkedIn doesn't cut the post short. `@mentions` show as
   plain text and don't tag anyone.
 - **Claude gets the post's URL back**, so you can say "edit that post" or "delete it" right afterwards.
 - **One kind of attachment per post**: a link preview, 1–20 images, or one document.
-- **Claude can't read your feed or past posts.** LinkedIn only gives that to partner apps. Keep the URL
-  Claude gives you after publishing if you may want to edit or delete the post later: a link copied from
-  linkedin.com often won't work, but the code from the post's **Embed this post** menu item will.
+- **Claude can't read your feed or past posts.** LinkedIn only gives that to partner apps. In local mode
+  (Claude Desktop, Claude Code) the connector remembers the last 100 posts it published, with their text, so
+  you can edit or delete them from any conversation later. For other posts, or in remote mode, keep the URL
+  Claude gives you after publishing: a link copied from linkedin.com often won't work, but the code from the
+  post's **Embed this post** menu item will.
+- **Images must be JPEG, PNG or GIF, and documents PDF or Office files.** Convert iPhone photos (HEIC) and WebP
+  images to JPEG or PNG, and export Keynote or Pages files as PDF; the connector tells you what it got. Video
+  posts aren't supported.
 
 If something goes wrong, see [Troubleshooting](../README.md#troubleshooting).
