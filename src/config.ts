@@ -12,6 +12,8 @@ import { isLoopbackHostname } from './net/loopback.js';
 
 /** Scopes granted by the self-serve "Sign In with LinkedIn using OpenID Connect" and "Share on LinkedIn" products. */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
+/** Yes/no switches for the features of LinkedIn's Community Management API, so nobody has to know the scope names. */
+export const FEATURE_SCOPES = { LINKEDIN_COMMENTS: 'w_member_social_feed', LINKEDIN_PAGES: 'w_organization_social' } as const;
 export const DEFAULT_LOCAL_REDIRECT_URI = 'http://localhost:8723/callback';
 /** Where Claude (web, desktop and mobile) receives OAuth redirects for remote connectors. */
 export const CLAUDE_REDIRECT_URIS = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback'];
@@ -94,16 +96,26 @@ function list(env: Env, name: string): string[] | undefined {
   return raw === undefined ? undefined : raw.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+/** A yes/no setting; the Claude Desktop extension passes its checkboxes as "true" or "false". */
+function flag(env: Env, name: string): boolean {
+  const raw = value(env, name)?.toLowerCase();
+  if (raw === undefined || ['false', '0', 'no', 'off'].includes(raw)) return false;
+  if (['true', '1', 'yes', 'on'].includes(raw)) return true;
+  throw new ConfigError(`${name} must be true or false, got "${value(env, name)}".`);
+}
+
 function common(env: Env): CommonConfig {
   const apiVersion = value(env, 'LINKEDIN_API_VERSION');
   if (apiVersion !== undefined && !isValidApiVersion(apiVersion)) {
     throw new ConfigError(`LINKEDIN_API_VERSION must look like YYYYMM (e.g. 202609), got "${apiVersion}".`);
   }
-  const scopes = parseScopes(value(env, 'LINKEDIN_SCOPES'));
+  const listed = parseScopes(value(env, 'LINKEDIN_SCOPES'));
+  const scopes = new Set(listed.length > 0 ? listed : DEFAULT_SCOPES);
+  for (const [name, scope] of Object.entries(FEATURE_SCOPES)) if (flag(env, name)) scopes.add(scope);
   return {
     clientId: value(env, 'LINKEDIN_CLIENT_ID'),
     clientSecret: secretValue(env, 'LINKEDIN_CLIENT_SECRET'),
-    scopes: scopes.length > 0 ? scopes : [...DEFAULT_SCOPES],
+    scopes: [...scopes],
     apiVersion,
     apiBaseUrl: value(env, 'LINKEDIN_API_BASE_URL') ?? LINKEDIN_API_BASE,
     oauthBaseUrl: value(env, 'LINKEDIN_OAUTH_BASE_URL') ?? LINKEDIN_OAUTH_BASE,

@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { UserInputError } from '../src/errors.js';
-import { countCompanies, foldText, parseConnectedOn, parseConnections, parseCsv, type Connection } from '../src/linkedin/connections.js';
+import { mkdir, mkdtemp, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  countCompanies,
+  findConnectionsExport,
+  foldText,
+  parseConnectedOn,
+  parseConnections,
+  parseCsv,
+  type Connection,
+} from '../src/linkedin/connections.js';
 import { CONNECTIONS_CSV } from './helpers/connections.js';
+import { zipArchive } from './helpers/zip.js';
 
 describe('parseCsv', () => {
   it('handles quotes, escaped quotes, embedded line breaks and a missing final newline', () => {
@@ -48,7 +60,45 @@ describe('parseConnections', () => {
   it('rejects other files without revealing their content', () => {
     expect(() => parseConnections('secret=hunter2\n')).toThrow(UserInputError);
     expect(() => parseConnections('secret=hunter2\n')).not.toThrow(/hunter2/);
-    expect(() => parseConnections(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0]))).toThrow(/zip archive/);
+  });
+
+  it("reads Connections.csv from LinkedIn's export archive", () => {
+    const archive = zipArchive({ 'Profile.csv': 'First Name,Last Name\nNot,This', 'Connections.csv': CONNECTIONS_CSV });
+    expect(parseConnections(archive).map((connection) => connection.name)).toEqual(['Ada Lovelace', 'Grace Hopper', 'Alan Turing']);
+    expect(() => parseConnections(zipArchive({ 'Profile.csv': 'x' }))).toThrow(
+      'This zip archive has no Connections.csv. Request your data again on LinkedIn under Settings → Data privacy → Get a copy of your data, and include Connections.',
+    );
+  });
+
+  it('refuses files larger than 20 MB', () => {
+    expect(() => parseConnections(Buffer.alloc(20 * 1024 * 1024 + 1))).toThrow('The file is larger than 20 MB.');
+  });
+});
+
+describe('findConnectionsExport', () => {
+  const at = async (path: string, minutesAgo: number, content = 'x') => {
+    await writeFile(path, content);
+    const time = new Date(Date.now() - minutesAgo * 60_000);
+    await utimes(path, time, time);
+  };
+
+  it('finds the newest export archive, Connections.csv or extracted export folder', async () => {
+    const downloads = await mkdtemp(join(tmpdir(), 'linkedin-downloads-'));
+    const desktop = await mkdtemp(join(tmpdir(), 'linkedin-desktop-'));
+    expect(await findConnectionsExport([downloads, desktop, join(downloads, 'missing')])).toBeUndefined();
+
+    await at(join(downloads, 'report.zip'), 0);
+    await at(join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip'), 30);
+    expect(await findConnectionsExport([downloads, desktop])).toBe(join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip'));
+
+    await at(join(desktop, 'connections.csv'), 20);
+    expect(await findConnectionsExport([downloads, desktop])).toBe(join(desktop, 'connections.csv'));
+
+    const extracted = join(downloads, 'Complete_LinkedInDataExport_03-04-2026');
+    await mkdir(extracted);
+    expect(await findConnectionsExport([downloads, desktop])).toBe(join(desktop, 'connections.csv'));
+    await at(join(extracted, 'Connections.csv'), 10);
+    expect(await findConnectionsExport([downloads, desktop])).toBe(join(extracted, 'Connections.csv'));
   });
 });
 

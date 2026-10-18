@@ -34,6 +34,10 @@ export interface AuthStatus {
 export interface LoginStart {
   authorizationUrl: string;
   expiresInSeconds: number;
+  /** Whether the sign-in page was opened in the user's browser; they may still need the link if it didn't appear. */
+  browserOpened: boolean;
+  /** Settles when the browser sign-in finishes: with the member's name, or rejected with why it failed. */
+  completion: Promise<string | undefined>;
 }
 
 /** Supplies LinkedIn tokens to the tools: from local storage (stdio) or the connector's OAuth grant (HTTP). */
@@ -43,7 +47,7 @@ export interface LinkedInAuth {
   /** Caches the member looked up via userinfo so later calls skip the lookup. */
   rememberMember(member: MemberInfo): Promise<void>;
   status(): Promise<AuthStatus>;
-  /** Starts an interactive browser sign-in (stdio mode only). */
+  /** Starts an interactive browser sign-in, opening it in the browser when possible (stdio mode only). */
   login?(): Promise<LoginStart>;
   /** Forgets stored credentials (stdio mode only). Returns whether anything was removed. */
   logout?(): Promise<boolean>;

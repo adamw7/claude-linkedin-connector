@@ -86,6 +86,16 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
     });
   });
 
+  it('adds the scopes for --comments and --pages', () => {
+    const scopes = (args: string[]) => {
+      rmSync(log, { force: true });
+      const add = setup(args).calls.find((call) => call.startsWith('mcp add-json'))!;
+      return JSON.parse(add.slice(add.indexOf('{'), add.lastIndexOf('}') + 1)).env.LINKEDIN_SCOPES;
+    };
+    expect(scopes(['--comments', '--pages'])).toBe('openid profile email w_member_social w_member_social_feed w_organization_social');
+    expect(scopes(['--scopes', 'openid,w_member_social_feed', '--comments'])).toBe('openid,w_member_social_feed');
+  });
+
   it('refuses to overwrite an existing server unless --yes is given', () => {
     const refused = setup([], { FAKE_EXISTS: '1' });
     expect(refused.status).toBe(1);

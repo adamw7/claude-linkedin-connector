@@ -20,20 +20,20 @@ It runs two ways:
 | Tool | What it does | Needs |
 |---|---|---|
 | `linkedin_get_profile` | Your name, email, photo, locale and member URN | default scopes |
-| `linkedin_read_connections` | Searches your connections in the `Connections.csv` from LinkedIn's data export | nothing: no sign-in |
+| `linkedin_read_connections` | Searches your connections in LinkedIn's data export (the zip archive or its `Connections.csv`) | nothing: no sign-in |
 | `linkedin_preview_post` | Checks a post before publishing: loads its attachments, shows the link preview card it will get, and warns about Markdown and `@mentions` | nothing: no sign-in |
 | `linkedin_create_post` | Publishes a post: text plus optionally **one** of a link preview, 1–20 images, or a document (PDF, PPT(X), DOC(X)) | default scopes |
 | `linkedin_edit_post` | Replaces the text of a post you authored (by URN or URL) | default scopes |
 | `linkedin_delete_post` | Deletes a post you authored (by URN or URL) | default scopes |
 | `linkedin_list_posts` | Lists the posts published from Claude on this computer, with their text, so later conversations can edit or delete them (local mode only) | nothing: no sign-in |
-| `linkedin_comment_on_post` | Comments on a post | `w_member_social_feed` or `w_organization_social` |
-| `linkedin_react_to_post` | Like, celebrate, support, love, insightful or funny | `w_member_social_feed` or `w_organization_social` |
+| `linkedin_comment_on_post` | Comments on a post | `LINKEDIN_COMMENTS` or `LINKEDIN_PAGES` |
+| `linkedin_react_to_post` | Like, celebrate, support, love, insightful or funny | `LINKEDIN_COMMENTS` or `LINKEDIN_PAGES` |
 | `linkedin_auth_status` | Shows whether LinkedIn is connected, as whom and until when | |
-| `linkedin_login` | Returns a sign-in link (local mode only) | |
+| `linkedin_login` | Opens LinkedIn's sign-in page in your browser and waits for you to approve (local mode only) | |
 | `linkedin_logout` | Deletes the stored token (local mode only) | |
 
-With the `w_organization_social` scope, posting, commenting and reacting also accept an `organization`
-argument to act as a LinkedIn Page you administer. Tools whose scopes you haven't configured are not offered to Claude.
+With `LINKEDIN_PAGES` on, posting, commenting and reacting also accept an `organization` argument to act as a
+LinkedIn Page you administer. Tools for features you haven't turned on are not offered to Claude.
 
 The connector tells Claude to show you the exact text and get your approval before publishing, editing,
 commenting or deleting, and Claude also asks you to confirm each call. Before you approve a post, Claude checks
@@ -55,10 +55,11 @@ shows up while you can still fix it. A few things it handles for you:
   a web page rather than the file, the connector says so and what to do instead.
 - **Connections.** LinkedIn's API doesn't give apps your list of connections, so the connector reads the
   `Connections.csv` from your data export instead: on LinkedIn, open **Settings → Data privacy → Get a copy
-  of your data**, choose **Connections**, then unzip the archive LinkedIn emails you. Pass the file's path
-  (local mode), a URL, or attach or paste its contents. Claude can search it by name, company (one or
-  several, e.g. everyone at xyz or abc), position or connection date, and count how many connections you
-  have at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear
+  of your data**, choose **Connections**, and save the zip archive LinkedIn emails you. In local mode, just ask:
+  the connector finds the newest export in your Downloads, Desktop and Pictures folders, zipped or extracted.
+  You can also pass the archive's or `Connections.csv`'s path, a URL, or attach or paste the CSV. Claude can
+  search it by name, company (one or several, e.g. everyone at xyz or abc), position or connection date, and
+  count how many connections you have at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear
   only for connections who allow it.
 - **Your posts.** LinkedIn's API doesn't let apps read your posts, so in local mode the connector remembers the
   last 100 it published (their link and text, kept with the sign-in token). "Fix the typo in my post about the
@@ -79,8 +80,9 @@ shows up while you can still fix it. A few things it handles for you:
    - remote mode: `https://<your-server>/oauth/callback`
 
 Comments, reactions and Page posting need LinkedIn's **Community Management API** product, which LinkedIn
-grants on application. If you get it, add `w_member_social_feed` and/or `w_organization_social` to
-`LINKEDIN_SCOPES`.
+grants on application. If you get it, turn on **Comments and reactions** and/or **Post as LinkedIn Pages** in
+the Claude Desktop extension's settings (`--comments` / `--pages` for `npm run setup`, or
+`LINKEDIN_COMMENTS=true` / `LINKEDIN_PAGES=true`), then sign in again to grant the new permissions.
 
 ## 2a. Local setup (Claude Desktop, Claude Code)
 
@@ -137,7 +139,7 @@ It asks for your Client ID and Client Secret (or reads `LINKEDIN_CLIENT_ID` and 
 installs dependencies and builds, registers the connector for all your projects with `claude mcp add`, and
 signs you in to LinkedIn in your browser. Put `--` before its options, or npm keeps them for itself:
 `npm run setup -- --help` lists them, such as `--scope local` to use the connector only in this directory,
-`--scopes` for extra LinkedIn permissions (running it again with new ones signs you in again to grant them)
+`--comments` and `--pages` for the Community Management API features (running it again with new ones signs you in again to grant them)
 and `--no-login` to sign in later.
 
 To register it by hand instead:
@@ -151,9 +153,10 @@ claude mcp add linkedin --scope user \
 
 ### Sign in
 
-Ask Claude to "connect my LinkedIn account". It calls `linkedin_login` and gives you a link; approve access
-in your browser and tell Claude you're done. You can also sign in from a terminal, with the same environment
-variables set:
+Ask Claude to "connect my LinkedIn account", or just ask for something that needs LinkedIn. The connector opens
+LinkedIn's sign-in page in your browser; approve access there and Claude carries on. If the page doesn't open
+(for example over SSH), Claude gives you the link instead. You can also sign in from a terminal, with the same
+environment variables set:
 
 ```sh
 claude-linkedin-connector login     # or: node dist/index.js login
@@ -253,7 +256,9 @@ same. Changing the secret disconnects everyone, unless the old one stays in `SER
 |---|---|---|---|
 | `LINKEDIN_CLIENT_ID` | both | | LinkedIn app Client ID (required, except with `LINKEDIN_ACCESS_TOKEN`) |
 | `LINKEDIN_CLIENT_SECRET` | both | | LinkedIn app Primary Client Secret |
-| `LINKEDIN_SCOPES` | both | `openid profile email w_member_social` | Permissions to request; also decides which tools are offered |
+| `LINKEDIN_COMMENTS` | both | `false` | `true` to comment on and react to posts (adds the `w_member_social_feed` scope; needs the Community Management API) |
+| `LINKEDIN_PAGES` | both | `false` | `true` to post, comment and react as LinkedIn Pages you administer (adds `w_organization_social`; needs the Community Management API) |
+| `LINKEDIN_SCOPES` | both | `openid profile email w_member_social` | Permissions to request; also decides which tools are offered. `LINKEDIN_COMMENTS` and `LINKEDIN_PAGES` add to it |
 | `LINKEDIN_API_VERSION` | both | `202609` | `LinkedIn-Version` header (YYYYMM); replaced automatically if LinkedIn retires it |
 | `LINKEDIN_REDIRECT_URI` | local | `http://localhost:8723/callback` | Sign-in callback; must match the LinkedIn app exactly |
 | `LINKEDIN_TOKEN_FILE` | local | per-user config dir | Where the token is stored |

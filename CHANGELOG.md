@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Signing in no longer needs a round trip through the chat. In Claude Desktop and Claude Code the connector opens
+  LinkedIn's sign-in page in your browser and notices when you've approved, so you don't have to tell Claude
+  you're done. Asking for something that needs LinkedIn before signing in starts the sign-in too. If the page
+  can't be opened, for example over SSH, Claude gives you the link as before.
+- `linkedin_read_connections` reads the zip archive LinkedIn emails you, so there's nothing to unzip. In local
+  mode it also finds the newest export in your Downloads, Desktop and Pictures folders by itself, so "who do I
+  know at Acme?" works without a file path.
+- Comments, reactions and Page posting are now switched on with yes/no settings instead of LinkedIn scope names:
+  **Comments and reactions** and **Post as LinkedIn Pages** in the Claude Desktop extension, `--comments` and
+  `--pages` for `npm run setup`, or `LINKEDIN_COMMENTS=true` and `LINKEDIN_PAGES=true`. `LINKEDIN_SCOPES` still
+  works. If you had added scopes in the extension's old **Scopes** setting, tick the matching boxes instead.
+
 - `linkedin_list_posts` (local mode) lists the last 100 posts published from Claude on this computer, with their
   text. LinkedIn doesn't let apps read your posts, so until now a post from an earlier conversation could only
   be edited or deleted with a link you had kept, and fixing a typo meant pasting the whole text back. Now "fix

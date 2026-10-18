@@ -1,17 +1,18 @@
 import { McpServer, type CallToolResult, type ToolAnnotations, type ToolCallback } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { SIGN_IN_HINT } from '../auth/local-auth.js';
 import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
-import { LinkedInApiError, UserInputError } from '../errors.js';
+import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
-import { countCompanies, foldText, MAX_CONNECTIONS_BYTES, parseConnections } from '../linkedin/connections.js';
+import { countCompanies, findConnectionsExport, foldText, MAX_CONNECTIONS_BYTES, MAX_EXPORT_BYTES, parseConnections } from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
 import { escapeLittleText, textWarnings } from '../linkedin/text.js';
 import { organizationUrn, parsePostReference, personUrn, postUrl } from '../linkedin/urn.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { NAME, VERSION } from '../version.js';
-import { errorResult, type Mode } from './errors.js';
+import { describeError, errorResult, type Mode } from './errors.js';
 
 export interface ConnectorOptions {
   mode: Mode;
@@ -58,6 +59,8 @@ const IMAGE_WAIT_MS = 15_000;
  * so waiting longer can make a published post look failed, and Claude may publish it again.
  */
 const PROCESSING_DEADLINE_MS = 45_000;
+/** How long a tool call waits for the user to finish signing in in the browser, within the same 60-second limit. */
+const SIGN_IN_WAIT_MS = 45_000;
 
 const ATTACHMENTS = ['none', 'article', 'image', 'images', 'document'] as const;
 
@@ -86,7 +89,7 @@ function instructions(mode: Mode, engagement: boolean, history: boolean): string
       : []),
     `If linkedin_create_post times out, the post may have been published anyway: ${history ? 'check linkedin_list_posts' : 'ask the user to look on LinkedIn'} before trying again, so it isn't published twice.`,
     mode === 'local'
-      ? 'If a tool says the user is not signed in, call linkedin_login and give them the sign-in link; retry once they confirm they approved access.'
+      ? "When the user isn't signed in, LinkedIn tools open the sign-in page in their browser and wait for it. If a tool says the user just signed in, call it again; if it gives a sign-in link instead, show the link and retry once they say they approved access."
       : 'If a tool says the LinkedIn authorization expired, ask the user to reconnect the connector in Claude.',
   ].join('\n');
 }
@@ -112,6 +115,27 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     { instructions: instructions(mode, engagement, history !== undefined) },
   );
 
+  /** Local mode: starts a browser sign-in and waits a while for the user to finish it. */
+  const signIn = auth.login && (async (): Promise<SignInOutcome> => {
+    const start = await auth.login!();
+    const finished = await Promise.race([
+      start.completion.then(
+        (name) => ({ name }),
+        (error: unknown) => ({ error: error instanceof Error ? error : new Error(String(error)) }),
+      ),
+      sleep(SIGN_IN_WAIT_MS).then(() => undefined),
+    ]);
+    if (finished && !('error' in finished)) {
+      return { signedIn: true, name: finished.name, message: `Signed in to LinkedIn${finished.name ? ` as ${finished.name}` : ''}.` };
+    }
+    const minutes = Math.round(start.expiresInSeconds / 60);
+    const link = start.browserOpened
+      ? `The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for ${minutes} minutes): ${start.authorizationUrl}`
+      : `Open this link to sign in to LinkedIn and approve access (valid for ${minutes} minutes): ${start.authorizationUrl}`;
+    const failure = finished ? `${finished.error.message.replace(/\.?$/, '.')} ` : '';
+    return { signedIn: false, authorizationUrl: start.authorizationUrl, expiresInSeconds: start.expiresInSeconds, message: `${failure}${link}` };
+  });
+
   /** Registers a tool whose handler returns its structured result. Failures become error results; every call is reported to `onToolCall`. */
   const tool = <In extends z.ZodType, Out extends z.ZodType>(
     name: string,
@@ -128,6 +152,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         return { content: [{ type: 'text', text: JSON.stringify(structured, null, 2) }], structuredContent: structured };
       } catch (error) {
         report(error);
+        if (error instanceof NotAuthenticatedError && signIn) return signInFor(name, error, signIn);
         return errorResult(error, mode);
       }
     };
@@ -249,11 +274,14 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       title: 'Read exported LinkedIn connections',
       description:
         "Reads the user's 1st-degree connections from the Connections.csv file in LinkedIn's data export (LinkedIn's API does not offer connections). " +
-        'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and to unzip it. ' +
-        'Pass the file, or its text as csv. Filter with query, company and connection dates; matching ignores case and accents. Results are newest first and paged with limit and offset. ' +
+        'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections). ' +
+        (localFileDirs !== undefined
+          ? 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv; with neither, the newest export in the folders local files may come from is used. '
+          : 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv. ') +
+        'Filter with query, company and connection dates; matching ignores case and accents. Results are newest first and paged with limit and offset. ' +
           'Set companyCounts to also see how many matching connections work at each company, e.g. to find where the network is concentrated.',
       inputSchema: z.object({
-        file: z.string().optional().describe(`Connections.csv as ${mediaSources}.`),
+        file: z.string().optional().describe(`Connections.csv or LinkedIn's export zip archive, as ${mediaSources}.`),
         csv: z.string().optional().describe('The contents of Connections.csv, when the user pasted or attached the text.'),
         query: z
           .string()
@@ -278,6 +306,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           .describe('Also return the companies with the most matching connections, up to this many, with their counts.'),
       }),
       outputSchema: z.object({
+        file: z.string().optional().describe('The export that was found and read, when no file or csv was passed.'),
         total: z.number().describe('Connections in the file.'),
         matched: z.number().describe('Connections matching the filters.'),
         offset: z.number(),
@@ -293,12 +322,22 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async (args) => {
-      if ((args.file === undefined) === (args.csv === undefined)) {
-        throw new UserInputError('Pass either file or csv.');
+      if (args.file !== undefined && args.csv !== undefined) throw new UserInputError('Pass either file or csv, not both.');
+      let found: string | undefined;
+      if (args.file === undefined && args.csv === undefined) {
+        if (localFileDirs === undefined) throw new UserInputError('Pass either file or csv.');
+        found = await findConnectionsExport(localFileDirs);
+        if (found === undefined) {
+          throw new UserInputError(
+            `No LinkedIn data export was found in ${localFileDirs.join(', ') || 'any folder: local files are disabled'}. ` +
+              'Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and save the zip archive LinkedIn emails you in your Downloads folder, or pass its path.',
+          );
+        }
       }
-      const all = parseConnections(
-        args.file !== undefined ? (await readSource(args.file, MAX_CONNECTIONS_BYTES, 'file', sources)).data : args.csv!,
-      );
+      const file = args.file ?? found;
+      // A remote server doesn't hold whole export archives in memory for anyone who asks.
+      const maxBytes = mode === 'local' ? MAX_EXPORT_BYTES : MAX_CONNECTIONS_BYTES;
+      const all = parseConnections(file !== undefined ? (await readSource(file, maxBytes, 'file', sources)).data : args.csv!);
       const query = args.query === undefined ? '' : foldText(args.query);
       const companies = [args.company ?? []].flat().map(foldText).filter(Boolean);
       const dated = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);
@@ -325,6 +364,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       const next = args.offset + page.length;
       const counts = args.companyCounts === undefined ? undefined : countCompanies(matches);
       return {
+        ...(found !== undefined ? { file: found } : {}),
         total: all.length,
         matched: matches.length,
         offset: args.offset,
@@ -720,8 +760,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     () => auth.status(),
   );
 
-  if (auth.login && auth.logout) {
-    const login = auth.login.bind(auth);
+  if (signIn && auth.logout) {
     const logout = auth.logout.bind(auth);
 
     tool(
@@ -729,13 +768,15 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       {
         title: 'Sign in to LinkedIn',
         description:
-          'Starts LinkedIn sign-in and returns a link for the user to open in their browser. Use it when another tool says the user is not signed in, or when they ask to connect or switch LinkedIn accounts. Show the link to the user; once they say they approved access, retry what they asked for.',
+          "Opens LinkedIn's sign-in page in the user's browser and waits a while for them to approve access. Use it when the user asks to connect or switch LinkedIn accounts. If it returns a link because the sign-in isn't finished yet, show the link to the user; once they say they approved access, retry what they asked for.",
         inputSchema: z.object({
           force: z.boolean().default(false).describe('Start a new sign-in even if already signed in, e.g. to switch accounts or when LinkedIn rejected the stored token.'),
         }),
         outputSchema: z.object({
           alreadySignedIn: z.boolean(),
-          authorizationUrl: z.string().optional(),
+          signedIn: z.boolean().describe('Whether the user is signed in now, possibly after finishing the sign-in during this call.'),
+          name: z.string().optional(),
+          authorizationUrl: z.string().optional().describe('The sign-in link, while the sign-in is still waiting for the user.'),
           expiresInSeconds: z.number().optional(),
           message: z.string(),
         }),
@@ -744,15 +785,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       async (args) => {
         if (!args.force) {
           const status = await auth.status();
-          if (status.authenticated && !status.missingScopes) return { alreadySignedIn: true, message: status.message };
+          if (status.authenticated && !status.missingScopes) return { alreadySignedIn: true, signedIn: true, message: status.message };
         }
-        const start = await login();
-        return {
-          alreadySignedIn: false,
-          authorizationUrl: start.authorizationUrl,
-          expiresInSeconds: start.expiresInSeconds,
-          message: `Open this link to sign in to LinkedIn and approve access (valid for ${Math.round(start.expiresInSeconds / 60)} minutes): ${start.authorizationUrl}`,
-        };
+        return { alreadySignedIn: false, ...(await signIn!()) };
       },
     );
 
@@ -778,4 +813,27 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   }
 
   return server;
+}
+
+interface SignInOutcome {
+  signedIn: boolean;
+  name?: string;
+  authorizationUrl?: string;
+  expiresInSeconds?: number;
+  message: string;
+}
+
+/** A tool found the user signed out: sign them in now, so a retry works, rather than only saying how to. */
+async function signInFor(tool: string, error: NotAuthenticatedError, signIn: () => Promise<SignInOutcome>): Promise<CallToolResult> {
+  let text: string;
+  try {
+    const outcome = await signIn();
+    text = outcome.signedIn
+      ? `${outcome.message} Nothing was done yet: call ${tool} again to continue.`
+      : `${error.message.replace(` ${SIGN_IN_HINT}`, '')} ${outcome.message} Once you have approved access, try again.`;
+  } catch (cause) {
+    // E.g. missing app credentials or a busy callback port: that is what the user has to fix first.
+    text = describeError(cause, 'local');
+  }
+  return { isError: true, content: [{ type: 'text', text }] };
 }

@@ -25,6 +25,8 @@ export interface LocalAuthOptions {
   store?: TokenStore;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
+  /** Opens a sign-in page in the user's browser; without it, sign-in only hands out the link. */
+  openBrowser?: (url: string) => void;
 }
 
 /** Tokens for stdio mode: LINKEDIN_ACCESS_TOKEN, or the file written by the browser sign-in. */
@@ -135,9 +137,13 @@ export class LocalAuth implements LinkedInAuth {
 
   async login(): Promise<LoginStart> {
     const flow = await this.startLoopback();
+    const { openBrowser } = this.options;
+    openBrowser?.(flow.authorizationUrl);
     return {
       authorizationUrl: flow.authorizationUrl,
       expiresInSeconds: Math.max(0, Math.round((flow.expiresAt - this.now()) / 1000)),
+      browserOpened: openBrowser !== undefined,
+      completion: flow.completion,
     };
   }
 
@@ -145,6 +151,7 @@ export class LocalAuth implements LinkedInAuth {
   async loginAndWait(onUrl: (url: string) => void): Promise<string | undefined> {
     const flow = await this.startLoopback();
     onUrl(flow.authorizationUrl);
+    this.options.openBrowser?.(flow.authorizationUrl);
     return flow.completion;
   }
 

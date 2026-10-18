@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { LocalAuth } from './auth/local-auth.js';
+import { openBrowser } from './auth/open-browser.js';
 import { PostHistory } from './auth/post-history.js';
 import { loadLocalConfig, loadRemoteConfig } from './config.js';
 import { ConfigError } from './errors.js';
@@ -40,26 +40,10 @@ function usageError(message: string): void {
   process.exitCode = 2;
 }
 
-function openBrowser(url: string): void {
-  const [command, args]: [string, string[]] =
-    process.platform === 'darwin'
-      ? ['open', [url]]
-      : process.platform === 'win32'
-        ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
-        : ['xdg-open', [url]];
-  try {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true });
-    child.on('error', () => {});
-    child.unref();
-  } catch {
-    // The URL is printed as well, so the user can open it manually.
-  }
-}
-
-function localSetup() {
+function localSetup(browser = true) {
   const config = loadLocalConfig();
   const version = new ApiVersion(config.apiVersion, undefined, log);
-  return { config, version, auth: new LocalAuth({ config, version }) };
+  return { config, version, auth: new LocalAuth({ config, version, ...(browser ? { openBrowser } : {}) }) };
 }
 
 function runStdio(): void {
@@ -124,13 +108,12 @@ function runHttp(): void {
 }
 
 async function runLogin(browser: boolean): Promise<void> {
-  const { config, auth } = localSetup();
+  const { config, auth } = localSetup(browser);
   if (config.accessToken) {
     log('Note: LINKEDIN_ACCESS_TOKEN is set and takes precedence over the token stored by this login.');
   }
   const name = await auth.loginAndWait((url) => {
     console.log(`Open this link to sign in to LinkedIn:\n\n  ${url}\n`);
-    if (browser) openBrowser(url);
     console.log(`Waiting for LinkedIn to redirect to ${config.redirectUri} ...`);
   });
   console.log(`Signed in to LinkedIn${name ? ` as ${name}` : ''}. Token saved to ${auth.store.path}`);
