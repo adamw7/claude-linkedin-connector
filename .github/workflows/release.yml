@@ -25,6 +25,7 @@ jobs:
             exit 1
           fi
       - run: npm run check
+        timeout-minutes: 10
       - name: Build the Claude Desktop extension
         run: |
           npm run pack:mcpb

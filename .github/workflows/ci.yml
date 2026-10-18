@@ -11,6 +11,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         node: [24]
@@ -23,6 +24,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:coverage
+        timeout-minutes: 10
       - name: Summarize coverage
         run: |
           node --input-type=module >> "$GITHUB_STEP_SUMMARY" <<'JS'
@@ -47,6 +49,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - run: docker build -t claude-linkedin-connector:ci .
