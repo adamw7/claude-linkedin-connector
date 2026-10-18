@@ -55,7 +55,7 @@ docker compose up -d
 docker compose logs -f connector
 ```
 
-Then add `https://<DOMAIN>/mcp` to Claude. Only Caddy is published on the host; the connector runs read-only,
+Then add `https://<DOMAIN>/mcp` to Claude. Caddy accepts TLS 1.3 only. Only Caddy is published on the host; the connector runs read-only,
 without capabilities, and Caddy waits for it to report healthy. To update, set `CONNECTOR_IMAGE` to the new
 version (or keep `latest`) and run `docker compose pull && docker compose up -d`. To run your own build instead
 of a published image, run `docker build -t claude-linkedin-connector ..` in `deploy/` and set
@@ -64,7 +64,8 @@ of a published image, run `docker build -t claude-linkedin-connector ..` in `dep
 Behind a different proxy, keep its upstream keep-alive below the connector's `KEEP_ALIVE_TIMEOUT` (65 s by
 default), pass the original `Host` header through, and set `X-Forwarded-For`. nginx's defaults (60 s) and AWS
 load balancers' (60 s) are fine; Caddy's (2 minutes) and Google Cloud load balancers' (10 minutes) are not, so
-the Caddyfile lowers Caddy's, and on Google Cloud you'd set `KEEP_ALIVE_TIMEOUT=620`.
+the Caddyfile lowers Caddy's, and on Google Cloud you'd set `KEEP_ALIVE_TIMEOUT=620`. Configure the proxy to accept
+TLS 1.3 only, to match the connector's own outbound connections.
 
 ## Kubernetes
 
@@ -155,7 +156,8 @@ spec:
 
 Point an Ingress for your domain at the Service on port 80. Request bodies can be up to 30 MB (images sent
 inline), so raise the ingress's body limit if it has one, e.g. `nginx.ingress.kubernetes.io/proxy-body-size: 30m`
-for ingress-nginx, whose default is 1 MB.
+for ingress-nginx, whose default is 1 MB. To accept TLS 1.3 only, set `ssl-protocols: "TLSv1.3"` in the
+ingress-nginx controller's ConfigMap; it applies to every Ingress that controller serves.
 
 Memory is mostly taken by media uploads in flight; 512 MiB leaves room for several at once.
 
