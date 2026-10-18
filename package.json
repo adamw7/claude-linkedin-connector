@@ -1,6 +1,6 @@
 {
   "name": "claude-linkedin-connector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP connector that lets Claude read your LinkedIn profile and publish, manage and engage with LinkedIn posts.",
   "keywords": [
     "mcp",

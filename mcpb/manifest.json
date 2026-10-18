@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "claude-linkedin-connector",
   "display_name": "LinkedIn Connector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Unofficial connector that lets Claude read your LinkedIn profile and publish, manage and engage with LinkedIn posts.",
   "long_description": "Publish text, link, image and document (carousel) posts to LinkedIn from Claude, edit or delete them, and read your basic profile. With LinkedIn Community Management API access it can also comment, react and post as LinkedIn Pages you administer: turn those on in the settings.\n\nYou need your own LinkedIn developer app (free) with the \"Sign In with LinkedIn using OpenID Connect\" and \"Share on LinkedIn\" products, and http://localhost:8723/callback added as an authorized redirect URL. Ask Claude to sign you in to LinkedIn after installing.\n\nNot affiliated with or endorsed by LinkedIn.",
   "author": {
