@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-18
+## [0.3.0] - 2026-10-18
 
 ### Added
 
@@ -149,6 +149,6 @@ First release.
   IP, `RATE_LIMIT_MCP` per connected account, `TRUST_PROXY` to see client IPs behind a proxy); and a
   graceful shutdown that lets in-flight requests finish for up to `SHUTDOWN_TIMEOUT` seconds.
 
-[Unreleased]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/adamw7/claude-linkedin-connector/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/adamw7/claude-linkedin-connector/releases/tag/v0.1.0
