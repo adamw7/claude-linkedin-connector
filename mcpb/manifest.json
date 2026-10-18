@@ -5,7 +5,7 @@
   "display_name": "LinkedIn Connector",
   "version": "0.1.0",
   "description": "Unofficial connector that lets Claude read your LinkedIn profile and publish, manage and engage with LinkedIn posts.",
-  "long_description": "Publish text, link, image and document (carousel) posts to LinkedIn from Claude, edit or delete them, and read your basic profile. With LinkedIn Community Management API access it can also comment, react and post as LinkedIn Pages you administer.\n\nYou need your own LinkedIn developer app (free) with the \"Sign In with LinkedIn using OpenID Connect\" and \"Share on LinkedIn\" products, and http://localhost:8723/callback added as an authorized redirect URL. Ask Claude to sign you in to LinkedIn after installing.\n\nNot affiliated with or endorsed by LinkedIn.",
+  "long_description": "Publish text, link, image and document (carousel) posts to LinkedIn from Claude, edit or delete them, and read your basic profile. With LinkedIn Community Management API access it can also comment, react and post as LinkedIn Pages you administer: turn those on in the settings.\n\nYou need your own LinkedIn developer app (free) with the \"Sign In with LinkedIn using OpenID Connect\" and \"Share on LinkedIn\" products, and http://localhost:8723/callback added as an authorized redirect URL. Ask Claude to sign you in to LinkedIn after installing.\n\nNot affiliated with or endorsed by LinkedIn.",
   "author": {
     "name": "Adam Witkowski",
     "url": "https://github.com/adamw7"
@@ -28,14 +28,15 @@
         "LINKEDIN_CLIENT_ID": "${user_config.client_id}",
         "LINKEDIN_CLIENT_SECRET": "${user_config.client_secret}",
         "LINKEDIN_REDIRECT_URI": "${user_config.redirect_uri}",
-        "LINKEDIN_SCOPES": "${user_config.scopes}",
+        "LINKEDIN_COMMENTS": "${user_config.comments}",
+        "LINKEDIN_PAGES": "${user_config.pages}",
         "LINKEDIN_FILE_DIRS": "${user_config.file_dirs}"
       }
     }
   },
   "tools": [
     { "name": "linkedin_get_profile", "description": "Read your basic LinkedIn profile." },
-    { "name": "linkedin_read_connections", "description": "Search your connections in LinkedIn's Connections.csv export." },
+    { "name": "linkedin_read_connections", "description": "Search your connections in LinkedIn's data export." },
     { "name": "linkedin_preview_post", "description": "Check a post and its link preview card before publishing." },
     { "name": "linkedin_create_post", "description": "Publish a post with optional link preview, images or document." },
     { "name": "linkedin_edit_post", "description": "Change the text of one of your posts." },
@@ -44,7 +45,7 @@
     { "name": "linkedin_comment_on_post", "description": "Comment on a post (needs Community Management API access)." },
     { "name": "linkedin_react_to_post", "description": "React to a post (needs Community Management API access)." },
     { "name": "linkedin_auth_status", "description": "Show whether LinkedIn is connected." },
-    { "name": "linkedin_login", "description": "Get a link to sign in to LinkedIn." },
+    { "name": "linkedin_login", "description": "Sign in to LinkedIn in your browser." },
     { "name": "linkedin_logout", "description": "Forget the stored LinkedIn token." }
   ],
   "keywords": ["linkedin", "social media", "posting", "mcp"],
@@ -73,11 +74,18 @@
       "default": "http://localhost:8723/callback",
       "required": false
     },
-    "scopes": {
-      "type": "string",
-      "title": "Scopes",
-      "description": "LinkedIn permissions to request. Add w_member_social_feed and/or w_organization_social if your app has the Community Management API.",
-      "default": "openid profile email w_member_social",
+    "comments": {
+      "type": "boolean",
+      "title": "Comments and reactions",
+      "description": "Let Claude comment on and react to posts. Needs LinkedIn's Community Management API product on your app; sign in again after turning it on.",
+      "default": false,
+      "required": false
+    },
+    "pages": {
+      "type": "boolean",
+      "title": "Post as LinkedIn Pages",
+      "description": "Let Claude post, comment and react as LinkedIn Pages you administer. Needs LinkedIn's Community Management API product on your app; sign in again after turning it on.",
+      "default": false,
       "required": false
     },
     "file_dirs": {

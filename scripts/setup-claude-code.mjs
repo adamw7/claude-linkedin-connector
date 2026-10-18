@@ -12,6 +12,8 @@ import { parseArgs } from 'node:util';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ENTRY = join(ROOT, 'dist', 'index.js');
 const DEFAULT_SCOPES = 'openid profile email w_member_social';
+/** The scopes --comments and --pages add, as LINKEDIN_COMMENTS and LINKEDIN_PAGES do (src/config.ts). */
+const FEATURE_SCOPES = { comments: 'w_member_social_feed', pages: 'w_organization_social' };
 const IS_WINDOWS = process.platform === 'win32';
 /** How to run this script again with options, for messages. */
 const SETUP = process.env.npm_lifecycle_event ? 'npm run setup --' : 'node scripts/setup-claude-code.mjs';
@@ -26,6 +28,8 @@ then signs you in to LinkedIn in your browser.
 Options:
   --client-id <id>         LinkedIn app Client ID (default: $LINKEDIN_CLIENT_ID, else asks)
   --client-secret <secret> LinkedIn app Client Secret (default: $LINKEDIN_CLIENT_SECRET, else asks)
+  --comments               Let Claude comment on and react to posts (needs the Community Management API)
+  --pages                  Let Claude act as LinkedIn Pages you administer (needs the Community Management API)
   --scopes <scopes>        LinkedIn permissions (default: $LINKEDIN_SCOPES, else "${DEFAULT_SCOPES}")
   --scope <user|local>     Claude Code config scope: user = every project (default), local = this clone only
   --name <name>            MCP server name (default: linkedin)
@@ -144,6 +148,8 @@ const NPM_CONFIG_OPTIONS = {
   client_id: '--client-id',
   client_secret: '--client-secret',
   scopes: '--scopes',
+  comments: '--comments',
+  pages: '--pages',
   scope: '--scope',
   name: '--name',
   skip_build: '--skip-build',
@@ -172,6 +178,8 @@ function parseOptions() {
         'client-id': { type: 'string' },
         'client-secret': { type: 'string' },
         scopes: { type: 'string' },
+        comments: { type: 'boolean', default: false },
+        pages: { type: 'boolean', default: false },
         scope: { type: 'string', default: 'user' },
         name: { type: 'string', default: 'linkedin' },
         yes: { type: 'boolean', short: 'y', default: false },
@@ -216,8 +224,11 @@ async function main() {
   console.log('LinkedIn app credentials are on the Auth tab of https://www.linkedin.com/developers/apps');
   const clientId = await value('client-id', 'LINKEDIN_CLIENT_ID', 'LinkedIn Client ID: ', false);
   const clientSecret = await value('client-secret', 'LINKEDIN_CLIENT_SECRET', 'LinkedIn Client Secret: ', true);
-  const scopes = options.scopes ?? process.env.LINKEDIN_SCOPES ?? DEFAULT_SCOPES;
-  const env = { LINKEDIN_CLIENT_ID: clientId, LINKEDIN_CLIENT_SECRET: clientSecret, LINKEDIN_SCOPES: scopes };
+  const scopes = [(options.scopes ?? process.env.LINKEDIN_SCOPES ?? DEFAULT_SCOPES).trim()];
+  for (const [feature, scope] of Object.entries(FEATURE_SCOPES)) {
+    if (options[feature] && !scopes[0].split(/[\s,]+/).includes(scope)) scopes.push(scope);
+  }
+  const env = { LINKEDIN_CLIENT_ID: clientId, LINKEDIN_CLIENT_SECRET: clientSecret, LINKEDIN_SCOPES: scopes.join(' ') };
 
   if (options['skip-build']) {
     if (!existsSync(ENTRY)) throw new SetupError(`${ENTRY} doesn't exist; run without --skip-build.`);

@@ -1,4 +1,7 @@
+import { readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { UserInputError } from '../errors.js';
+import { extractZipEntry, isZip } from './zip.js';
 
 /** One row of the Connections.csv file in LinkedIn's "Get a copy of your data" export. */
 export interface Connection {
@@ -14,6 +17,12 @@ export interface Connection {
 }
 
 export const MAX_CONNECTIONS_BYTES = 20 * 1024 * 1024;
+/** The largest export archive read whole, to take Connections.csv out of it; the complete export holds much more. */
+export const MAX_EXPORT_BYTES = 100 * 1024 * 1024;
+
+const isConnectionsCsv = (path: string) => /(^|\/)connections\.csv$/i.test(path);
+/** LinkedIn names its archives Basic_LinkedInDataExport_MM-DD-YYYY.zip and Complete_LinkedInDataExport_….zip. */
+const EXPORT_NAME = /linkedindataexport/i;
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
@@ -84,8 +93,16 @@ function isoDate(year: number, month: number, day: number): string | undefined {
  * so the header is located by its column names rather than assumed to be first.
  */
 export function parseConnections(data: Buffer | string): Connection[] {
-  if (Buffer.isBuffer(data) && data.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
-    throw new UserInputError('This is the zip archive LinkedIn sent. Extract Connections.csv from it and pass that file instead.');
+  if (Buffer.isBuffer(data) && isZip(data)) {
+    const csv = extractZipEntry(data, isConnectionsCsv, MAX_CONNECTIONS_BYTES);
+    if (!csv) {
+      throw new UserInputError(
+        'This zip archive has no Connections.csv. Request your data again on LinkedIn under Settings → Data privacy → Get a copy of your data, and include Connections.',
+      );
+    }
+    data = csv;
+  } else if (data.length > MAX_CONNECTIONS_BYTES) {
+    throw new UserInputError(`The file is larger than ${MAX_CONNECTIONS_BYTES / 1024 / 1024} MB.`);
   }
   const text = (Buffer.isBuffer(data) ? data.toString('utf8') : data).replace(/^﻿/, '');
   const rows = parseCsv(text);
@@ -174,4 +191,29 @@ export function countCompanies(connections: Connection[]): CompanyCount[] {
       count,
     }))
     .sort((a, b) => b.count - a.count || a.company.localeCompare(b.company));
+}
+
+/**
+ * Finds the newest LinkedIn export in these folders: a Connections.csv or export archive directly in one, or the
+ * Connections.csv in an extracted export folder. Returns its path, or undefined when there is none.
+ */
+export async function findConnectionsExport(dirs: string[]): Promise<string | undefined> {
+  const candidates: string[] = [];
+  for (const dir of dirs) {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isFile() && (isConnectionsCsv(entry.name) || (EXPORT_NAME.test(entry.name) && /\.zip$/i.test(entry.name)))) {
+        candidates.push(path);
+      } else if (entry.isDirectory() && EXPORT_NAME.test(entry.name)) {
+        candidates.push(join(path, 'Connections.csv'));
+      }
+    }
+  }
+  let newest: { path: string; modified: number } | undefined;
+  for (const path of candidates) {
+    const info = await stat(path).catch(() => undefined);
+    if (info?.isFile() && (!newest || info.mtimeMs > newest.modified)) newest = { path, modified: info.mtimeMs };
+  }
+  return newest?.path;
 }

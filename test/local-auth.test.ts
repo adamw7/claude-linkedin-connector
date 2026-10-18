@@ -137,6 +137,23 @@ describe('LocalAuth', () => {
     expect(await signIn.store.read()).toMatchObject({ accessToken: 'li-token', member: { id: 'abc123', email: 'ada@example.com' } });
   });
 
+  it('opens the sign-in page in the browser and settles when the sign-in finishes', async () => {
+    const port = await freePort();
+    const opened: string[] = [];
+    const signIn = new LocalAuth({
+      config: { ...config, redirectUri: `http://127.0.0.1:${port}/callback` },
+      version: new ApiVersion('202609'),
+      fetch: linkedin.fetch,
+      openBrowser: (url) => opened.push(url),
+    });
+    const start = await signIn.login();
+    expect(start).toMatchObject({ browserOpened: true });
+    expect(opened).toEqual([start.authorizationUrl]);
+    const state = new URL(start.authorizationUrl).searchParams.get('state')!;
+    await fetch(`http://127.0.0.1:${port}/callback?code=li-code&state=${state}`);
+    expect(await start.completion).toBe('Ada Lovelace');
+  });
+
   it('tells Claude why the last browser sign-in failed, until the next one starts', async () => {
     const port = await freePort();
     const signIn = auth({ clientSecret: 'mistyped-secret', redirectUri: `http://127.0.0.1:${port}/callback` });
@@ -161,6 +178,7 @@ describe('LocalAuth', () => {
     const start = await signIn.login();
     const state = new URL(start.authorizationUrl).searchParams.get('state')!;
     expect(start.expiresInSeconds).toBeGreaterThan(500);
+    expect(start.browserOpened).toBe(false);
     const cancelled = expect(signIn.loginAndWait(() => {})).rejects.toThrow(/not completed: The user cancelled/);
     const response = await fetch(`http://127.0.0.1:${port}/callback?error=user_cancelled_authorize&error_description=The+user+cancelled&state=${state}`);
     expect(response.status).toBe(400);

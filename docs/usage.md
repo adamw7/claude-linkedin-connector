@@ -21,11 +21,13 @@ Ask Claude:
 
 > Connect my LinkedIn account
 
-Claude replies with a sign-in link. Open it, approve access on LinkedIn, and the browser lands on this page:
+LinkedIn's sign-in page opens in your browser (if it doesn't, Claude gives you the link). Approve access, and the
+browser lands on this page:
 
 ![Browser page reading "Connected to LinkedIn as Ada Lovelace. You can close this tab and return to Claude."](images/signed-in.png)
 
-Tell Claude you're done. "Am I connected to LinkedIn?" shows who you're signed in as and when the sign-in
+Claude notices by itself and carries on; there's no need to tell it you're done. Asking for something that needs
+LinkedIn before signing in starts the same sign-in. "Am I connected to LinkedIn?" shows who you're signed in as and when the sign-in
 expires (after 60 days).
 
 With a remote server, the connector instead shows its own consent screen when you click **Connect** in
@@ -35,8 +37,8 @@ Claude's connector settings, listing what Claude will be able to do, before send
 
 ## 3. Ask Claude
 
-Talk to Claude normally; it picks the right tool. For example, with the `Connections.csv` from LinkedIn's
-data export (**Settings → Data privacy → Get a copy of your data → Connections**):
+Talk to Claude normally; it picks the right tool. For example, with LinkedIn's data export (**Settings → Data
+privacy → Get a copy of your data → Connections**) saved in your Downloads folder, no need to unzip it:
 
 ![Claude Code calling linkedin_read_connections for two companies and listing the five matching connections](images/claude-code-connections.png)
 

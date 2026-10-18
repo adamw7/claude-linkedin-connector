@@ -6,12 +6,13 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PostHistory } from '../src/auth/post-history.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from '../src/auth/types.js';
-import { NotAuthenticatedError } from '../src/errors.js';
+import { ConfigError, NotAuthenticatedError } from '../src/errors.js';
 import { ApiVersion } from '../src/linkedin/versions.js';
 import { createConnectorServer } from '../src/mcp/server.js';
 import { CONNECTIONS_CSV } from './helpers/connections.js';
 import { API_BASE, FakeLinkedIn } from './helpers/fake-linkedin.js';
 import { PDF, PNG, startServer, type TestServer } from './helpers/http.js';
+import { zipArchive } from './helpers/zip.js';
 
 const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
 
@@ -36,9 +37,18 @@ class StubAuth implements LinkedInAuth {
 }
 
 class StubLocalAuth extends StubAuth {
+  /** How the next browser sign-in ends: the member's name, a failure, or never (the user hasn't finished). */
+  completion: Promise<string | undefined> = new Promise(() => {});
+  browserOpened = true;
+
   async login(): Promise<LoginStart> {
     this.logins += 1;
-    return { authorizationUrl: 'https://www.linkedin.com/oauth/v2/authorization?state=x', expiresInSeconds: 600 };
+    return {
+      authorizationUrl: 'https://www.linkedin.com/oauth/v2/authorization?state=x',
+      expiresInSeconds: 600,
+      browserOpened: this.browserOpened,
+      completion: this.completion,
+    };
   }
   async logout(): Promise<boolean> {
     const was = this.signedIn;
@@ -63,7 +73,7 @@ class FakeClock {
 }
 
 async function harness(
-  options: { scopes?: string[]; mode?: 'local' | 'remote'; auth?: StubAuth; history?: PostHistory; clock?: FakeClock } = {},
+  options: { scopes?: string[]; mode?: 'local' | 'remote'; auth?: StubAuth; history?: PostHistory; clock?: FakeClock; localFileDirs?: string[] } = {},
 ): Promise<Harness> {
   const linkedin = new FakeLinkedIn();
   const mode = options.mode ?? 'local';
@@ -76,7 +86,7 @@ async function harness(
     apiBaseUrl: API_BASE,
     fetch: linkedin.fetch,
     allowPrivateNetwork: true,
-    localFileDirs: [files],
+    localFileDirs: options.localFileDirs ?? [files],
     history: options.history,
     sleep: options.clock?.sleep ?? (async () => {}),
     now: options.clock?.now,
@@ -279,9 +289,31 @@ describe('linkedin_read_connections', () => {
     expect(local.text).toMatch(/Local files cannot be read/);
   });
 
-  it('needs exactly one of file and csv, and rejects other files', async () => {
+  it('reads the zip archive LinkedIn sends, and finds the newest export when given no file', async () => {
+    const downloads = await mkdtemp(join(tmpdir(), 'linkedin-downloads-'));
+    const archive = join(downloads, 'Basic_LinkedInDataExport_10-18-2026.zip');
+    await writeFile(archive, zipArchive({ 'Profile.csv': 'First Name,Last Name', 'Connections.csv': CONNECTIONS_CSV }));
+    const h = await harness({ localFileDirs: [downloads] });
+    expect((await call(h, 'linkedin_read_connections', { file: archive, limit: 0 })).data).toEqual({ total: 3, matched: 3, offset: 0, connections: [] });
+    expect((await call(h, 'linkedin_read_connections', { limit: 0 })).data).toEqual({ file: archive, total: 3, matched: 3, offset: 0, connections: [] });
+  });
+
+  it('says how to get an export when none is found', async () => {
+    const empty = await mkdtemp(join(tmpdir(), 'linkedin-downloads-'));
+    expect(await call(await harness({ localFileDirs: [empty] }), 'linkedin_read_connections')).toMatchObject({
+      isError: true,
+      text:
+        `No LinkedIn data export was found in ${empty}. Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) ` +
+        'and save the zip archive LinkedIn emails you in your Downloads folder, or pass its path.',
+    });
+  });
+
+  it('needs file or csv in remote mode, not both, and rejects other files', async () => {
+    expect((await call(await harness({ mode: 'remote' }), 'linkedin_read_connections')).text).toBe('Pass either file or csv.');
     const h = await harness();
-    expect((await call(h, 'linkedin_read_connections')).text).toMatch(/either file or csv/);
+    expect((await call(h, 'linkedin_read_connections', { file: join(files, 'Connections.csv'), csv: CONNECTIONS_CSV })).text).toBe(
+      'Pass either file or csv, not both.',
+    );
     expect((await call(h, 'linkedin_read_connections', { file: join(files, 'photo.png') })).text).toMatch(/not a LinkedIn Connections\.csv/);
   });
 });
@@ -878,10 +910,47 @@ describe('engagement tools', () => {
 });
 
 describe('errors', () => {
-  it('tells the user how to sign in', async () => {
+  it('opens the sign-in page when the user is not signed in, and gives the link while it waits', async () => {
     const auth = new StubLocalAuth();
     auth.signedIn = false;
     const h = await harness({ auth });
+    expect(await call(h, 'linkedin_create_post', { text: 'x' })).toEqual({
+      isError: true,
+      data: undefined,
+      text:
+        "You are not signed in to LinkedIn. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): " +
+        'https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+    });
+    expect(auth.logins).toBe(1);
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('asks Claude to call the tool again once the user finished signing in', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    auth.completion = Promise.resolve('Ada Lovelace');
+    const h = await harness({ auth });
+    expect(await call(h, 'linkedin_create_post', { text: 'x' })).toMatchObject({
+      isError: true,
+      text: 'Signed in to LinkedIn as Ada Lovelace. Nothing was done yet: call linkedin_create_post again to continue.',
+    });
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('reports why the sign-in could not start', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    auth.login = async () => {
+      throw new ConfigError('LinkedIn sign-in needs your LinkedIn app credentials.');
+    };
+    const h = await harness({ auth });
+    expect(await call(h, 'linkedin_get_profile')).toMatchObject({ isError: true, text: 'LinkedIn sign-in needs your LinkedIn app credentials.' });
+  });
+
+  it('only says how to reconnect in remote mode', async () => {
+    const auth = new StubAuth();
+    auth.signedIn = false;
+    const h = await harness({ auth, mode: 'remote' });
     expect(await call(h, 'linkedin_create_post', { text: 'x' })).toMatchObject({ isError: true, text: 'You are not signed in to LinkedIn.' });
   });
 
@@ -917,8 +986,49 @@ describe('authentication tools', () => {
     expect((await call(h, 'linkedin_login')).data).toMatchObject({ alreadySignedIn: true });
     expect(h.auth.logins).toBe(0);
     const forced = await call(h, 'linkedin_login', { force: true });
-    expect(forced.data).toMatchObject({ alreadySignedIn: false, authorizationUrl: expect.stringContaining('linkedin.com'), expiresInSeconds: 600 });
-    expect(forced.data!.message).toContain('valid for 10 minutes');
+    expect(forced.data).toEqual({
+      alreadySignedIn: false,
+      signedIn: false,
+      authorizationUrl: 'https://www.linkedin.com/oauth/v2/authorization?state=x',
+      expiresInSeconds: 600,
+      message:
+        "The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x",
+    });
+  });
+
+  it('waits for the sign-in to finish', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    auth.completion = Promise.resolve('Ada Lovelace');
+    const h = await harness({ auth });
+    expect((await call(h, 'linkedin_login')).data).toEqual({
+      alreadySignedIn: false,
+      signedIn: true,
+      name: 'Ada Lovelace',
+      message: 'Signed in to LinkedIn as Ada Lovelace.',
+    });
+  });
+
+  it('gives the link to open when no browser could be opened', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    auth.browserOpened = false;
+    const h = await harness({ auth });
+    expect((await call(h, 'linkedin_login')).data!.message).toBe(
+      'Open this link to sign in to LinkedIn and approve access (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x',
+    );
+  });
+
+  it('says why the sign-in failed', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    auth.completion = Promise.reject(new Error('LinkedIn sign-in was not completed: The user cancelled'));
+    const h = await harness({ auth });
+    expect((await call(h, 'linkedin_login')).data).toMatchObject({
+      signedIn: false,
+      message:
+        "LinkedIn sign-in was not completed: The user cancelled. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x",
+    });
   });
 
   it('signs in again when the stored sign-in predates scopes that are now configured', async () => {

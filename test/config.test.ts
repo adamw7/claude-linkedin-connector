@@ -33,6 +33,16 @@ describe('configuration', () => {
     expect(() => loadLocalConfig({ LINKEDIN_API_VERSION: '2026-08' })).toThrow(ConfigError);
   });
 
+  it('adds the scopes for comments and Page posting when those switches are on', () => {
+    expect(loadLocalConfig({ LINKEDIN_COMMENTS: 'true', LINKEDIN_PAGES: 'false' }).scopes).toEqual([...DEFAULT_SCOPES, 'w_member_social_feed']);
+    expect(loadLocalConfig({ LINKEDIN_COMMENTS: 'Yes', LINKEDIN_PAGES: '1' }).scopes).toEqual([...DEFAULT_SCOPES, 'w_member_social_feed', 'w_organization_social']);
+    expect(loadLocalConfig({ LINKEDIN_SCOPES: 'openid w_member_social_feed', LINKEDIN_COMMENTS: 'on', LINKEDIN_PAGES: '' }).scopes).toEqual([
+      'openid',
+      'w_member_social_feed',
+    ]);
+    expect(() => loadLocalConfig({ LINKEDIN_PAGES: 'maybe' })).toThrow(new ConfigError('LINKEDIN_PAGES must be true or false, got "maybe".'));
+  });
+
   it('limits local files to the usual folders, plus a working directory that is not above home', () => {
     const usual = ['/home/ada/Downloads', '/home/ada/Desktop', '/home/ada/Pictures'];
     expect(defaultFileDirs('/home/ada/project', '/home/ada')).toEqual([...usual, '/home/ada/project']);
