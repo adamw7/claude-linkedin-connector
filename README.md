@@ -95,7 +95,13 @@ npm ci          # also builds dist/
 ```
 
 Alternatively, `npm install -g claude-linkedin-connector` installs a `claude-linkedin-connector` command from
-[npm](https://www.npmjs.com/package/claude-linkedin-connector).
+[npm](https://www.npmjs.com/package/claude-linkedin-connector), or `npx -y claude-linkedin-connector` runs it
+without installing. The installed copy is in `$(npm root -g)/claude-linkedin-connector`, so use
+`$(npm root -g)/claude-linkedin-connector/dist/index.js` wherever this guide gives the path of `dist/index.js` in
+a clone. Each version is built from its release tag by GitHub Actions, with
+[provenance](https://docs.npmjs.com/generating-provenance-statements) you can check with
+`npm audit signatures`. Ignore the `0.0.0-stage` version on npm: it is an empty placeholder left over from
+publishing the first release.
 
 ### Claude Desktop: install as an extension
 
@@ -150,6 +156,8 @@ claude mcp add linkedin --scope user \
   -e LINKEDIN_CLIENT_SECRET=your-client-secret \
   -- node /absolute/path/to/claude-linkedin-connector/dist/index.js
 ```
+
+With the npm package installed, end the command with `-- claude-linkedin-connector` instead.
 
 ### Sign in
 
@@ -355,6 +363,14 @@ a GitHub release with it attached and the changelog entry as notes. It then smok
 `ghcr.io/adamw7/claude-linkedin-connector` as `<version>`, `<major.minor>` and `latest`. After the first push,
 make the package public in its settings on GitHub (packages start out private), so `docker pull` works without
 signing in.
+
+Last, it publishes the package to npm with provenance, using the `NPM_TOKEN` repository secret (an npm
+automation or granular access token allowed to publish `claude-linkedin-connector`). Pre-release versions such
+as `1.2.0-rc.1` get the `next` dist-tag, so `npm install` keeps getting the latest release. The job then installs
+the version it published from the registry, checks that `--version` and `--help` work and runs
+`npm audit signatures`. A tag can only be published once: to fix a broken npm release, release a new version
+(and `npm deprecate claude-linkedin-connector@<version> "<reason>"` the broken one) rather than re-running the
+job.
 
 Dependabot proposes dependency, GitHub Actions and base image updates weekly. Report vulnerabilities as described
 in [`SECURITY.md`](SECURITY.md).
