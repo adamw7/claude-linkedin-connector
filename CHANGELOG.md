@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Stack traces from the npm package can be mapped back to the TypeScript source: its source maps now carry the
+  source they point to, which the package doesn't include.
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

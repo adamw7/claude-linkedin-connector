@@ -15,4 +15,9 @@ describe('release metadata', () => {
     const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
     expect(changelog).toMatch(new RegExp(`^## \\[${VERSION.replaceAll('.', '\\.')}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm'));
   });
+
+  it('publishes source maps that carry their sources, since src/ is not in the npm package', () => {
+    expect(json('package.json').files).not.toContain('src');
+    expect(json('tsconfig.build.json').compilerOptions).toMatchObject({ sourceMap: true, inlineSources: true });
+  });
 });
