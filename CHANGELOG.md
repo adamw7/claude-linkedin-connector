@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The connector is published to npm: `npm install -g claude-linkedin-connector` installs the
+  `claude-linkedin-connector` command without cloning the repository.
 - Signing in no longer needs a round trip through the chat. In Claude Desktop and Claude Code the connector opens
   LinkedIn's sign-in page in your browser and notices when you've approved, so you don't have to tell Claude
   you're done. Asking for something that needs LinkedIn before signing in starts the sign-in too. If the page
