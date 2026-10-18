@@ -47,6 +47,7 @@ describe('textWarnings', () => {
     expect(textWarnings('Read [the post](https://example.com/post).')).toEqual([
       'The text has a Markdown link ([text](url)), which LinkedIn shows literally. Write the URL out instead: LinkedIn makes it clickable.',
     ]);
+    expect(textWarnings('Read [the post](http://example.com/post).')).toHaveLength(1);
     expect(textWarnings('Intro\n## Results\nGood')).toEqual(['A line starts with "# ", a Markdown heading, which LinkedIn shows literally.']);
   });
 

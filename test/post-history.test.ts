@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -84,6 +84,17 @@ describe('PostHistory', () => {
     await history.edited('urn:li:share:9', 'New text');
     await history.deleted('urn:li:share:9');
     expect(existsSync(path)).toBe(false);
+  });
+
+  it('does not rewrite the file for a post it does not know', async () => {
+    const history = new PostHistory(path);
+    await history.add(post(1));
+    // Compact, unlike what PostHistory writes, so any rewrite shows.
+    const compact = JSON.stringify({ version: 1, posts: await history.list() });
+    await writeFile(path, compact);
+    await history.edited('urn:li:share:9', 'New text');
+    await history.deleted('urn:li:share:9');
+    expect(await readFile(path, 'utf8')).toBe(compact);
   });
 
   it('ignores corrupt and unknown files and entries', async () => {

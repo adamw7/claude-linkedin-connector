@@ -100,6 +100,9 @@ describe('loadMedia', () => {
     ['logo.svg', Buffer.from('<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"/>'), 'image', 'is an SVG image, not a JPEG, PNG or GIF image. Convert it to PNG first.'],
     ['clip.mp4', Buffer.from('\0\0\0\x20ftypisom\0\0\x02\0'), 'image', 'is a video, not a JPEG, PNG or GIF image. Video posts are not supported yet.'],
     ['clip.mov', Buffer.from('\0\0\0\x14ftypqt  \0\0\0\0'), 'document', 'is a video, not a PDF, DOC, DOCX, PPT or PPTX document. Video posts are not supported yet.'],
+    ['camera.mp4', Buffer.from('\0\0\0\x18ftypiso2\0\0\0\0'), 'image', 'is a video, not a JPEG'],
+    ['phone.mp4', Buffer.from('\0\0\0\x18ftypmp42\0\0\0\0'), 'image', 'is a video, not a JPEG'],
+    ['old-phone.3gp', Buffer.from('\0\0\0\x18ftyp3gp4\0\0\0\0'), 'image', 'is a video, not a JPEG'],
     ['page.html', Buffer.from('\n<!DOCTYPE html><html><body><img src="x.png"></body></html>'), 'image', 'is a web page, not a JPEG, PNG or GIF image. Pass a link to the file itself: for a picture on a web page, right-click it and copy the image address. Share links from cloud drives usually lead to a page.'],
     ['deck.pdf', PDF, 'image', `is a PDF, not a JPEG, PNG or GIF image. Attach it as the post's document instead.`],
     ['pixel.png', PNG, 'document', 'is a PNG image, not a PDF, DOC, DOCX, PPT or PPTX document. Attach it under images instead.'],
@@ -143,6 +146,7 @@ describe('loadMedia', () => {
     ['a zip with a mimetype that is not OpenDocument', Buffer.from(`PK\x03\x04${'.'.repeat(26)}mimetypeapplication/epub+zip`), 'a zip archive'],
     ['a zip with an xl/ folder but no Office manifest', zip('xl/notes.txt'), 'a zip archive'],
     ['an OpenDocument manifest that is not first in the zip', zip('mimetypeapplication/vnd.oasis.opendocument.text'), 'a zip archive'],
+    ['an Office manifest without Word, PowerPoint or Excel parts', zip('[Content_Types].xml', 'docProps/app.xml'), 'a zip archive'],
   ] as const)('recognizes %s', async (_name, data, what) => {
     await expect(loadMedia(`data:;base64,${data.toString('base64')}`, 'image', {})).rejects.toThrow(`is ${what}, not a JPEG`);
   });
@@ -154,9 +158,17 @@ describe('loadMedia', () => {
     ['"BM" whose size does not match', Buffer.from('BM\x07\0\0\0')],
     ['"RIFF" that is not WebP', Buffer.from('RIFF\x24\0\0\0WAVEfmt ')],
     ['"<svg" inside a word', Buffer.from('this is <svgish> text')],
+    ['"WEBP" without "RIFF"', Buffer.from('ABCD\x24\0\0\0WEBPVP8 ')],
+    ['a BMP-sized header without "BM"', Buffer.from('XY\x06\0\0\0')],
   ] as const)('does not guess a format for %s', async (_name, data) => {
     const source = `data:;base64,${data.toString('base64')}`;
     await expect(loadMedia(source, 'image', {})).rejects.toThrow(new UserInputError(`"${source}" is not a JPEG, PNG or GIF image.`));
+  });
+
+  it('shows a source of up to 80 characters in full', async () => {
+    const source = `data:text/plain;base64,${'QUJD'.repeat(14)}x`;
+    expect(source).toHaveLength(80);
+    await expect(loadMedia(source, 'image', {})).rejects.toThrow(`"${source}" is not a JPEG`);
   });
 
   it('says only what was expected for files it does not recognize', async () => {

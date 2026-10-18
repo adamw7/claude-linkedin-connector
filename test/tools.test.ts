@@ -101,7 +101,8 @@ beforeAll(async () => {
       pageFetches += 1;
       res.setHeader('Content-Type', 'text/html');
       res.end('<html><head><meta property="og:title" content="Counted"><meta property="og:image" content="/card.png"></head></html>');
-    } else if (req.url === '/bare') {
+    } else if (req.url?.startsWith('/docs/')) res.end(PDF);
+    else if (req.url === '/bare') {
       res.setHeader('Content-Type', 'text/html');
       res.end('<html><body>No metadata here</body></html>');
     } else if (req.url === '/webp-card') {
@@ -144,6 +145,33 @@ describe('tool list', () => {
     expect(tools.map((t) => t.name)).toContain('linkedin_comment_on_post');
     expect(tools.map((t) => t.name)).toContain('linkedin_react_to_post');
     expect(Object.keys(tools.find((t) => t.name === 'linkedin_create_post')!.inputSchema.properties ?? {})).toContain('organization');
+  });
+
+  it('tells clients what each tool does to the account, so read-only ones can run without asking', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_member_social_feed'], history: new PostHistory(join(files, 'unused-posts.json')) });
+    const tools = (await h.client.listTools()).tools;
+    const contract = Object.fromEntries(tools.map((t) => [t.name, [t.title, t.annotations]]));
+    const reads = { readOnlyHint: true, openWorldHint: false };
+    const publishes = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+    const changes = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
+    expect(contract).toEqual({
+      linkedin_get_profile: ['Get LinkedIn profile', reads],
+      linkedin_read_connections: ['Read exported LinkedIn connections', reads],
+      linkedin_preview_post: ['Preview a LinkedIn post', { readOnlyHint: true, openWorldHint: true }],
+      linkedin_create_post: ['Publish a LinkedIn post', publishes],
+      linkedin_edit_post: ['Edit a LinkedIn post', changes],
+      linkedin_delete_post: ['Delete a LinkedIn post', changes],
+      linkedin_list_posts: ['List posts published from Claude', reads],
+      linkedin_comment_on_post: ['Comment on a LinkedIn post', publishes],
+      linkedin_react_to_post: ['React to a LinkedIn post', { ...publishes, idempotentHint: true }],
+      linkedin_auth_status: ['LinkedIn sign-in status', reads],
+      linkedin_login: ['Sign in to LinkedIn', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
+      linkedin_logout: ['Sign out of LinkedIn', { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }],
+    });
+    const outputs = (name: string) => Object.keys(tools.find((t) => t.name === name)!.outputSchema?.properties ?? {});
+    expect(outputs('linkedin_preview_post')).toEqual(['characters', 'visibility', 'attachment', 'images', 'document', 'linkPreview', 'warnings']);
+    expect(outputs('linkedin_list_posts')).toEqual(['posts', 'matched']);
+    expect(outputs('linkedin_delete_post')).toEqual(['deleted', 'postUrn']);
   });
 
   it('has no login/logout tools in remote mode', async () => {
@@ -535,6 +563,19 @@ describe('linkedin_preview_post', () => {
     expect(titled.data).toMatchObject({ document: { title: 'Q3 results' } });
   });
 
+  it.each([
+    ['notes.doc', 'notes'],
+    ['deck.ppt', 'deck'],
+    ['Deck.PPTX', 'Deck'],
+    ['report.docx', 'report'],
+    ['q3.pdf.final.pdf', 'q3.pdf.final'],
+    ['slides.key', 'slides.key'],
+  ])('titles a document named %s "%s"', async (name, title) => {
+    const h = await harness();
+    const { data } = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `${web.url}/docs/${name}` } });
+    expect(data!.document).toEqual({ title });
+  });
+
   it('is what Claude is told to check posts with', async () => {
     const h = await harness();
     expect(h.client.getInstructions()).toContain('Before asking for approval of a post, check it with linkedin_preview_post');
@@ -707,6 +748,32 @@ describe('linkedin_edit_post', () => {
   });
 });
 
+describe('editing and deleting errors', () => {
+  const failWith = (h: Harness, status: number) =>
+    h.linkedin.override((r) => (r.url.pathname.startsWith('/rest/posts/') ? Response.json({ message: 'Invalid post id' }, { status }) : undefined));
+
+  it("reports LinkedIn's answer as is for a post's own URN", async () => {
+    const h = await harness();
+    failWith(h, 400);
+    expect((await call(h, 'linkedin_edit_post', { post: 'urn:li:share:42', text: 'New' })).text).toBe(
+      'LinkedIn rejected the request (HTTP 400): Invalid post id.',
+    );
+  });
+
+  it('explains activity URNs for editing too, but not when LinkedIn itself failed', async () => {
+    const h = await harness();
+    failWith(h, 400);
+    expect((await call(h, 'linkedin_edit_post', { post: 'urn:li:activity:7', text: 'New' })).text).toMatch(
+      /^LinkedIn could not edit urn:li:activity:7\. This needs the post's share or ugcPost URN .* LinkedIn said: Invalid post id$/,
+    );
+    const failing = await harness();
+    failWith(failing, 500);
+    expect((await call(failing, 'linkedin_delete_post', { post: 'urn:li:activity:7' })).text).toBe(
+      'LinkedIn had an internal problem (HTTP 500): Invalid post id. Try again in a moment.',
+    );
+  });
+});
+
 describe('linkedin_delete_post', () => {
   it('deletes by URL', async () => {
     const h = await harness();
@@ -720,6 +787,7 @@ describe('linkedin_delete_post', () => {
     h.linkedin.override((r) => (r.method === 'DELETE' ? new Response('{"message":"Invalid post id"}', { status: 400 }) : undefined));
     const result = await call(h, 'linkedin_delete_post', { post: 'urn:li:activity:7' });
     expect(result).toMatchObject({ isError: true, text: expect.stringContaining('not the activity URN that links copied from linkedin.com often contain') });
+    expect(result.text).toMatch(/^LinkedIn could not delete urn:li:activity:7\. /);
     expect(result.text).toContain('"Embed this post"');
   });
 });
