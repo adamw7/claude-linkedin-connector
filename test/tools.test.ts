@@ -53,8 +53,17 @@ interface Harness {
   auth: StubAuth;
 }
 
+/** Time that passes only when the server sleeps or a test moves it on. */
+class FakeClock {
+  time = 0;
+  readonly now = () => this.time;
+  readonly sleep = async (ms: number) => {
+    this.time += ms;
+  };
+}
+
 async function harness(
-  options: { scopes?: string[]; mode?: 'local' | 'remote'; auth?: StubAuth; history?: PostHistory } = {},
+  options: { scopes?: string[]; mode?: 'local' | 'remote'; auth?: StubAuth; history?: PostHistory; clock?: FakeClock } = {},
 ): Promise<Harness> {
   const linkedin = new FakeLinkedIn();
   const mode = options.mode ?? 'local';
@@ -69,7 +78,8 @@ async function harness(
     allowPrivateNetwork: true,
     localFileDirs: [files],
     history: options.history,
-    sleep: async () => {},
+    sleep: options.clock?.sleep ?? (async () => {}),
+    now: options.clock?.now,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -450,6 +460,45 @@ describe('linkedin_create_post', () => {
     expect(failed).toMatchObject({ isError: true, text: expect.stringContaining('could not process') });
   });
 
+  /** Keeps every upload processing; records when LinkedIn was asked about each and when the post was created. */
+  const stillProcessing = (h: Harness, clock: FakeClock, uploadMs = 0) => {
+    const polls: number[] = [];
+    let postedAt: number | undefined;
+    h.linkedin.override((request) => {
+      if (request.method === 'PUT') clock.time += uploadMs;
+      if (request.method === 'POST' && request.url.pathname === '/rest/posts') postedAt = clock.time;
+      if (request.method !== 'GET' || !/^\/rest\/(images|documents)\//.test(request.url.pathname)) return undefined;
+      polls.push(clock.time);
+      return new Response(JSON.stringify({ status: 'PROCESSING' }), { status: 200 });
+    });
+    return { polls, postedAt: () => postedAt };
+  };
+
+  it.each([
+    ['a document', 'document', () => ({ document: { source: `${web.url}/talk.pdf` } })],
+    ['an image', 'image', () => ({ images: [{ source: join(files, 'photo.png') }] })],
+  ])('stops waiting for %s to process 45 seconds after the post was asked for, upload included, and publishes', async (_, attachment, media) => {
+    const clock = new FakeClock();
+    const h = await harness({ clock });
+    // A large file on a slow connection: MCP clients often give up after 60 seconds, but the post would still go out.
+    const linkedin = stillProcessing(h, clock, 35_000);
+    const result = await call(h, 'linkedin_create_post', { text: 'Big file', ...media() });
+    expect(result.isError).toBe(false);
+    expect(result.data).toMatchObject({ attachment });
+    expect(linkedin.polls).toEqual([35_000, 35_500, 36_500, 38_500, 42_500]);
+    expect(linkedin.postedAt()).toBe(42_500);
+  });
+
+  it('waits up to 15 seconds for each image', async () => {
+    const clock = new FakeClock();
+    const h = await harness({ clock });
+    const linkedin = stillProcessing(h, clock);
+    const photo = { source: join(files, 'photo.png') };
+    expect((await call(h, 'linkedin_create_post', { text: 'Two', images: [photo, photo] })).isError).toBe(false);
+    expect(linkedin.polls).toEqual([0, 500, 1_500, 3_500, 7_500, 11_500, 11_500, 12_000, 13_000, 15_000, 19_000, 23_000]);
+    expect(linkedin.postedAt()).toBe(23_000);
+  });
+
   it('posts as a Page when allowed', async () => {
     const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
     const result = await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183' });
@@ -607,6 +656,16 @@ describe('post history', () => {
     expect((await h.client.listTools()).tools.map((t) => t.name)).toContain('linkedin_list_posts');
     expect(h.client.getInstructions()).toContain('find it with linkedin_list_posts');
     expect((await harness()).client.getInstructions()).not.toContain('linkedin_list_posts');
+  });
+
+  it('is where Claude checks whether a post that timed out went out, before posting again', async () => {
+    const timedOut = 'If linkedin_create_post times out, the post may have been published anyway: ';
+    expect((await withHistory()).client.getInstructions()).toContain(
+      `${timedOut}check linkedin_list_posts before trying again, so it isn't published twice.`,
+    );
+    expect((await harness({ mode: 'remote' })).client.getInstructions()).toContain(
+      `${timedOut}ask the user to look on LinkedIn before trying again, so it isn't published twice.`,
+    );
   });
 
   it('remembers published posts, follows edits and forgets deleted ones', async () => {
