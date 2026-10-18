@@ -216,6 +216,57 @@ describe('stdio command', () => {
     }
   });
 
+  it('remembers published posts next to the token, for the next conversation', async () => {
+    const linkedin = await startServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/rest/posts') res.writeHead(201, { 'x-restli-id': 'urn:li:share:7001' }).end();
+      else res.writeHead(404, { 'Content-Type': 'application/json' }).end('{}');
+    });
+    storeToken();
+    // Each conversation starts its own server process.
+    const conversation = async () => {
+      const env = environment({ LINKEDIN_API_BASE_URL: linkedin.url });
+      const client = new Client({ name: 'cli-test', version: '1.0.0' });
+      await client.connect(new StdioClientTransport({ command: process.execPath, args: [ENTRY, 'stdio'], env, stderr: 'pipe' }));
+      return client;
+    };
+    try {
+      const first = await conversation();
+      try {
+        const created = await first.callTool({ name: 'linkedin_create_post', arguments: { text: 'Hello (from the CLI)' } });
+        expect(created.structuredContent).toMatchObject({ postUrn: 'urn:li:share:7001', author: 'urn:li:person:abc123' });
+      } finally {
+        await first.close();
+      }
+      expect(JSON.parse(readFileSync(join(home, 'posts.json'), 'utf8'))).toMatchObject({
+        version: 1,
+        posts: [{ postUrn: 'urn:li:share:7001', text: 'Hello (from the CLI)' }],
+      });
+
+      const second = await conversation();
+      try {
+        const listed = await second.callTool({ name: 'linkedin_list_posts', arguments: {} });
+        expect(listed.structuredContent).toEqual({
+          matched: 1,
+          posts: [
+            {
+              postUrn: 'urn:li:share:7001',
+              url: 'https://www.linkedin.com/feed/update/urn:li:share:7001/',
+              author: 'urn:li:person:abc123',
+              text: 'Hello (from the CLI)',
+              visibility: 'PUBLIC',
+              attachment: 'none',
+              publishedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+            },
+          ],
+        });
+      } finally {
+        await second.close();
+      }
+    } finally {
+      await linkedin.close();
+    }
+  });
+
   // `script` (util-linux) runs the CLI with a terminal as stdin, as when someone starts it by hand.
   const hasScript = process.platform === 'linux' && spawnSync('script', ['--version']).status === 0;
   it.runIf(hasScript)('says what it is waiting for when started from a terminal', async () => {

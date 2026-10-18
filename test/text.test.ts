@@ -50,6 +50,34 @@ describe('textWarnings', () => {
     expect(textWarnings('Intro\n## Results\nGood')).toEqual(['A line starts with "# ", a Markdown heading, which LinkedIn shows literally.']);
   });
 
+  it.each([
+    ['bold across a line break', 'Not **this\nline** at all'],
+    ['spaced-out asterisks', 'x ** 2 + y ** 2 = r ** 2'],
+    ['asterisks before a space', 'Rated ** by critics, ** by fans'],
+    ['a heading marker without a space', '#1 priority\n##Results'],
+    ['seven hashes', '####### Not a heading'],
+    ['an indented line', 'List:\n  first\n  second'],
+    ['a Markdown link to something other than a web page', 'See [notes](notes.md) and [mail](mailto:ada@example.com)'],
+  ])('does not flag %s', (_name, text) => {
+    expect(textWarnings(text)).toEqual([]);
+  });
+
+  it.each([
+    ['bold between words', 'This**really**works'],
+    ['bold on its own line', '**Results**\nUp 20%'],
+    ['a heading on the first line', '# Launch'],
+    ['a sixth-level heading', 'Intro\n###### Details'],
+  ])('flags %s', (_name, text) => {
+    expect(textWarnings(text)).toHaveLength(1);
+  });
+
+  it.each(['ada@example.com', 'room4@office', 'the end.@Grace', 'snake_@case', 'https://x.com/@ada', '@ alone', 'just @'])(
+    'does not take %s for an @mention',
+    (text) => {
+      expect(textWarnings(text)).toEqual([]);
+    },
+  );
+
   it('flags @mentions, which cannot tag anyone', () => {
     const mention = '@mentions don\'t tag anyone: "@Name" shows as plain text and nobody is notified.';
     expect(textWarnings('Thanks @Grace for the help')).toEqual([mention]);

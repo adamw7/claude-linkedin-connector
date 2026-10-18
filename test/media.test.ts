@@ -121,6 +121,44 @@ describe('loadMedia', () => {
     await expect(loadMedia(dataUri, 'image', {})).rejects.toThrow(`"${dataUri.slice(0, 77)}..." is not a JPEG`);
   });
 
+  const zip = (...entries: string[]) => Buffer.from(`PK\x03\x04....${entries.join('....')}`);
+  const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0]);
+
+  it.each([
+    ['a Word document', zip('[Content_Types].xml', 'word/document.xml'), 'image', "Attach it as the post's document instead."],
+    ['a PowerPoint presentation', zip('[Content_Types].xml', 'ppt/presentation.xml'), 'image', "Attach it as the post's document instead."],
+    ['an Office document', ole, 'image', "Attach it as the post's document instead."],
+    ['a JPEG image', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]), 'document', 'Attach it under images instead.'],
+    ['a GIF image', Buffer.from('GIF87a......'), 'document', 'Attach it under images instead.'],
+  ] as const)('names %s given in the wrong place', async (what, data, kind, fix) => {
+    const expected = kind === 'image' ? 'JPEG, PNG or GIF image' : 'PDF, DOC, DOCX, PPT or PPTX document';
+    await expect(loadMedia(`data:;base64,${data.toString('base64')}`, kind, {})).rejects.toThrow(`is ${what}, not a ${expected}. ${fix}`);
+  });
+
+  it.each([
+    ['an HTML page without a doctype', Buffer.from('<html lang="en"><head><title>Photo</title></head></html>'), 'a web page'],
+    ['an HTML page with only a doctype', Buffer.from('<!doctype html>\n<title>Photo</title>'), 'a web page'],
+    ['a bare SVG', Buffer.from('<svg viewBox="0 0 1 1"></svg>'), 'an SVG image'],
+    ['the smallest BMP header', Buffer.from('BM\x06\0\0\0'), 'a BMP image'],
+    ['a zip with a mimetype that is not OpenDocument', Buffer.from(`PK\x03\x04${'.'.repeat(26)}mimetypeapplication/epub+zip`), 'a zip archive'],
+    ['a zip with an xl/ folder but no Office manifest', zip('xl/notes.txt'), 'a zip archive'],
+    ['an OpenDocument manifest that is not first in the zip', zip('mimetypeapplication/vnd.oasis.opendocument.text'), 'a zip archive'],
+  ] as const)('recognizes %s', async (_name, data, what) => {
+    await expect(loadMedia(`data:;base64,${data.toString('base64')}`, 'image', {})).rejects.toThrow(`is ${what}, not a JPEG`);
+  });
+
+  it.each([
+    ['"heic" without an ftyp box', Buffer.from('\0\0\0\x18abcdheic\0\0\0\0')],
+    ['an ftyp box of another kind', Buffer.from('\0\0\0\x18ftypcrx \0\0\0\0')],
+    ['"BM" shorter than a BMP header', Buffer.from('BMxy')],
+    ['"BM" whose size does not match', Buffer.from('BM\x07\0\0\0')],
+    ['"RIFF" that is not WebP', Buffer.from('RIFF\x24\0\0\0WAVEfmt ')],
+    ['"<svg" inside a word', Buffer.from('this is <svgish> text')],
+  ] as const)('does not guess a format for %s', async (_name, data) => {
+    const source = `data:;base64,${data.toString('base64')}`;
+    await expect(loadMedia(source, 'image', {})).rejects.toThrow(new UserInputError(`"${source}" is not a JPEG, PNG or GIF image.`));
+  });
+
   it('says only what was expected for files it does not recognize', async () => {
     const bmpLookalike = Buffer.from('BM is not a bitmap');
     await expect(loadMedia(`data:text/plain;base64,${bmpLookalike.toString('base64')}`, 'image', {})).rejects.toThrow(

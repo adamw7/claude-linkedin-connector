@@ -40,7 +40,8 @@ function startsHashtag(text: string, index: number): boolean {
 /** Ways LinkedIn would show plain text differently than its author probably meant, e.g. Markdown written out of habit. */
 export function textWarnings(text: string): string[] {
   const warnings: string[] = [];
-  if (/\*\*[^*\n]+\*\*/.test(text)) {
+  // As in Markdown, the asterisks must hug the text: "x ** 2 + y ** 2" is arithmetic, not bold.
+  if (/\*\*(?=\S)[^*\n]+(?<=\S)\*\*/.test(text)) {
     warnings.push('The text uses Markdown bold (**like this**), which LinkedIn shows literally, asterisks and all.');
   }
   if (/\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)/.test(text)) {

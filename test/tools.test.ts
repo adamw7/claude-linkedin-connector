@@ -86,6 +86,8 @@ async function call(h: Harness, name: string, args: Record<string, unknown> = {}
 
 let web: TestServer;
 let files: string;
+/** Requests for /counted, a page with full preview metadata. */
+let pageFetches = 0;
 
 beforeAll(async () => {
   files = await mkdtemp(join(tmpdir(), 'linkedin-tools-'));
@@ -95,6 +97,10 @@ beforeAll(async () => {
     if (req.url === '/article') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end('<html><head><meta property="og:title" content="Engines &amp; Ideas"><meta property="og:description" content="A note."><meta property="og:image" content="/card.png"></head></html>');
+    } else if (req.url === '/counted') {
+      pageFetches += 1;
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<html><head><meta property="og:title" content="Counted"><meta property="og:image" content="/card.png"></head></html>');
     } else if (req.url === '/bare') {
       res.setHeader('Content-Type', 'text/html');
       res.end('<html><body>No metadata here</body></html>');
@@ -329,6 +335,51 @@ describe('linkedin_create_post', () => {
     expect(h.linkedin.find('POST', '/rest/images')).toHaveLength(0);
   });
 
+  it("posts without the page's own image when LinkedIn won't take it", async () => {
+    const h = await harness();
+    h.linkedin.override((r) => (r.url.pathname === '/rest/images' ? Response.json({ message: 'Upload unavailable' }, { status: 500 }) : undefined));
+    const url = `${web.url}/article`;
+    const result = await call(h, 'linkedin_create_post', { text: 'Read this', article: { url } });
+    expect(result).toMatchObject({ isError: false, data: { linkPreview: { title: 'Engines & Ideas', description: 'A note.', thumbnail: false } } });
+    expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({
+      content: { article: { source: url, title: 'Engines & Ideas', description: 'A note.' } },
+    });
+    expect((h.linkedin.find('POST', '/rest/posts')[0]!.json as any).content.article).not.toHaveProperty('thumbnail');
+  });
+
+  it("fails without publishing when LinkedIn won't take the thumbnail the user chose", async () => {
+    const h = await harness();
+    h.linkedin.override((r) => (r.url.pathname === '/rest/images' ? Response.json({ message: 'Upload unavailable' }, { status: 500 }) : undefined));
+    const result = await call(h, 'linkedin_create_post', {
+      text: 'Read this',
+      article: { url: `${web.url}/article`, thumbnail: join(files, 'photo.png') },
+    });
+    expect(result).toMatchObject({ isError: true, text: 'LinkedIn had an internal problem (HTTP 500): Upload unavailable. Try again in a moment.' });
+    expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
+  });
+
+  it('reads the page only for the parts of the preview not given', async () => {
+    const h = await harness();
+    const url = `${web.url}/counted`;
+    pageFetches = 0;
+    const given = await call(h, 'linkedin_create_post', {
+      text: 'Mine',
+      article: { url, title: 'My title', description: 'My description', thumbnail: join(files, 'photo.png') },
+    });
+    expect(given.data).toMatchObject({ linkPreview: { title: 'My title', description: 'My description', thumbnail: true } });
+    expect(pageFetches).toBe(0);
+
+    const partly = await call(h, 'linkedin_create_post', { text: 'Mine', article: { url, description: 'My description' } });
+    expect(partly.data).toMatchObject({ linkPreview: { title: 'Counted', description: 'My description', thumbnail: true } });
+    expect(pageFetches).toBe(1);
+  });
+
+  it('titles a document without a file name "Document"', async () => {
+    const h = await harness();
+    await call(h, 'linkedin_create_post', { text: 'Deck', document: { source: `data:application/pdf;base64,${PDF.toString('base64')}` } });
+    expect(h.linkedin.find('POST', '/rest/posts')[0]!.json).toMatchObject({ content: { media: { title: 'Document' } } });
+  });
+
   it('allows only one kind of attachment', async () => {
     const h = await harness();
     const result = await call(h, 'linkedin_create_post', {
@@ -454,6 +505,43 @@ describe('linkedin_preview_post', () => {
     expect(h.linkedin.requests).toHaveLength(0);
   });
 
+  it('does not read the page when the whole preview is given, but checks the thumbnail', async () => {
+    const h = await harness();
+    const url = `${web.url}/counted`;
+    pageFetches = 0;
+    const given = await call(h, 'linkedin_preview_post', {
+      text: 'Mine',
+      article: { url, title: 'My title', description: 'My description', thumbnail: join(files, 'photo.png') },
+    });
+    expect(given.data).toMatchObject({
+      linkPreview: { url, title: 'My title', description: 'My description', thumbnail: true },
+      warnings: [],
+    });
+    expect(given.data!.linkPreview.imageUrl).toBeUndefined();
+    expect(pageFetches).toBe(0);
+
+    const unusable = await call(h, 'linkedin_preview_post', {
+      text: 'Mine',
+      article: { url, title: 'My title', description: 'My description', thumbnail: `${web.url}/talk.pdf` },
+    });
+    expect(unusable).toMatchObject({ isError: true, text: expect.stringContaining('/talk.pdf" is a PDF, not a JPEG, PNG or GIF image.') });
+  });
+
+  it('shows the title a document will get', async () => {
+    const h = await harness();
+    const untitled = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `data:application/pdf;base64,${PDF.toString('base64')}` } });
+    expect(untitled.data).toMatchObject({ attachment: 'document', document: { title: 'Document' } });
+    const titled = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `${web.url}/talk.pdf`, title: 'Q3 results' } });
+    expect(titled.data).toMatchObject({ document: { title: 'Q3 results' } });
+  });
+
+  it('is what Claude is told to check posts with', async () => {
+    const h = await harness();
+    expect(h.client.getInstructions()).toContain('Before asking for approval of a post, check it with linkedin_preview_post');
+    const create = (await h.client.listTools()).tools.find((t) => t.name === 'linkedin_create_post')!;
+    expect(create.description).toContain('Check it with linkedin_preview_post first');
+  });
+
   it('checks the Page ID', async () => {
     const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
     const result = await call(h, 'linkedin_preview_post', { text: 'News', organization: 'acme' });
@@ -545,6 +633,61 @@ describe('post history', () => {
     expect(result).toMatchObject({ isError: false, data: { postUrn: expect.stringMatching(/^urn:li:share:/) } });
     expect((await call(h, 'linkedin_edit_post', { post: result.data!.postUrn, text: 'Edited' })).isError).toBe(false);
     expect((await call(h, 'linkedin_delete_post', { post: result.data!.postUrn })).isError).toBe(false);
+  });
+
+  it('keeps a post as it was when editing or deleting it fails', async () => {
+    const h = await withHistory();
+    at('2026-10-01T09:00:00Z');
+    const { postUrn } = (await call(h, 'linkedin_create_post', { text: 'Original' })).data!;
+    h.linkedin.override((r) =>
+      r.url.pathname.startsWith('/rest/posts/') ? Response.json({ message: 'Not enough permissions' }, { status: 403 }) : undefined,
+    );
+    at('2026-10-02T09:00:00Z');
+    expect((await call(h, 'linkedin_edit_post', { post: postUrn, text: 'Changed' })).isError).toBe(true);
+    expect((await call(h, 'linkedin_delete_post', { post: postUrn })).isError).toBe(true);
+    expect((await call(h, 'linkedin_list_posts')).data).toEqual({
+      matched: 1,
+      posts: [expect.objectContaining({ postUrn, text: 'Original', publishedAt: '2026-10-01T09:00:00.000Z' })],
+    });
+    expect((await call(h, 'linkedin_list_posts')).data!.posts[0].editedAt).toBeUndefined();
+  });
+
+  it('returns the 10 newest posts unless asked for more', async () => {
+    const h = await withHistory();
+    at('2026-10-01T09:00:00Z');
+    for (let n = 1; n <= 12; n++) await call(h, 'linkedin_create_post', { text: `Post ${n}` });
+    const texts = (data: Record<string, any> | undefined) => data!.posts.map((post: { text: string }) => post.text);
+    const recent = (await call(h, 'linkedin_list_posts')).data;
+    expect(recent).toMatchObject({ matched: 12 });
+    expect(texts(recent)).toEqual(['Post 12', 'Post 11', 'Post 10', 'Post 9', 'Post 8', 'Post 7', 'Post 6', 'Post 5', 'Post 4', 'Post 3']);
+    expect(texts((await call(h, 'linkedin_list_posts', { limit: 12 })).data)).toHaveLength(12);
+    expect((await call(h, 'linkedin_list_posts', { query: '  ' })).data).toMatchObject({ matched: 12 });
+    expect((await call(h, 'linkedin_list_posts', { limit: 0 })).isError).toBe(true);
+  });
+
+  it('remembers what each post carried', async () => {
+    const h = await withHistory();
+    await call(h, 'linkedin_create_post', { text: 'Link', article: { url: `${web.url}/article` } });
+    await call(h, 'linkedin_create_post', { text: 'Pic', images: [{ source: join(files, 'photo.png') }] });
+    await call(h, 'linkedin_create_post', { text: 'Album', images: [{ source: join(files, 'photo.png') }, { source: join(files, 'photo.png') }] });
+    const posts = (await call(h, 'linkedin_list_posts')).data!.posts as Array<{ text: string; attachment: string }>;
+    expect(posts.map(({ text, attachment }) => [text, attachment])).toEqual([
+      ['Album', 'images'],
+      ['Pic', 'image'],
+      ['Link', 'article'],
+    ]);
+  });
+
+  it('points the edit and delete tools at it only when there is one', async () => {
+    const descriptions = async (h: Harness) =>
+      Object.fromEntries((await h.client.listTools()).tools.map((t) => [t.name, t.description ?? '']));
+    const withList = await descriptions(await withHistory());
+    const without = await descriptions(await harness());
+    for (const name of ['linkedin_edit_post', 'linkedin_delete_post']) {
+      expect(withList[name]).toContain('linkedin_list_posts (which finds posts from earlier conversations)');
+      expect(without[name]).toContain('Accepts the post URN returned by linkedin_create_post or the post URL.');
+      expect(without[name]).not.toContain('linkedin_list_posts');
+    }
   });
 
   it('does not remember posts that failed', async () => {

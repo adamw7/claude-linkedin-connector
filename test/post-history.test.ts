@@ -58,11 +58,25 @@ describe('PostHistory', () => {
     expect((await history.list()).map((known) => known.postUrn)).toEqual(['urn:li:share:2']);
   });
 
-  it('lists a post once even if it is added again', async () => {
+  it('lists a post once even if it is added again, as the newest', async () => {
     const history = new PostHistory(path);
     await history.add(post(1));
+    await history.add(post(2));
     await history.add({ ...post(1), text: 'Again' });
-    expect((await history.list()).map((known) => known.text)).toEqual(['Again']);
+    expect((await history.list()).map((known) => known.text)).toEqual(['Again', 'Post 2']);
+  });
+
+  it('changes only the post that was edited or deleted', async () => {
+    let clock = Date.parse('2026-10-01T09:00:00Z');
+    const history = new PostHistory(path, () => clock);
+    for (const n of [1, 2, 3]) await history.add(post(n));
+    clock = Date.parse('2026-10-02T09:00:00Z');
+    await history.edited('urn:li:share:2', 'Post 2, fixed');
+    await history.deleted('urn:li:share:3');
+    expect(await history.list()).toEqual([
+      { ...post(2), text: 'Post 2, fixed', publishedAt: '2026-10-01T09:00:00.000Z', editedAt: '2026-10-02T09:00:00.000Z' },
+      { ...post(1), publishedAt: '2026-10-01T09:00:00.000Z' },
+    ]);
   });
 
   it('leaves the file alone when an edited or deleted post is not in it', async () => {
@@ -80,7 +94,11 @@ describe('PostHistory', () => {
     expect(await history.list()).toEqual([]);
     await writeFile(file, JSON.stringify({ version: 2, posts: [post(1)] }));
     expect(await history.list()).toEqual([]);
-    await writeFile(file, JSON.stringify({ version: 1, posts: [{ ...post(1), publishedAt: '2026-10-18T12:00:00.000Z' }, { postUrn: 7 }, null] }));
+    const valid = { ...post(1), publishedAt: '2026-10-18T12:00:00.000Z' };
+    const { text: _text, ...withoutText } = { ...post(2), publishedAt: '2026-10-18T12:00:00.000Z' };
+    await writeFile(file, JSON.stringify({ version: 1, posts: [valid, { ...valid, postUrn: 7 }, withoutText, post(3), null, 'urn:li:share:4'] }));
     expect((await history.list()).map((known) => known.postUrn)).toEqual(['urn:li:share:1']);
+    await writeFile(file, JSON.stringify({ version: 1, posts: 'not a list' }));
+    expect(await history.list()).toEqual([]);
   });
 });
