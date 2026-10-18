@@ -48,15 +48,10 @@ export function parseLinkPreview(html: string, pageUrl: string): LinkPreview {
   const titleTag = /<title\b[^<>]*>([^<]*)<\/title>/i.exec(html)?.[1];
 
   const preview: LinkPreview = { title: clean(first(TITLE_KEYS) ?? titleTag, 200), description: clean(first(DESCRIPTION_KEYS), 300) };
+  // Unparseable and non-http(s) image URLs are ignored.
   const image = first(IMAGE_KEYS);
-  if (image) {
-    try {
-      const imageUrl = new URL(decodeHtmlEntities(image.trim()), pageUrl);
-      if (imageUrl.protocol === 'http:' || imageUrl.protocol === 'https:') preview.imageUrl = imageUrl.toString();
-    } catch {
-      // Ignore unparseable image URLs.
-    }
-  }
+  const imageUrl = image ? URL.parse(decodeHtmlEntities(image.trim()), pageUrl) : null;
+  if (imageUrl?.protocol === 'http:' || imageUrl?.protocol === 'https:') preview.imageUrl = imageUrl.toString();
   return preview;
 }
 

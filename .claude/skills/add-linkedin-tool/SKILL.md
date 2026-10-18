@@ -19,10 +19,9 @@ Work through these steps in order. Read the neighbouring tool closest to the new
 
 ## 2. Tool: `src/mcp/server.ts`
 
-- `server.registerTool('linkedin_<verb>_<noun>', { title, description, inputSchema, outputSchema, annotations }, handler)`.
-- Wrap the handler body in `run('<tool name>', async () => …)` so errors become tool results via
-  `errorResult` and the call is reported to `onToolCall` (the remote audit log). Return `json({...})` matching
-  `outputSchema`.
+- `tool('linkedin_<verb>_<noun>', { title, description, inputSchema, outputSchema, annotations }, async (args) => …)`.
+- The handler returns the structured result, which is type-checked against `outputSchema`. `tool` turns thrown errors
+  into tool results via `errorResult` and reports every call to `onToolCall` (the remote audit log).
 - Get the client with `connect()`; resolve the author with `memberUrn` / `actorUrn`.
 - Text the user writes goes through `escapeLittleText` before it is sent, or LinkedIn can cut it off at `( ) [ ] * _ @ #`.
 - Throw `UserInputError` (from `src/errors.ts`) for problems the user can fix; the message is shown to Claude as is.

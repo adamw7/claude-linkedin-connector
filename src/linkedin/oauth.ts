@@ -27,19 +27,13 @@ function oauthUrl(app: Pick<LinkedInOAuthApp, 'oauthBaseUrl'>, path: string): st
 
 /** LinkedIn reports granted scopes comma-separated; requests use spaces. Accept both. */
 export function parseScopes(value: string | undefined | null): string[] {
-  return (value ?? '')
-    .split(/[\s,]+/)
-    .map((scope) => scope.trim())
-    .filter(Boolean);
+  return (value ?? '').split(/[\s,]+/).filter(Boolean);
 }
 
 export function buildAuthorizationUrl(app: LinkedInOAuthApp, redirectUri: string, state: string): string {
   const url = new URL(oauthUrl(app, '/oauth/v2/authorization'));
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('client_id', app.clientId);
-  url.searchParams.set('redirect_uri', redirectUri);
-  url.searchParams.set('state', state);
-  url.searchParams.set('scope', app.scopes.join(' '));
+  const params = { response_type: 'code', client_id: app.clientId, redirect_uri: redirectUri, state, scope: app.scopes.join(' ') };
+  url.search = new URLSearchParams(params).toString();
   return url.toString();
 }
 

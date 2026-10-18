@@ -29,14 +29,6 @@ const AUTH_METHODS: ClientAuthMethod[] = ['none', 'client_secret_post', 'client_
 const METADATA_CACHE_MS = 5 * 60_000;
 const METADATA_CACHE_LIMIT = 500;
 
-function parseUrl(value: string): URL | undefined {
-  try {
-    return new URL(value);
-  } catch {
-    return undefined;
-  }
-}
-
 function clientName(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 100) : undefined;
 }
@@ -47,7 +39,7 @@ export function isLoopbackUrl(url: URL): boolean {
 
 /** Redirect URIs must be absolute, fragment-free, and https unless they are loopback. */
 export function isValidRedirectUri(value: string): boolean {
-  const url = parseUrl(value);
+  const url = URL.parse(value);
   if (!url || url.hash || value.includes('#') || url.username || url.password) return false;
   return url.protocol === 'https:' || isLoopbackUrl(url);
 }
@@ -55,17 +47,10 @@ export function isValidRedirectUri(value: string): boolean {
 /** Exact match, except loopback ports, which native apps pick at runtime (RFC 8252 §7.3). */
 export function redirectUriMatches(registered: string, requested: string): boolean {
   if (registered === requested) return true;
-  const a = parseUrl(registered);
-  const b = parseUrl(requested);
-  return (
-    a !== undefined &&
-    b !== undefined &&
-    isLoopbackUrl(a) &&
-    isLoopbackUrl(b) &&
-    a.hostname === b.hostname &&
-    a.pathname === b.pathname &&
-    a.search === b.search
-  );
+  const a = URL.parse(registered);
+  const b = URL.parse(requested);
+  if (!a || !b || !isLoopbackUrl(a) || !isLoopbackUrl(b)) return false;
+  return a.hostname === b.hostname && a.pathname === b.pathname && a.search === b.search;
 }
 
 /**
@@ -199,7 +184,7 @@ export class ClientRegistry {
   }
 
   private async fetchMetadataDocument(clientId: string): Promise<OAuthClient | undefined> {
-    const url = parseUrl(clientId);
+    const url = URL.parse(clientId);
     if (!url || url.protocol !== 'https:' || url.pathname === '/' || url.hash || url.username || url.password) return undefined;
     const fetchDocument =
       this.options.fetchDocument ??

@@ -30,24 +30,11 @@ interface AuthorizationRequest {
   st?: string;
 }
 
-interface ConsentPayload {
-  req: AuthorizationRequest;
-  csrf: string;
-  exp: number;
-}
-
-interface PendingPayload {
-  req: AuthorizationRequest;
-  ls: string;
-  exp: number;
-}
-
-interface CodePayload {
-  req: AuthorizationRequest;
-  li: LinkedInGrant;
-  jti: string;
-  exp: number;
-}
+/** What each step of the flow carries forward: the client's request, valid until `exp`. */
+type Step<T> = T & { req: AuthorizationRequest; exp: number };
+type ConsentPayload = Step<{ csrf: string }>;
+type PendingPayload = Step<{ ls: string }>;
+type CodePayload = Step<{ li: LinkedInGrant; jti: string }>;
 
 interface AccessTokenPayload {
   cid: string;
@@ -87,15 +74,12 @@ function str(value: unknown): string | undefined {
 /** Compares resource indicators, ignoring case of scheme/host, a trailing slash and any fragment. */
 export function sameResource(a: string, b: string): boolean {
   const normalize = (value: string) => {
-    const url = new URL(value);
-    url.hash = '';
-    return url.href.replace(/\/$/, '');
+    const url = URL.parse(value);
+    if (url) url.hash = '';
+    return url?.href.replace(/\/$/, '');
   };
-  try {
-    return normalize(a) === normalize(b);
-  } catch {
-    return false;
-  }
+  const left = normalize(a);
+  return left !== undefined && left === normalize(b);
 }
 
 function readCookie(req: Request, name: string): string | undefined {
@@ -120,8 +104,10 @@ function redirectWith(res: Response, uri: string, params: Record<string, string 
   res.set('Cache-Control', 'no-store').redirect(302, url.href);
 }
 
+const NO_STORE = { 'Cache-Control': 'no-store', Pragma: 'no-cache' };
+
 function oauthError(res: Response, status: number, error: string, description: string): void {
-  res.status(status).set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' }).json({ error, error_description: description });
+  res.status(status).set(NO_STORE).json({ error, error_description: description });
 }
 
 function parseBasicAuth(header: string | undefined): { id: string; secret: string } | undefined {
@@ -206,36 +192,29 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     const clientId = str(query.client_id);
     const redirectUri = str(query.redirect_uri);
     if (!clientId || !redirectUri) {
-      sendErrorPage(res, 400, 'Invalid request', 'The authorization request is missing client_id or redirect_uri.');
-      return;
+      return sendErrorPage(res, 400, 'Invalid request', 'The authorization request is missing client_id or redirect_uri.');
     }
     const client = await clients.resolve(clientId);
     if (!clientAccepts(client, redirectUri)) {
       // Never redirect to an unverified URI: show the error here instead.
-      sendErrorPage(
+      return sendErrorPage(
         res,
         400,
         'Unknown application',
         'This application or its redirect address is not registered with this connector. Remove the connector in Claude and add it again.',
       );
-      return;
     }
     const state = str(query.state);
     const fail = (error: string, description: string) =>
       redirectWith(res, redirectUri, { error, error_description: description, state, iss: issuer });
-    if (query.response_type !== 'code') {
-      fail('unsupported_response_type', 'Only response_type=code is supported.');
-      return;
-    }
+    if (query.response_type !== 'code') return fail('unsupported_response_type', 'Only response_type=code is supported.');
     const challenge = str(query.code_challenge);
     if (query.code_challenge_method !== 'S256' || !challenge || !/^[A-Za-z0-9_-]{43}$/.test(challenge)) {
-      fail('invalid_request', 'PKCE with code_challenge_method=S256 is required.');
-      return;
+      return fail('invalid_request', 'PKCE with code_challenge_method=S256 is required.');
     }
     const requestedResource = str(query.resource);
     if (requestedResource !== undefined && !sameResource(requestedResource, resource.href)) {
-      fail('invalid_target', `This server only issues tokens for ${resource.href}.`);
-      return;
+      return fail('invalid_target', `This server only issues tokens for ${resource.href}.`);
     }
     const request: AuthorizationRequest = { cid: client.clientId, ru: redirectUri, cc: challenge, res: resource.href, st: state };
     const csrf = randomToken();
@@ -260,26 +239,16 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     const origin = req.headers.origin;
     const foreignOrigin = origin !== undefined && origin !== 'null' && origin !== config.publicUrl.origin;
     clearCookie(res, 'csrf');
-    if (
-      !payload ||
-      payload.exp < nowSeconds() ||
-      !csrf ||
-      !cookieCsrf ||
-      !safeEqual(csrf, cookieCsrf) ||
-      !safeEqual(csrf, payload.csrf) ||
-      foreignOrigin
-    ) {
-      sendErrorPage(res, 400, 'This page has expired', 'Go back to Claude and start connecting LinkedIn again.');
-      return;
+    const expired = !payload || payload.exp < nowSeconds();
+    if (expired || !csrf || !cookieCsrf || !safeEqual(csrf, cookieCsrf) || !safeEqual(csrf, payload.csrf) || foreignOrigin) {
+      return sendErrorPage(res, 400, 'This page has expired', 'Go back to Claude and start connecting LinkedIn again.');
     }
     const request = payload.req;
     if (!clientAccepts(await clients.resolve(request.cid), request.ru)) {
-      sendErrorPage(res, 400, 'Unknown application', 'This application is no longer allowed to connect.');
-      return;
+      return sendErrorPage(res, 400, 'Unknown application', 'This application is no longer allowed to connect.');
     }
     if (body.decision !== 'approve') {
-      redirectWith(res, request.ru, { error: 'access_denied', error_description: 'You declined access.', state: request.st, iss: issuer });
-      return;
+      return redirectWith(res, request.ru, { error: 'access_denied', error_description: 'You declined access.', state: request.st, iss: issuer });
     }
     const linkedInState = randomToken();
     setCookie(res, 'auth', sealer.seal('pending', { req: request, ls: linkedInState, exp: nowSeconds() + CONSENT_TTL_S } satisfies PendingPayload), 'lax');
@@ -293,29 +262,23 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     const state = str(query.state);
     clearCookie(res, 'auth');
     if (!pending || pending.exp < nowSeconds() || !state || !safeEqual(state, pending.ls)) {
-      sendErrorPage(res, 400, 'Sign-in session expired', 'Go back to Claude and start connecting LinkedIn again.');
-      return;
+      return sendErrorPage(res, 400, 'Sign-in session expired', 'Go back to Claude and start connecting LinkedIn again.');
     }
     const request = pending.req;
     const back = (params: Record<string, string | undefined>) => redirectWith(res, request.ru, { ...params, state: request.st, iss: issuer });
 
     if (str(query.error)) {
-      back({ error: 'access_denied', error_description: str(query.error_description) ?? 'LinkedIn sign-in was cancelled.' });
-      return;
+      return back({ error: 'access_denied', error_description: str(query.error_description) ?? 'LinkedIn sign-in was cancelled.' });
     }
     const code = str(query.code);
-    if (!code) {
-      back({ error: 'server_error', error_description: 'LinkedIn did not return an authorization code.' });
-      return;
-    }
+    if (!code) return back({ error: 'server_error', error_description: 'LinkedIn did not return an authorization code.' });
     let grant: LinkedInGrant;
     try {
       const tokens = await exchangeAuthorizationCode(linkedInApp, code, callbackUrl);
       grant = { at: tokens.accessToken, sc: tokens.scopes, exp: tokens.expiresAt };
     } catch (error) {
       logger('warn', 'linkedin_token_exchange_failed', { clientId: request.cid, error });
-      back({ error: 'server_error', error_description: `LinkedIn sign-in failed: ${(error as Error).message}` });
-      return;
+      return back({ error: 'server_error', error_description: `LinkedIn sign-in failed: ${(error as Error).message}` });
     }
     try {
       const { version, fetch } = options;
@@ -327,8 +290,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     }
     if (!memberAllowed(grant)) {
       logger('warn', 'member_not_allowed', { member: grant.sub, clientId: request.cid });
-      back({ error: 'access_denied', error_description: 'This LinkedIn account is not allowed to use this connector.' });
-      return;
+      return back({ error: 'access_denied', error_description: 'This LinkedIn account is not allowed to use this connector.' });
     }
     logger('info', 'member_authorized', { member: grant.sub, clientId: request.cid, scopes: grant.sc });
     const codePayload: CodePayload = { req: request, li: grant, jti: randomToken(16), exp: nowSeconds() + CODE_TTL_S };
@@ -337,65 +299,43 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
 
   router.post('/token', cors, express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    if (body.grant_type !== 'authorization_code') {
-      oauthError(res, 400, 'unsupported_grant_type', 'Only the authorization_code grant is supported.');
-      return;
-    }
+    const fail = (error: string, description: string, status = 400) => oauthError(res, status, error, description);
+    if (body.grant_type !== 'authorization_code') return fail('unsupported_grant_type', 'Only the authorization_code grant is supported.');
     const basic = parseBasicAuth(req.headers.authorization);
     const bodyClientId = str(body.client_id);
     if (basic && bodyClientId && bodyClientId !== basic.id) {
-      oauthError(res, 400, 'invalid_request', 'client_id does not match the Authorization header.');
-      return;
+      return fail('invalid_request', 'client_id does not match the Authorization header.');
     }
     const clientId = basic?.id ?? bodyClientId;
     const client = clientId ? await clients.resolve(clientId) : undefined;
     if (!client || !clients.authenticate(client, basic?.secret ?? str(body.client_secret))) {
-      oauthError(res, 401, 'invalid_client', 'Client authentication failed.');
-      return;
+      return fail('invalid_client', 'Client authentication failed.', 401);
     }
     const code = str(body.code);
     const payload = code ? sealer.unseal<CodePayload>('code', code) : undefined;
     if (!payload || payload.exp < nowSeconds() || payload.req.cid !== client.clientId) {
-      oauthError(res, 400, 'invalid_grant', 'The authorization code is invalid, expired, or was issued to another client.');
-      return;
+      return fail('invalid_grant', 'The authorization code is invalid, expired, or was issued to another client.');
     }
     // OAuth 2.1 clients may omit redirect_uri here (PKCE binds the code); if sent it must match.
     const redirectUri = str(body.redirect_uri);
     if (redirectUri !== undefined && redirectUri !== payload.req.ru) {
-      oauthError(res, 400, 'invalid_grant', 'redirect_uri does not match the authorization request.');
-      return;
+      return fail('invalid_grant', 'redirect_uri does not match the authorization request.');
     }
     const verifier = str(body.code_verifier);
     if (!verifier || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || !safeEqual(pkceChallenge(verifier), payload.req.cc)) {
-      oauthError(res, 400, 'invalid_grant', 'PKCE verification failed.');
-      return;
+      return fail('invalid_grant', 'PKCE verification failed.');
     }
     const requestedResource = str(body.resource);
     if (requestedResource !== undefined && !sameResource(requestedResource, payload.req.res)) {
-      oauthError(res, 400, 'invalid_target', `This server only issues tokens for ${payload.req.res}.`);
-      return;
+      return fail('invalid_target', `This server only issues tokens for ${payload.req.res}.`);
     }
-    if (!markCodeUsed(payload.jti, payload.exp)) {
-      oauthError(res, 400, 'invalid_grant', 'The authorization code was already used.');
-      return;
-    }
+    if (!markCodeUsed(payload.jti, payload.exp)) return fail('invalid_grant', 'The authorization code was already used.');
     const issuedAt = nowSeconds();
     const linkedInExpiry = payload.li.exp !== undefined ? Math.floor(payload.li.exp / 1000) : issuedAt + MAX_TOKEN_TTL_S;
     const expiresAt = Math.min(linkedInExpiry, issuedAt + MAX_TOKEN_TTL_S);
-    if (expiresAt <= issuedAt) {
-      oauthError(res, 400, 'invalid_grant', 'The LinkedIn authorization has already expired.');
-      return;
-    }
-    const accessToken = sealer.seal('access', {
-      cid: client.clientId,
-      res: payload.req.res,
-      li: payload.li,
-      iat: issuedAt,
-      exp: expiresAt,
-    } satisfies AccessTokenPayload);
-    res
-      .set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' })
-      .json({ access_token: accessToken, token_type: 'Bearer', expires_in: expiresAt - issuedAt });
+    if (expiresAt <= issuedAt) return fail('invalid_grant', 'The LinkedIn authorization has already expired.');
+    const token: AccessTokenPayload = { cid: client.clientId, res: payload.req.res, li: payload.li, iat: issuedAt, exp: expiresAt };
+    res.set(NO_STORE).json({ access_token: sealer.seal('access', token), token_type: 'Bearer', expires_in: expiresAt - issuedAt });
   });
 
   router.options('/register', cors);
@@ -425,14 +365,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
       if (!payload) throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid access token');
       // Re-checked on every request, so removing someone from LINKEDIN_ALLOWED_MEMBERS cuts off their tokens too.
       if (!memberAllowed(payload.li)) throw new OAuthError(OAuthErrorCode.InvalidToken, 'This LinkedIn account is no longer allowed');
-      return {
-        token,
-        clientId: payload.cid,
-        scopes: [],
-        expiresAt: payload.exp,
-        resource: new URL(payload.res),
-        extra: { linkedin: payload.li },
-      };
+      const { cid: clientId, exp: expiresAt, li: linkedin } = payload;
+      return { token, clientId, scopes: [], expiresAt, resource: new URL(payload.res), extra: { linkedin } };
     },
   };
 

@@ -118,9 +118,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   app.set('trust proxy', config.trustProxy);
   app.use(requestId, requestLogger(logger));
   // Ahead of the Host check: load balancers and orchestrators probe the container's own address.
-  app.get('/healthz', (_req, res) => {
-    res.json({ status: 'ok' });
-  });
+  app.get('/healthz', (_req, res) => void res.json({ status: 'ok' }));
   // A loopback bind is usually reached through a tunnel, so accept the public hostname too.
   const allowedHosts =
     config.allowedHosts ??
@@ -135,9 +133,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   };
   app.use(mcpAuthMetadataRouter(metadataOptions));
   const resourceMetadata = buildOAuthProtectedResourceMetadata(metadataOptions);
-  app.get('/.well-known/oauth-protected-resource', (_req, res) => {
-    res.set('Access-Control-Allow-Origin', '*').json(resourceMetadata);
-  });
+  app.get('/.well-known/oauth-protected-resource', (_req, res) => void res.set('Access-Control-Allow-Origin', '*').json(resourceMetadata));
 
   app.use(
     OAUTH_PATHS,
@@ -181,10 +177,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   });
   const mcpLimit = rateLimit({
     limit: config.mcpRateLimit,
-    key: (req) => {
-      const auth = req.auth;
-      return auth && (grantFromAuthInfo(auth)?.sub ?? auth.clientId);
-    },
+    key: ({ auth }) => auth && (grantFromAuthInfo(auth)?.sub ?? auth.clientId),
     reject: tooMany,
   });
   // Tool calls can carry base64 images, so allow large JSON bodies, but only from authenticated callers
@@ -192,17 +185,12 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   const mcpBody = express.json({ limit: MAX_BODY });
   app.all('/mcp', mcpCors, bearer, mcpLimit, mcpBody, (req, res) => void mcp(req, res, req.body));
 
-  app.get('/', (_req, res) => {
-    sendPage(
-      res,
-      200,
-      'LinkedIn connector for Claude',
-      `<h1>LinkedIn connector for Claude</h1>
+  app.get('/', (_req, res) =>
+    sendPage(res, 200, 'LinkedIn connector for Claude', `<h1>LinkedIn connector for Claude</h1>
 <p>This is an MCP server. In Claude, open <strong>Settings → Connectors → Add custom connector</strong> and enter:</p>
 <p><code>${escapeHtml(mcpUrl.href)}</code></p>
-<p><a href="${escapeHtml(HOMEPAGE)}">Documentation</a></p>`,
-    );
-  });
+<p><a href="${escapeHtml(HOMEPAGE)}">Documentation</a></p>`),
+  );
   app.use(jsonErrors(logger));
 
   return { app, mcpUrl, close: () => handler.close() };

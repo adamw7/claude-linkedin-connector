@@ -22,12 +22,8 @@ export interface LoopbackLoginHandle {
 }
 
 export function validateLoopbackRedirect(redirectUri: string): URL {
-  let url: URL;
-  try {
-    url = new URL(redirectUri);
-  } catch {
-    throw new ConfigError(`LINKEDIN_REDIRECT_URI "${redirectUri}" is not a valid URL.`);
-  }
+  const url = URL.parse(redirectUri);
+  if (!url) throw new ConfigError(`LINKEDIN_REDIRECT_URI "${redirectUri}" is not a valid URL.`);
   if (url.protocol !== 'http:' || !isLoopbackHostname(url.hostname) || !url.port || url.port === '0') {
     throw new ConfigError(`LINKEDIN_REDIRECT_URI must look like http://localhost:<port>/<path> (got "${redirectUri}").`);
   }
@@ -45,12 +41,8 @@ function listen(server: Server, port: number, host: string): Promise<void> {
 }
 
 function respond(res: ServerResponse, status: number, title: string, body: string): void {
-  res.writeHead(status, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-store',
-    Connection: 'close',
-  });
-  res.end(page(title, body));
+  const headers = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'close' };
+  res.writeHead(status, headers).end(page(title, body));
 }
 
 /**
@@ -80,12 +72,7 @@ export class LoopbackLogin {
     const state = randomBytes(32).toString('base64url');
     const timeoutMs = this.options.timeoutMs ?? 10 * 60_000;
 
-    let resolveCompletion!: (name: string | undefined) => void;
-    let rejectCompletion!: (error: Error) => void;
-    const completion = new Promise<string | undefined>((resolve, reject) => {
-      resolveCompletion = resolve;
-      rejectCompletion = reject;
-    });
+    const { promise: completion, resolve: resolveCompletion, reject: rejectCompletion } = Promise.withResolvers<string | undefined>();
     // Callers that care await it; don't crash the process if nobody does.
     completion.catch(() => {});
 
