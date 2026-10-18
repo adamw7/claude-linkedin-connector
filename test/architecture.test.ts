@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { projectFiles, type FileInfo } from 'archunit';
 import { describe, expect, it } from 'vitest';
 
@@ -84,6 +85,41 @@ describe('architecture', () => {
         (file) => file.path.includes('src/remote/') || notImporting(/from '(express|@modelcontextprotocol\/express)'/)(file),
         'only src/remote may import express',
       );
+    await expect(rule).toPassAsync();
+  });
+
+  // stdout carries the MCP protocol in stdio mode, so a stray write there corrupts it. Other modules report through
+  // an injected Logger or warn callback, which the composition root points at stderr.
+  it('writes to the console, stdout and stderr only from the composition root and the JSON logger', async () => {
+    const rule = projectFiles()
+      .inFolder('src/**')
+      .should()
+      .adhereTo(
+        (file) =>
+          file.path.endsWith('src/index.ts') ||
+          (file.path.endsWith('src/remote/logger.ts') ? notImporting(/\bconsole\.|process\.stdout\b/)(file) : notImporting(/\bconsole\.|process\.(stdout|stderr)\b/)(file)),
+        'only src/index.ts may write to the console; src/remote/logger.ts may write to stderr',
+      );
+    await expect(rule).toPassAsync();
+  });
+
+  it('prints diagnostics with log() on stderr, never console.error, warn, info, debug or trace', async () => {
+    const rule = projectFiles().inFolder('src/**').should().adhereTo(notImporting(/\bconsole\.(error|warn|info|debug|trace|dir|table)\b/), 'console.log is for command output only');
+    await expect(rule).toPassAsync();
+  });
+
+  it('keeps stdout to the MCP protocol in stdio mode', () => {
+    const source = readFileSync('src/index.ts', 'utf8');
+    const runStdio = /^function runStdio\(\)[^\n]*\n([\s\S]*?)^\}$/m.exec(source)?.[1];
+    expect(runStdio).toBeDefined();
+    expect(runStdio).not.toMatch(/\bconsole\.|process\.stdout\b/);
+  });
+
+  it('creates the JSON logger only in the composition root; other modules take a Logger', async () => {
+    const rule = projectFiles()
+      .inFolder('src/**')
+      .should()
+      .adhereTo((file) => /src\/(index|remote\/logger)\.ts$/.test(file.path) || notImporting(/\bjsonLogger\(/)(file), 'only src/index.ts may call jsonLogger');
     await expect(rule).toPassAsync();
   });
 

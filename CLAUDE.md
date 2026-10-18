@@ -40,6 +40,10 @@ Each layer imports only from layers below it; `test/architecture.test.ts` enforc
 - Errors the user can fix are `UserInputError`; their message reaches Claude verbatim, so write it for the user.
 - Security is load-bearing: third-party URLs go through `safeFetch`; local files are read only from
   `LINKEDIN_FILE_DIRS` (never in remote mode); media is checked by content, not extension.
+- Logging: only `src/index.ts` writes to the console (stdout is the MCP protocol in stdio mode; diagnostics go to
+  stderr); other modules take an injected `Logger` or `warn` callback. Remote log events are snake_case string
+  literals with object-literal fields, listed in the `docs/deployment.md` Monitoring table, and never carry
+  tokens, codes, query strings, bodies or post text. `test/logging.test.ts` enforces this.
 - Tests run against `test/helpers/fake-linkedin.ts` (an in-memory LinkedIn used as `fetch`), never the real API.
   Assert exact request bodies and messages so mutation testing passes.
 - ESM with `.js` import suffixes, `strict` + `noUncheckedIndexedAccess`, `verbatimModuleSyntax` (use `import type`).
