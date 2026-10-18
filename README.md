@@ -191,7 +191,7 @@ docker run -p 3000:3000 \
 Without Docker, set the same variables and run `HOST=0.0.0.0 node dist/index.js http`.
 The [deployment guide](docs/deployment.md) has a production checklist and ready-made setups: Docker Compose with
 automatic HTTPS, Kubernetes, and other container platforms.
-Put it behind a TLS-terminating proxy or use a platform that provides HTTPS, and set `TRUST_PROXY` to the
+Put it behind a TLS-terminating proxy (ideally accepting TLS 1.3 only) or use a platform that provides HTTPS, and set `TRUST_PROXY` to the
 number of proxies in front of it so rate limits and logs see real client addresses.
 `LINKEDIN_ALLOWED_MEMBERS` is required: list the LinkedIn emails or member IDs that may connect, or set
 it to `*` to let anyone use your LinkedIn app. An email only matches if the account has verified it on

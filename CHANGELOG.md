@@ -98,6 +98,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- The connector only connects over TLS 1.3 or newer, for LinkedIn and for the links, images and documents it
+  fetches. A website that only supports older TLS versions can no longer be used for link previews or as a
+  source of images and documents. The Docker Compose setup in `deploy/` now accepts TLS 1.3 only too, and the
+  [deployment guide](docs/deployment.md) explains how to do the same with other proxies.
 - In local mode, tools only read local files from `~/Downloads`, `~/Desktop`, `~/Pictures` and the working
   directory (unless it contains the home directory), or the folders listed in the new `LINKEDIN_FILE_DIRS`.
   Before, a prompt injection could get Claude to post any PDF, Office document or image on the computer.

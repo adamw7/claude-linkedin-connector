@@ -8,6 +8,7 @@ import { loadLocalConfig, loadRemoteConfig } from './config.js';
 import { ConfigError } from './errors.js';
 import { ApiVersion } from './linkedin/versions.js';
 import { createConnectorServer } from './mcp/server.js';
+import { requireModernTls } from './net/tls.js';
 import { createRemoteApp } from './remote/app.js';
 import { jsonLogger } from './remote/logger.js';
 import { drainServer } from './remote/shutdown.js';
@@ -164,6 +165,7 @@ async function main(argv: string[]): Promise<void> {
   return values.help ? console.log(HELP) : entry.run(values);
 }
 
+requireModernTls();
 main(process.argv.slice(2)).catch((error: unknown) => {
   log(error instanceof ConfigError ? error.message : `Error: ${(error as Error).message ?? String(error)}`);
   process.exit(1);

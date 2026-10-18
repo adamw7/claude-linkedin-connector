@@ -1,4 +1,7 @@
 {$DOMAIN} {
+	tls {
+		protocols tls1.3
+	}
 	reverse_proxy connector:3000 {
 		# Below the connector's KEEP_ALIVE_TIMEOUT (65 s), so Caddy never reuses a connection the connector
 		# is closing; Caddy's default of 2 minutes would turn some requests into 502s.

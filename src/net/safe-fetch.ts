@@ -3,6 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { USER_AGENT } from '../version.js';
+import { MIN_TLS_VERSION } from './tls.js';
 
 /** The URL is malformed, unreachable, too large, or points somewhere it may not. */
 export class FetchError extends Error {
@@ -146,6 +147,7 @@ function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Pro
         method: 'GET',
         headers: { 'User-Agent': USER_AGENT, Accept: options.accept ?? '*/*', 'Accept-Encoding': 'identity' },
         agent: false,
+        minVersion: MIN_TLS_VERSION,
         timeout: remaining,
         ...(allowPrivate ? {} : { lookup: guardedLookup }),
       },
