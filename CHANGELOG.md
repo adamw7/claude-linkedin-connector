@@ -49,6 +49,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A post with a large document, or one LinkedIn was slow to process, could still be published after Claude had
+  stopped waiting and reported a failure, so asking again posted it twice. The connector now stops waiting for
+  LinkedIn to process uploads 45 seconds after the post was asked for, and if a post still times out, Claude
+  checks whether it went out (with `linkedin_list_posts` in local mode, otherwise by asking you) before trying
+  again.
 - `/healthz` answers whatever the `Host` header. With `ALLOWED_HOSTS` set, load balancer and Kubernetes health
   checks, which use the server's IP address, got `403` and took the server out of service.
 - Behind a proxy or load balancer that keeps idle connections longer than 5 seconds (AWS load balancers keep them

@@ -28,6 +28,7 @@ export interface ConnectorOptions {
   /** Local mode: remembers published posts, so later conversations can find them to edit or delete. */
   history?: PostHistory;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
   /** Called after every tool call, e.g. for an audit log. */
   onToolCall?: (event: ToolCallEvent) => void;
 }
@@ -49,7 +50,14 @@ const REACTIONS: Record<string, ReactionType> = {
   funny: 'ENTERTAINMENT',
 };
 
-const ASSET_WAIT_MS: Record<AssetKind, number> = { images: 15_000, documents: 60_000 };
+/** The longest wait for LinkedIn to process one image, so a slow one leaves time for the rest. */
+const IMAGE_WAIT_MS = 15_000;
+/**
+ * Stop waiting for uploads to finish processing this long after the post was asked for, and publish anyway.
+ * MCP clients often give up on a tool call after 60 seconds (the SDK's default) while the post still goes out,
+ * so waiting longer can make a published post look failed, and Claude may publish it again.
+ */
+const PROCESSING_DEADLINE_MS = 45_000;
 
 const ATTACHMENTS = ['none', 'article', 'image', 'images', 'document'] as const;
 
@@ -76,6 +84,7 @@ function instructions(mode: Mode, engagement: boolean, history: boolean): string
     ...(history
       ? ["LinkedIn doesn't let apps read the user's posts. To edit or delete a post from an earlier conversation, find it with linkedin_list_posts, which remembers the posts published from this computer."]
       : []),
+    `If linkedin_create_post times out, the post may have been published anyway: ${history ? 'check linkedin_list_posts' : 'ask the user to look on LinkedIn'} before trying again, so it isn't published twice.`,
     mode === 'local'
       ? 'If a tool says the user is not signed in, call linkedin_login and give them the sign-in link; retry once they confirm they approved access.'
       : 'If a tool says the LinkedIn authorization expired, ask the user to reconnect the connector in Claude.',
@@ -90,6 +99,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const memberEngagement = scopes.has('w_member_social_feed');
   const engagement = memberEngagement || organizations;
   const sleep = options.sleep ?? defaultSleep;
+  const now = options.now ?? Date.now;
   // A remote server must never read its own disk.
   const localFileDirs = mode === 'local' ? (options.localFileDirs ?? []) : undefined;
   const mediaSources =
@@ -152,11 +162,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const sources = { localFileDirs, allowPrivateNetwork: options.allowPrivateNetwork };
   const load = (source: string, kind: MediaKind): Promise<LoadedMedia> => loadMedia(source, kind, sources);
 
-  /** Uploads an image or document, then waits a while for LinkedIn to process it. */
-  const upload = async (client: LinkedInClient, kind: AssetKind, owner: string, media: LoadedMedia): Promise<string> => {
+  /** Uploads an image or document, then waits a while (until `deadline` at the latest) for LinkedIn to process it. */
+  const upload = async (client: LinkedInClient, kind: AssetKind, owner: string, media: LoadedMedia, deadline: number): Promise<string> => {
     const { uploadUrl, urn } = await client.initializeUpload(kind, owner);
     await client.upload(uploadUrl, media.data);
-    const deadline = Date.now() + ASSET_WAIT_MS[kind];
+    const until = kind === 'images' ? Math.min(deadline, now() + IMAGE_WAIT_MS) : deadline;
     for (let delay = 500; ; delay = Math.min(delay * 2, 4_000)) {
       // Status lookups are best effort; LinkedIn validates the asset when posting.
       const status = await client.getAssetStatus(kind, urn).catch(() => undefined);
@@ -164,7 +174,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       if (status === 'PROCESSING_FAILED') {
         throw new UserInputError(`LinkedIn could not process the uploaded ${kind === 'images' ? 'image' : 'document'}.`);
       }
-      if (Date.now() + delay > deadline) return urn;
+      if (now() + delay > until) return urn;
       await sleep(delay);
     }
   };
@@ -501,6 +511,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
+      // From the start, like the client's timeout: loading and uploading the media take time too.
+      const deadline = now() + PROCESSING_DEADLINE_MS;
       const post = await preparePost(args);
       const { client, session } = await connect();
       const author = await actorUrn(client, session, args.organization);
@@ -509,13 +521,13 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       let linkPreview: { title: string; description?: string; thumbnail: boolean } | undefined;
       if (post.images) {
         const images: Array<{ id: string; altText?: string }> = [];
-        for (const { media, altText } of post.images) images.push({ id: await upload(client, 'images', author, media), altText });
+        for (const { media, altText } of post.images) images.push({ id: await upload(client, 'images', author, media, deadline), altText });
         content = images.length === 1 ? { media: images[0]! } : { multiImage: { images } };
       } else if (post.document) {
-        content = { media: { id: await upload(client, 'documents', author, post.document.media), title: post.document.title } };
+        content = { media: { id: await upload(client, 'documents', author, post.document.media, deadline), title: post.document.title } };
       } else if (post.article) {
         const { url, title, description, thumbnail, pageImageUrl } = post.article;
-        const uploading = thumbnail && upload(client, 'images', author, thumbnail);
+        const uploading = thumbnail && upload(client, 'images', author, thumbnail, deadline);
         // As when loading it, the page's own image is optional: post without it if LinkedIn won't take it.
         const thumbnailUrn = await (pageImageUrl ? uploading?.catch(() => undefined) : uploading);
         content = { article: { source: url, title, description, thumbnail: thumbnailUrn } };
