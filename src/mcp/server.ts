@@ -210,10 +210,16 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     .describe(
       'Act as this LinkedIn Page instead of as the member: its organization ID or urn:li:organization:<id>. The user must be an admin of the Page.',
     );
+  // Strict, because these tools publish: an argument dropped silently (a mistyped key, or `organization` without Pages)
+  // would publish something other than what the user approved, or as someone else.
+  const pagesOff =
+    'Acting as a Page needs LINKEDIN_PAGES turned on for this connector (Community Management API). Leave out "organization" to act as yourself.';
   const withOrganization = <T extends z.ZodRawShape>(shape: T) =>
-    (organizations ? z.object({ ...shape, organization: organizationField }) : z.object(shape)) as unknown as z.ZodObject<
-      T & { organization: typeof organizationField }
-    >;
+    (organizations
+      ? z.strictObject({ ...shape, organization: organizationField })
+      : z.strictObject(shape, {
+          error: (issue) => (issue.code === 'unrecognized_keys' && issue.keys.includes('organization') ? pagesOff : undefined),
+        })) as unknown as z.ZodObject<T & { organization: typeof organizationField }>;
 
   // ---------------------------------------------------------------- profile
 

@@ -15,6 +15,8 @@ import { PDF, PNG, startServer, type TestServer } from './helpers/http.js';
 import { zipArchive } from './helpers/zip.js';
 
 const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
+const PAGES_OFF =
+  'Acting as a Page needs LINKEDIN_PAGES turned on for this connector (Community Management API). Leave out "organization" to act as yourself.';
 
 class StubAuth implements LinkedInAuth {
   member: MemberInfo | undefined;
@@ -537,6 +539,32 @@ describe('linkedin_create_post', () => {
     expect(result.data).toMatchObject({ author: 'urn:li:organization:2414183' });
     expect(h.linkedin.find('GET', '/v2/userinfo')).toHaveLength(0);
   });
+
+  it('refuses to act as a Page when Pages are not turned on, rather than posting as the member', async () => {
+    const h = await harness();
+    const create = (await h.client.listTools()).tools.find((t) => t.name === 'linkedin_create_post')!;
+    expect(create.inputSchema.additionalProperties).toBe(false);
+    for (const name of ['linkedin_create_post', 'linkedin_preview_post']) {
+      expect(await call(h, name, { text: 'Company news', organization: '2414183' })).toEqual({
+        isError: true,
+        data: undefined,
+        text: `Input validation error: Invalid arguments for tool ${name}: ${PAGES_OFF}`,
+      });
+    }
+    // Other mistakes keep their own explanation.
+    const invalid = 'Input validation error: Invalid arguments for tool linkedin_create_post: ';
+    expect((await call(h, 'linkedin_create_post', { text: 'Hi', visibilty: 'CONNECTIONS' })).text).toBe(`${invalid}Unrecognized key: "visibilty"`);
+    expect((await call(h, 'linkedin_create_post', { text: '' })).text).toBe(`${invalid}text: Too small: expected string to have >=1 characters`);
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('refuses arguments it does not know instead of ignoring them', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    expect((await call(h, 'linkedin_create_post', { text: 'Only for my network', visibilty: 'CONNECTIONS' })).text).toBe(
+      'Input validation error: Invalid arguments for tool linkedin_create_post: Unrecognized key: "visibilty"',
+    );
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
 });
 
 describe('linkedin_preview_post', () => {
@@ -906,6 +934,17 @@ describe('engagement tools', () => {
     const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
     const result = await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9' });
     expect(result).toMatchObject({ isError: true, text: expect.stringContaining('w_member_social_feed') });
+  });
+
+  it('refuses to act as a Page when Pages are not turned on, rather than acting as the member', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_member_social_feed'] });
+    for (const [name, args] of [
+      ['linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats' }],
+      ['linkedin_react_to_post', { post: 'urn:li:share:9' }],
+    ] as const) {
+      expect((await call(h, name, { ...args, organization: '77' })).text).toBe(`Input validation error: Invalid arguments for tool ${name}: ${PAGES_OFF}`);
+    }
+    expect(h.linkedin.requests).toHaveLength(0);
   });
 });
 

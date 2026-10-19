@@ -48,6 +48,7 @@ describe('safeFetch', () => {
         const timer = setInterval(() => res.write('x'), 50);
         res.on('close', () => clearInterval(timer));
       } else if (req.url === '/to-file') res.writeHead(302, { Location: 'file:///etc/passwd' }).end();
+      else if (req.url === '/to-nowhere') res.writeHead(302, { Location: 'http://[' }).end();
       else if (req.url?.startsWith('/redirect/')) {
         const remaining = Number(req.url.split('/')[2]);
         res.writeHead(302, { Location: remaining > 0 ? `/redirect/${remaining - 1}` : '/hello' }).end();
@@ -88,6 +89,12 @@ describe('safeFetch', () => {
 
   it('re-checks redirect targets', async () => {
     await expect(safeFetch(`${server.url}/to-file`, open)).rejects.toThrow(/Only http/);
+  });
+
+  it('reports a redirect to an invalid URL as a fetch failure', async () => {
+    const failure = safeFetch(`${server.url}/to-nowhere`, open);
+    await expect(failure).rejects.toThrow(FetchError);
+    await expect(failure).rejects.toThrow(`Fetching ${server.url}/to-nowhere failed: it redirected to an invalid URL.`);
   });
 
   it('reports HTTP errors', async () => {

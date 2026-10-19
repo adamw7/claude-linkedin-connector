@@ -66,6 +66,15 @@ function decodeFilename(name: string): string {
   }
 }
 
+/** The local path a file: URL names; one with a host (a network share) or an encoded slash names none. */
+function fileUrlPath(url: string): string {
+  try {
+    return fileURLToPath(url);
+  } catch (error) {
+    throw new UserInputError(`"${url}" is not a local file URL (${(error as Error).message}). Pass the file's path instead.`);
+  }
+}
+
 export function expandHome(path: string): string {
   return path === '~' || path.startsWith('~/') || path.startsWith('~\\') ? homedir() + path.slice(1) : path;
 }
@@ -113,7 +122,7 @@ export async function readSource(
   if (dirs === undefined) {
     throw new UserInputError(`"${source}" is not an http(s) URL or base64 data: URI. Local files cannot be read by a remote connector.`);
   }
-  const path = trimmed.startsWith('file://') ? fileURLToPath(trimmed) : expandHome(trimmed);
+  const path = trimmed.startsWith('file://') ? fileUrlPath(trimmed) : expandHome(trimmed);
   const relativePath = !isAbsolute(path);
   const absolute = relativePath ? resolve(options.cwd ?? process.cwd(), path) : path;
   const outside = () =>

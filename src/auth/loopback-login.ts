@@ -95,8 +95,9 @@ export class LoopbackLogin {
     };
 
     const onRequest = async (req: IncomingMessage, res: ServerResponse) => {
-      const url = new URL(req.url ?? '/', redirect);
-      if (url.pathname !== redirect.pathname) {
+      // Not `new URL`: Node accepts request targets such as `//[` that don't parse, and a throw here would crash the server.
+      const url = URL.parse(req.url ?? '/', redirect.href);
+      if (!url || url.pathname !== redirect.pathname) {
         res.writeHead(404, { Connection: 'close' }).end();
         return;
       }

@@ -118,7 +118,9 @@ export async function safeFetch(input: string, options: SafeFetchOptions): Promi
       return { data: result.data, contentType: result.contentType, url: url.toString() };
     }
     if (redirects >= (options.maxRedirects ?? 5)) throw new FetchError(`Too many redirects fetching ${input}.`);
-    url = parseHttpUrl(new URL(result.redirect, url).toString());
+    const next = URL.parse(result.redirect, url.href);
+    if (!next) throw new FetchError(`Fetching ${url.toString()} failed: it redirected to an invalid URL.`);
+    url = parseHttpUrl(next.toString());
   }
 }
 
