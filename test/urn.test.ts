@@ -34,6 +34,26 @@ describe('URN helpers', () => {
     expect(() => organizationUrn('acme')).toThrow(UserInputError);
   });
 
+  it("finds a Page's organization ID in the address of its admin view, and says where to look for it", () => {
+    for (const address of [
+      'https://www.linkedin.com/company/2414183/admin/dashboard/',
+      ' linkedin.com/company/2414183 ',
+      'https://www.LinkedIn.com/company/2414183?viewAsMember=true',
+      'https://www.linkedin.com/company/2414183#about',
+    ]) {
+      expect(organizationUrn(address), address).toBe('urn:li:organization:2414183');
+    }
+    // The public address of most Pages has a name instead, and a longer number is not the ID.
+    for (const address of ['https://www.linkedin.com/company/acme-corp/', 'https://www.linkedin.com/company/2414183acme/']) {
+      expect(() => organizationUrn(address), address).toThrow(
+        new UserInputError(
+          `"${address}" is not a LinkedIn organization ID. Open the Page's admin view on linkedin.com: its address, linkedin.com/company/<ID>/admin/, ` +
+            'holds the ID. Pass that number, that address, or urn:li:organization:<ID>.',
+        ),
+      );
+    }
+  });
+
   it('links to a post', () => {
     expect(postUrl('urn:li:share:1')).toBe('https://www.linkedin.com/feed/update/urn:li:share:1/');
   });

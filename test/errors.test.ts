@@ -26,7 +26,10 @@ describe('describeError', () => {
   });
 
   it('explains API version and rate-limit errors', () => {
-    expect(describeError(new LinkedInApiError(426, 'Version not active'), 'local')).toMatch(/LINKEDIN_API_VERSION/);
+    expect(describeError(new LinkedInApiError(426, 'Version not active'), 'local')).toBe(
+      'LinkedIn accepts none of the API versions the connector tried: Version not active. Check the clock of the computer the connector runs on ' +
+        'and update the connector to its latest release, or set LINKEDIN_API_VERSION to a version LinkedIn supports (YYYYMM).',
+    );
     expect(describeError(new LinkedInApiError(429, 'Slow down', { retryAfter: '30' }), 'local')).toBe(
       "LinkedIn's rate limit was reached (retry after 30s). Try again later.",
     );

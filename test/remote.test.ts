@@ -146,7 +146,11 @@ function hiddenField(html: string, name: string): string {
 }
 
 /** Approves the consent screen and plays LinkedIn's redirect back. Returns where the client is finally sent. */
-async function approve(browser: Browser, authorizationUrl: string, options: { decision?: string; linkedInQuery?: Record<string, string> } = {}): Promise<URL> {
+async function approve(
+  browser: Browser,
+  authorizationUrl: string,
+  options: { decision?: string; linkedInQuery?: Record<string, string>; scope?: string } = {},
+): Promise<URL> {
   const consentPage = await browser.get(authorizationUrl);
   expect(consentPage.status).toBe(200);
   const html = await consentPage.text();
@@ -161,7 +165,7 @@ async function approve(browser: Browser, authorizationUrl: string, options: { de
   if (next.origin !== OAUTH_BASE) return next;
   expect(next.pathname).toBe('/oauth/v2/authorization');
   expect(next.searchParams.get('client_id')).toBe('test-client');
-  expect(next.searchParams.get('scope')).toBe('openid profile email w_member_social');
+  expect(next.searchParams.get('scope')).toBe(options.scope ?? 'openid profile email w_member_social');
   const callback = new URL(next.searchParams.get('redirect_uri')!);
   expect(callback.href).toBe(new URL('/oauth/callback', authorizationUrl).href);
   for (const [key, value] of Object.entries(options.linkedInQuery ?? { code: 'li-code' })) callback.searchParams.set(key, value);
@@ -665,9 +669,37 @@ describe('authorization endpoint', () => {
     const declined = await approve(new Browser(), authorizeUrl(remote, params), { decision: 'deny' });
     expect(Object.fromEntries(declined.searchParams)).toMatchObject({ error: 'access_denied', state: 'abc' });
     const cancelled = await approve(new Browser(), authorizeUrl(remote, params), { linkedInQuery: { error: 'user_cancelled_authorize' } });
-    expect(Object.fromEntries(cancelled.searchParams)).toMatchObject({ error: 'access_denied', state: 'abc' });
+    expect(Object.fromEntries(cancelled.searchParams)).toMatchObject({ error: 'access_denied', error_description: 'LinkedIn sign-in was cancelled.', state: 'abc' });
+    const described = await approve(new Browser(), authorizeUrl(remote, params), {
+      linkedInQuery: { error: 'user_cancelled_login', error_description: 'The user &quot;cancelled&quot; LinkedIn login' },
+    });
+    expect(described.searchParams.get('error_description')).toBe('The user "cancelled" LinkedIn login');
     const badCode = await approve(new Browser(), authorizeUrl(remote, params), { linkedInQuery: { code: 'wrong' } });
     expect(badCode.searchParams.get('error')).toBe('server_error');
+  });
+
+  it('tells the client, and the operator, when the LinkedIn app lacks the product for a scope', async () => {
+    const remote = await startRemote({ scopes: [...DEFAULT_SCOPES, 'w_member_social_feed', 'r_ads'] });
+    const clientId = await client(remote);
+    const params = { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256', state: 'abc' };
+    const refuse = async (scope: string) => {
+      const back = await approve(new Browser(), authorizeUrl(remote, params), {
+        scope: 'openid profile email w_member_social w_member_social_feed r_ads',
+        // As LinkedIn sends it, quotes HTML-escaped.
+        linkedInQuery: { error: 'unauthorized_scope_error', error_description: `Scope &quot;${scope}&quot; is not authorized for your application` },
+      });
+      expect(back.searchParams.get('error')).toBe('access_denied');
+      expect(back.searchParams.get('state')).toBe('abc');
+      return back.searchParams.get('error_description');
+    };
+    expect(await refuse('w_member_social_feed')).toBe(
+      "This connector's LinkedIn app doesn't have the Community Management API product. Ask whoever runs the connector to add it or turn off LINKEDIN_COMMENTS.",
+    );
+    expect(await refuse('w_member_social')).toBe("This connector's LinkedIn app doesn't have the Share on LinkedIn product. Ask whoever runs the connector to add it.");
+    expect(await refuse('r_ads')).toBe("This connector's LinkedIn app doesn't have the product that grants r_ads. Ask whoever runs the connector to add it.");
+    expect(remote.logs.filter((entry) => entry.event === 'linkedin_scope_not_authorized')).toEqual(
+      ['w_member_social_feed', 'w_member_social', 'r_ads'].map((scope) => ({ level: 'warn', event: 'linkedin_scope_not_authorized', scope, clientId })),
+    );
   });
 
   it('rejects LinkedIn callbacks that do not belong to this browser session', async () => {

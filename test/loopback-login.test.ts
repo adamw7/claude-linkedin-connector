@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { LoopbackLogin, validateLoopbackRedirect, type LoopbackLoginHandle } from '../src/auth/loopback-login.js';
 import { ConfigError } from '../src/errors.js';
+import { escapeHtml } from '../src/html.js';
 import type { LinkedInTokens } from '../src/linkedin/oauth.js';
 import { FakeLinkedIn, OAUTH_BASE } from './helpers/fake-linkedin.js';
 import { freePort, startServer, type TestServer } from './helpers/http.js';
@@ -21,12 +22,15 @@ function callback(flow: LoopbackLoginHandle, params: Record<string, string>, pat
   return url.href;
 }
 
-async function login(options: { onTokens?: (tokens: LinkedInTokens) => Promise<string | undefined>; timeoutMs?: number; host?: string } = {}) {
+async function login(
+  options: { onTokens?: (tokens: LinkedInTokens) => Promise<string | undefined>; timeoutMs?: number; host?: string; scopes?: string[] } = {},
+) {
   const linkedin = new FakeLinkedIn();
   const port = await freePort();
   const received: LinkedInTokens[] = [];
+  const scopes = options.scopes ?? ['openid', 'w_member_social'];
   const loopback = new LoopbackLogin({
-    app: { clientId: 'test-client', clientSecret: 'test-secret', scopes: ['openid', 'w_member_social'], oauthBaseUrl: OAUTH_BASE, fetch: linkedin.fetch },
+    app: { clientId: 'test-client', clientSecret: 'test-secret', scopes, oauthBaseUrl: OAUTH_BASE, fetch: linkedin.fetch },
     redirectUri: `http://${options.host ?? '127.0.0.1'}:${port}/callback`,
     onTokens:
       options.onTokens ??
@@ -50,6 +54,11 @@ describe('validateLoopbackRedirect', () => {
     for (const uri of ['not a url', 'https://localhost:8765/cb', 'http://example.com:8765/cb', 'http://localhost/cb', 'http://localhost:0/cb']) {
       expect(() => validateLoopbackRedirect(uri), uri).toThrow(ConfigError);
     }
+    // Named as the Claude Desktop extension's settings show it, and as the variable.
+    expect(() => validateLoopbackRedirect('not a url')).toThrow('"Redirect URL" (LINKEDIN_REDIRECT_URI) "not a url" is not a valid URL.');
+    expect(() => validateLoopbackRedirect('http://localhost/cb')).toThrow(
+      '"Redirect URL" (LINKEDIN_REDIRECT_URI) must look like http://localhost:<port>/<path> (got "http://localhost/cb").',
+    );
   });
 });
 
@@ -161,6 +170,34 @@ describe('LoopbackLogin', () => {
     await expect(flow.completion).rejects.toThrow('LinkedIn sign-in was not completed: <script>x</script>');
   });
 
+  it('says what to do when the LinkedIn app lacks the product for a scope', async () => {
+    const apps = 'https://www.linkedin.com/developers/apps';
+    const refused = async (scope: string) => {
+      const { loopback } = await login({ scopes: ['openid', 'profile', 'w_member_social', 'w_member_social_feed', 'r_ads'] });
+      const flow = await loopback.start();
+      // As LinkedIn sends it, quotes HTML-escaped.
+      const description = `Scope &quot;${scope}&quot; is not authorized for your application`;
+      const response = await fetch(callback(flow, { error: 'unauthorized_scope_error', error_description: description }));
+      expect(response.status).toBe(400);
+      const error = await flow.completion.catch((reason: Error) => reason.message);
+      expect(await response.text()).toContain(escapeHtml(String(error).replace('LinkedIn sign-in was not completed: ', '')));
+      return error;
+    };
+    expect(await refused('w_member_social_feed')).toBe(
+      'LinkedIn sign-in was not completed: Scope "w_member_social_feed" is not authorized for your application. ' +
+        'Your LinkedIn app doesn\'t have the Community Management API product, which "Comments and reactions" needs. ' +
+        `Turn that setting off (LINKEDIN_COMMENTS, or remove w_member_social_feed from LINKEDIN_SCOPES), or add the product to the app at ${apps}; then sign in again.`,
+    );
+    expect(await refused('w_member_social')).toBe(
+      'LinkedIn sign-in was not completed: Scope "w_member_social" is not authorized for your application. ' +
+        `Your LinkedIn app doesn't have the Share on LinkedIn product: add it at ${apps}, then sign in again.`,
+    );
+    expect(await refused('r_ads')).toBe(
+      'LinkedIn sign-in was not completed: Scope "r_ads" is not authorized for your application. ' +
+        `Your LinkedIn app doesn't have the product that grants r_ads: add that product at ${apps}, or remove r_ads from LINKEDIN_SCOPES; then sign in again.`,
+    );
+  });
+
   it('gives up after the timeout', async () => {
     const { loopback } = await login({ timeoutMs: 50 });
     const flow = await loopback.start();
@@ -177,5 +214,6 @@ describe('LoopbackLogin', () => {
       onTokens: async () => undefined,
     });
     await expect(loopback.start()).rejects.toThrow(/Port \d+ is already in use/);
+    await expect(loopback.start()).rejects.toThrow('or set "Redirect URL" (LINKEDIN_REDIRECT_URI) to another localhost port');
   });
 });

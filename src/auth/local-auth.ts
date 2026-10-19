@@ -14,6 +14,10 @@ const EXPIRY_MARGIN_MS = 60_000;
 export const SIGN_IN_HINT =
   'Ask Claude to run the linkedin_login tool to get a sign-in link, or run "claude-linkedin-connector login" in a terminal.';
 
+/** LinkedIn signs in whoever is signed in to linkedin.com in the browser, so signing in again alone doesn't switch accounts. */
+export const SWITCH_ACCOUNT_HINT =
+  'If you meant to switch to another LinkedIn account, sign out of linkedin.com in your browser first, then sign in again: LinkedIn signs in whoever is signed in there.';
+
 /** For a stored token LinkedIn rejects: linkedin_login alone would report "already signed in". */
 export const REAUTH_HINT =
   'To sign in again, run the linkedin_login tool with force: true, or run "claude-linkedin-connector login" in a terminal. ' +

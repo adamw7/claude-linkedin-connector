@@ -77,21 +77,21 @@
     "comments": {
       "type": "boolean",
       "title": "Comments and reactions",
-      "description": "Let Claude comment on and react to posts. Needs LinkedIn's Community Management API product on your app; sign in again after turning it on.",
+      "description": "Let Claude comment on and react to posts. Needs LinkedIn's Community Management API product on your app (without it, signing in fails); sign in again after turning it on.",
       "default": false,
       "required": false
     },
     "pages": {
       "type": "boolean",
       "title": "Post as LinkedIn Pages",
-      "description": "Let Claude post, comment and react as LinkedIn Pages you administer. Needs LinkedIn's Community Management API product on your app; sign in again after turning it on.",
+      "description": "Let Claude post, comment and react as LinkedIn Pages you administer. Needs LinkedIn's Community Management API product on your app (without it, signing in fails); sign in again after turning it on.",
       "default": false,
       "required": false
     },
     "file_dirs": {
       "type": "string",
       "title": "Folders for local files",
-      "description": "Comma-separated folders Claude may read images, documents and Connections.csv from. Leave empty for Downloads, Desktop and Pictures.",
+      "description": "Comma-separated folders Claude may read images, documents and Connections.csv from, instead of Downloads, Desktop and Pictures: list those too to keep them. Leave empty for the defaults.",
       "default": "",
       "required": false
     }

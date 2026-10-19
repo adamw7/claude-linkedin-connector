@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { SWITCH_ACCOUNT_HINT } from '../src/auth/local-auth.js';
 import { PostHistory } from '../src/auth/post-history.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from '../src/auth/types.js';
 import { ConfigError, NotAuthenticatedError } from '../src/errors.js';
@@ -16,24 +17,33 @@ import { zipArchive } from './helpers/zip.js';
 
 const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
 const PAGES_OFF =
-  'Acting as a Page needs LINKEDIN_PAGES turned on for this connector (Community Management API). Leave out "organization" to act as yourself.';
+  'Acting as a Page needs "Post as LinkedIn Pages" (LINKEDIN_PAGES) turned on for this connector (Community Management API). Leave out "organization" to act as yourself.';
 
 class StubAuth implements LinkedInAuth {
   member: MemberInfo | undefined;
   signedIn = true;
+  /** What the sign-in granted; the harness grants what the connector is configured with. */
+  scopes = DEFAULT_SCOPES;
   missingScopes: string[] | undefined;
   logins = 0;
 
   async getSession(): Promise<LinkedInSession> {
     if (!this.signedIn) throw new NotAuthenticatedError('You are not signed in to LinkedIn.');
-    return { accessToken: 'li-token', scopes: DEFAULT_SCOPES, ...(this.member ? { memberId: this.member.id } : {}) };
+    return { accessToken: 'li-token', scopes: this.scopes, ...(this.member ? { memberId: this.member.id } : {}) };
   }
   async rememberMember(member: MemberInfo): Promise<void> {
     this.member = member;
   }
   async status(): Promise<AuthStatus> {
     return this.signedIn
-      ? { authenticated: true, source: 'token-file', scopes: DEFAULT_SCOPES, missingScopes: this.missingScopes, message: 'Signed in as Ada.' }
+      ? {
+          authenticated: true,
+          source: 'token-file',
+          scopes: this.scopes,
+          missingScopes: this.missingScopes,
+          ...(this.member ? { memberUrn: `urn:li:person:${this.member.id}` } : {}),
+          message: 'Signed in as Ada.',
+        }
       : { authenticated: false, source: 'none', scopes: [], message: 'Not signed in.' };
   }
 }
@@ -42,9 +52,12 @@ class StubLocalAuth extends StubAuth {
   /** How the next browser sign-in ends: the member's name, a failure, or never (the user hasn't finished). */
   completion: Promise<string | undefined> = new Promise(() => {});
   browserOpened = true;
+  /** Who the next sign-in signs in, when not whoever was signed in before. */
+  signsInAs: MemberInfo | undefined;
 
   async login(): Promise<LoginStart> {
     this.logins += 1;
+    this.member = this.signsInAs ?? this.member;
     return {
       authorizationUrl: 'https://www.linkedin.com/oauth/v2/authorization?state=x',
       expiresInSeconds: 600,
@@ -80,6 +93,7 @@ async function harness(
   const linkedin = new FakeLinkedIn();
   const mode = options.mode ?? 'local';
   const auth = options.auth ?? (mode === 'local' ? new StubLocalAuth() : new StubAuth());
+  if (!options.auth) auth.scopes = options.scopes ?? DEFAULT_SCOPES;
   const server = createConnectorServer({
     mode,
     auth,
@@ -196,6 +210,19 @@ describe('tool list', () => {
     expect(outputs('linkedin_delete_post')).toEqual(['deleted', 'postUrn']);
   });
 
+  it('tells Claude how to get files that were attached to the chat', async () => {
+    const attached = "Images and documents the user attached to the chat can't be passed to these tools: only their contents reach you, not the file. ";
+    expect((await harness({ localFileDirs: ['/home/ada/Downloads', '/home/ada/Desktop'] })).client.getInstructions()).toContain(
+      `${attached}Ask the user to save the file in one of the folders local files may come from (/home/ada/Downloads, /home/ada/Desktop) and pass its path.`,
+    );
+    const remote = await harness({ mode: 'remote' });
+    expect(remote.client.getInstructions()).toContain(`${attached}Ask the user for a link to the file itself.`);
+    const connections = (await remote.client.listTools()).tools.find((t) => t.name === 'linkedin_read_connections')!;
+    expect(connections.description).toContain(
+      'Pass the text of Connections.csv as csv when the user attached or pasted it (an attached zip archive cannot be passed on), or a link to the file.',
+    );
+  });
+
   it('has no login/logout tools in remote mode', async () => {
     const { client } = await harness({ mode: 'remote' });
     const names = (await client.listTools()).tools.map((t) => t.name);
@@ -306,7 +333,7 @@ describe('linkedin_read_connections', () => {
       isError: true,
       text:
         `No LinkedIn data export was found in ${empty}. Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) ` +
-        'and save the zip archive LinkedIn emails you in your Downloads folder, or pass its path.',
+        'and save the zip archive LinkedIn emails you in one of those folders, or pass its path.',
     });
   });
 
@@ -538,6 +565,63 @@ describe('linkedin_create_post', () => {
     const result = await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183' });
     expect(result.data).toMatchObject({ author: 'urn:li:organization:2414183' });
     expect(h.linkedin.find('GET', '/v2/userinfo')).toHaveLength(0);
+  });
+
+  it("accepts the address of the Page's admin view as the Page", async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    const result = await call(h, 'linkedin_create_post', { text: 'Company news', organization: 'https://www.linkedin.com/company/2414183/admin/dashboard/' });
+    expect(result.data).toMatchObject({ author: 'urn:li:organization:2414183' });
+  });
+
+  it("keeps a Page's posts public, before anything is uploaded", async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    const args = { text: 'Company news', organization: '2414183', visibility: 'CONNECTIONS', images: [{ source: join(files, 'photo.png') }] };
+    for (const name of ['linkedin_preview_post', 'linkedin_create_post']) {
+      expect(await call(h, name, args)).toEqual({
+        isError: true,
+        data: undefined,
+        text: 'A Page has followers, not connections, so its posts are public. Leave out visibility, or set it to PUBLIC.',
+      });
+    }
+    expect(h.linkedin.requests).toHaveLength(0);
+    expect((await call(h, 'linkedin_create_post', { text: 'For my network', visibility: 'CONNECTIONS' })).data).toMatchObject({ visibility: 'CONNECTIONS' });
+  });
+
+  it("explains that only a Page's admins can post as it, since signing in again won't help", async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    h.linkedin.override((r) =>
+      r.method === 'POST' && r.url.pathname.startsWith('/rest/images') ? new Response('{"message":"Not enough permissions"}', { status: 403 }) : undefined,
+    );
+    const photo = { images: [{ source: join(files, 'photo.png') }] };
+    expect((await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183', ...photo })).text).toBe(
+      "LinkedIn didn't let you act as the Page urn:li:organization:2414183: Not enough permissions. " +
+        "Only a Page's super admins and content admins can post, comment and react as it: check your role on the Page, and that it is the right Page.",
+    );
+    // As the member, a 403 is about the app's products or the sign-in.
+    expect((await call(h, 'linkedin_create_post', { text: 'My news', ...photo })).text).toMatch(/^LinkedIn denied permission for this action: Not enough permissions\./);
+    expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
+    // Other refusals keep their own explanation.
+    h.linkedin.override((r) => (r.method === 'POST' && r.url.pathname === '/rest/posts' ? new Response('{"message":"Duplicate post"}', { status: 422 }) : undefined));
+    expect((await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183' })).text).toBe(
+      'LinkedIn rejected the request (HTTP 422): Duplicate post.',
+    );
+  });
+
+  it('signs in again when the sign-in predates posting as Pages', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    h.auth.scopes = DEFAULT_SCOPES;
+    expect(await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183' })).toEqual({
+      isError: true,
+      data: undefined,
+      text:
+        'Your LinkedIn sign-in predates turning on "Post as LinkedIn Pages" (LINKEDIN_PAGES), so LinkedIn doesn\'t allow this yet. ' +
+        "The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): " +
+        'https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+    });
+    expect(h.auth.logins).toBe(1);
+    expect(h.linkedin.requests).toHaveLength(0);
+    // Posting as yourself needs nothing new.
+    expect((await call(h, 'linkedin_create_post', { text: 'My news' })).isError).toBe(false);
   });
 
   it('refuses to act as a Page when Pages are not turned on, rather than posting as the member', async () => {
@@ -932,8 +1016,14 @@ describe('engagement tools', () => {
 
   it('requires a Page when only organization access is available', async () => {
     const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
-    const result = await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9' });
-    expect(result).toMatchObject({ isError: true, text: expect.stringContaining('w_member_social_feed') });
+    expect((await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9' })).text).toBe(
+      'Commenting and reacting as yourself needs "Comments and reactions" (LINKEDIN_COMMENTS) turned on for this connector (Community Management API). Pass "organization" to act as a Page instead.',
+    );
+    const remote = await harness({ mode: 'remote', scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    expect((await call(remote, 'linkedin_react_to_post', { post: 'urn:li:share:9' })).text).toBe(
+      'Commenting and reacting as yourself needs LINKEDIN_COMMENTS turned on for this connector (Community Management API). Pass "organization" to act as a Page instead.',
+    );
+    expect(h.linkedin.requests).toHaveLength(0);
   });
 
   it('refuses to act as a Page when Pages are not turned on, rather than acting as the member', async () => {
@@ -944,7 +1034,50 @@ describe('engagement tools', () => {
     ] as const) {
       expect((await call(h, name, { ...args, organization: '77' })).text).toBe(`Input validation error: Invalid arguments for tool ${name}: ${PAGES_OFF}`);
     }
+    // Only the server's operator can turn it on.
+    const remote = await harness({ mode: 'remote', scopes: [...DEFAULT_SCOPES, 'w_member_social_feed'] });
+    expect((await call(remote, 'linkedin_react_to_post', { post: 'urn:li:share:9', organization: '77' })).text).toBe(
+      'Input validation error: Invalid arguments for tool linkedin_react_to_post: ' +
+        'Acting as a Page needs LINKEDIN_PAGES turned on for this connector (Community Management API). Leave out "organization" to act as yourself.',
+    );
     expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('signs in again when the sign-in predates comments and reactions', async () => {
+    const h = await harness({ scopes });
+    h.auth.scopes = [...DEFAULT_SCOPES, 'w_organization_social'];
+    const result = await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats' });
+    expect(result.text).toMatch(
+      /^Your LinkedIn sign-in predates turning on "Comments and reactions" \(LINKEDIN_COMMENTS\), so LinkedIn doesn't allow this yet\. The LinkedIn sign-in page is open/,
+    );
+    expect(h.auth.logins).toBe(1);
+    expect(h.linkedin.requests).toHaveLength(0);
+    // Acting as a Page needs only Pages.
+    expect((await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats', organization: '77' })).isError).toBe(false);
+  });
+
+  it('asks to reconnect in remote mode when the connection predates a feature', async () => {
+    const h = await harness({ mode: 'remote', scopes });
+    h.auth.scopes = DEFAULT_SCOPES;
+    expect((await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9', organization: '77' })).text).toBe(
+      "Your LinkedIn connection predates LINKEDIN_PAGES being turned on for this connector, so LinkedIn doesn't allow this yet. " +
+        "Disconnect and reconnect the LinkedIn connector in Claude's settings.",
+    );
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it("explains that only a Page's admins can comment and react as it", async () => {
+    const h = await harness({ scopes });
+    h.linkedin.override((r) =>
+      r.url.pathname.startsWith('/rest/socialActions/') || r.url.pathname === '/rest/reactions' ? new Response('{"message":"Forbidden"}', { status: 403 }) : undefined,
+    );
+    for (const [name, args] of [
+      ['linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats' }],
+      ['linkedin_react_to_post', { post: 'urn:li:share:9' }],
+    ] as const) {
+      expect((await call(h, name, { ...args, organization: '77' })).text).toMatch(/^LinkedIn didn't let you act as the Page urn:li:organization:77: Forbidden\. Only a Page's/);
+      expect((await call(h, name, args)).text).toMatch(/^LinkedIn denied permission for this action: Forbidden\./);
+    }
   });
 });
 
@@ -1048,6 +1181,29 @@ describe('authentication tools', () => {
     });
   });
 
+  it('says how to switch accounts when a forced sign-in kept the same one', async () => {
+    const auth = new StubLocalAuth();
+    auth.member = { id: 'abc123' };
+    auth.completion = Promise.resolve('Ada Lovelace');
+    const h = await harness({ auth });
+    expect((await call(h, 'linkedin_login', { force: true })).data!.message).toBe(
+      `Signed in to LinkedIn as Ada Lovelace. That is the account you were already signed in with. ${SWITCH_ACCOUNT_HINT}`,
+    );
+    // Not forced: signing in again to grant new permissions was the point.
+    auth.missingScopes = ['w_member_social_feed'];
+    expect((await call(h, 'linkedin_login')).data!.message).toBe('Signed in to LinkedIn as Ada Lovelace.');
+    auth.signsInAs = { id: 'grace' };
+    expect((await call(h, 'linkedin_login', { force: true })).data!.message).toBe('Signed in to LinkedIn as Ada Lovelace.');
+    // Nobody to compare with.
+    auth.member = undefined;
+    auth.signsInAs = undefined;
+    expect((await call(h, 'linkedin_login', { force: true })).data!.message).toBe('Signed in to LinkedIn as Ada Lovelace.');
+    // Still waiting for the user: nothing to compare yet.
+    auth.member = { id: 'abc123' };
+    auth.completion = new Promise(() => {});
+    expect((await call(h, 'linkedin_login', { force: true })).data!.message).toMatch(/^The LinkedIn sign-in page is open in your browser; .*state=x$/);
+  });
+
   it('gives the link to open when no browser could be opened', async () => {
     const auth = new StubLocalAuth();
     auth.signedIn = false;
@@ -1063,10 +1219,16 @@ describe('authentication tools', () => {
     auth.signedIn = false;
     auth.completion = Promise.reject(new Error('LinkedIn sign-in was not completed: The user cancelled'));
     const h = await harness({ auth });
-    expect((await call(h, 'linkedin_login')).data).toMatchObject({
+    // The failed sign-in's link no longer works, so none is handed out.
+    expect((await call(h, 'linkedin_login')).data).toEqual({
+      alreadySignedIn: false,
       signedIn: false,
-      message:
-        "LinkedIn sign-in was not completed: The user cancelled. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x",
+      message: 'LinkedIn sign-in was not completed: The user cancelled.',
+    });
+    expect(await call(h, 'linkedin_get_profile')).toEqual({
+      isError: true,
+      data: undefined,
+      text: 'You are not signed in to LinkedIn. LinkedIn sign-in was not completed: The user cancelled.',
     });
   });
 

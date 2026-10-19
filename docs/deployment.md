@@ -228,6 +228,7 @@ The server writes one JSON object per line to stderr, with `time`, `level` (`inf
 | `member_authorized` / `member_not_allowed` | info / warn | Someone finished connecting, or was refused by `LINKEDIN_ALLOWED_MEMBERS` |
 | `tool_call` | info, warn if it failed | Audit trail: tool, member, client, duration, error, request ID; never the arguments |
 | `linkedin_token_exchange_failed` | warn | LinkedIn rejected a sign-in, often a wrong client secret or redirect URL |
+| `linkedin_scope_not_authorized` | warn | LinkedIn refused a scope the server asks for because the app lacks the product that grants it, e.g. `LINKEDIN_COMMENTS` without the Community Management API: add the product or turn the feature off |
 | `mcp_error` | warn | A malformed or unsupported MCP request |
 | `unhandled_error`, `uncaught_exception`, `unhandled_rejection` | error | Bugs; please [report them](https://github.com/adamw7/claude-linkedin-connector/issues) |
 | `shutting_down`, `shutdown_timeout` | info, warn | Stopping; requests still running after `SHUTDOWN_TIMEOUT` were cancelled |

@@ -147,7 +147,7 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
     const { status, stderr, calls } = setup([], { LINKEDIN_REDIRECT_URI: 'not a url' }, { login: true });
     expect(status).toBe(1);
     expect(calls.some((call) => call.startsWith('mcp add-json'))).toBe(true);
-    expect(stderr).toContain('LINKEDIN_REDIRECT_URI "not a url" is not a valid URL.');
+    expect(stderr).toContain('"Redirect URL" (LINKEDIN_REDIRECT_URI) "not a url" is not a valid URL.');
     expect(stderr).toContain('Signing in to LinkedIn failed (see above). "linkedin" is registered with Claude Code');
   });
 });

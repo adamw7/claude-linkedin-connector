@@ -12,9 +12,35 @@ All notable changes to this project are documented here. The format follows
   the web. Details moved to the guides: what the connector does with files and connections to the
   [usage guide](docs/usage.md), how remote sign-in and rate limits work to the
   [deployment guide](docs/deployment.md), and development and releasing to [docs/development.md](docs/development.md).
+- To post, comment or react as a Page, you can give Claude the address of the Page's admin view
+  (`linkedin.com/company/<ID>/admin/`). A Page given by name now gets an explanation of where to find its ID.
+- Messages about a setting name it as the Claude Desktop extension's settings show it, as well as by its
+  environment variable, e.g. "Post as LinkedIn Pages" (`LINKEDIN_PAGES`).
 
 ### Fixed
 
+- Claude no longer tries to post images or documents you attach in the chat, which it can't pass on to the
+  connector. It asks you to save the file and give its name (Claude Desktop, Claude Code) or for a link (remote
+  server). The usage guide no longer says attachments work.
+- A file outside the folders the connector may read now gets the exact value to set **Folders for local files**
+  (`LINKEDIN_FILE_DIRS`) to. The setting replaces the default folders rather than adding to them, which the
+  message, the docs and the extension's settings now say, so setting it no longer silently stops Downloads,
+  Desktop and Pictures from working.
+- Turning on **Comments and reactions** or **Post as LinkedIn Pages** without LinkedIn's Community Management API
+  made signing in fail with only LinkedIn's terse "not authorized" message (with `&quot;` in it). The error now
+  says which setting to turn off or which product to add to your LinkedIn app. A remote server logs
+  `linkedin_scope_not_authorized` so its operator knows.
+- Commenting, reacting or posting as a Page with a sign-in from before the feature was turned on now starts a new
+  sign-in (Claude Desktop, Claude Code) or asks you to reconnect (remote server), instead of failing with
+  "LinkedIn denied permission".
+- A sign-in that failed no longer hands out its link, which stopped working when it failed.
+- A Page post for connections only is refused before anything is uploaded: a Page's posts are always public.
+  When LinkedIn won't let you act as a Page, the error now says only its super admins and content admins can,
+  instead of telling you to sign in again.
+- Signing in again to switch LinkedIn accounts kept the account signed in to linkedin.com in your browser without
+  a word. Claude now says so and how to switch: sign out of linkedin.com first.
+- When LinkedIn accepts none of the API versions the connector tries, the error no longer only says to set
+  `LINKEDIN_API_VERSION`, which the Claude Desktop extension doesn't offer.
 - Asking to post, comment or react as a LinkedIn Page when posting as Pages isn't turned on now fails with an
   explanation. Before, the Page was ignored and the post, comment or reaction went out as you. The tools that
   publish now also refuse other arguments they don't know, such as a mistyped one, instead of ignoring them.

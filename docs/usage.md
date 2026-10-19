@@ -28,7 +28,8 @@ browser lands on this page:
 
 Claude notices by itself and carries on; there's no need to tell it you're done. Asking for something that needs
 LinkedIn before signing in starts the same sign-in. "Am I connected to LinkedIn?" shows who you're signed in as and when the sign-in
-expires (after 60 days).
+expires (after 60 days). LinkedIn signs in whoever is signed in to linkedin.com in your browser, so to switch
+accounts, sign out of linkedin.com first, then ask Claude to sign you in to LinkedIn again.
 
 With a remote server, the connector instead shows its own consent screen when you click **Connect** in
 Claude's connector settings, listing what Claude will be able to do, before sending you to LinkedIn:
@@ -77,16 +78,21 @@ More things to try:
   plain text and don't tag anyone.
 - **Claude gets the post's URL back**, so you can say "edit that post" or "delete it" right afterwards.
 - **One kind of attachment per post**: a link preview, 1–20 images, or one document.
+- **Posting as a Page** (if turned on) works for Pages you're a super admin or content admin of. Name the Page by
+  the address of its admin view, `linkedin.com/company/<ID>/admin/`: its public address usually has a name
+  instead of the number LinkedIn needs. A Page's posts are always public.
 - **Claude can't read your feed or past posts.** LinkedIn only gives that to partner apps. In local mode
   (Claude Desktop, Claude Code) the connector remembers the last 100 posts it published, with their text, so
   you can edit or delete them from any conversation later. For other posts, or in remote mode, keep the URL
   Claude gives you after publishing: a link copied from linkedin.com often won't work, but the code from the
   post's **Embed this post** menu item will.
-- **Attach files by path, link or upload.** Images and documents can be local files (local mode), `http(s)` links
-  or files you attach in the chat. Local files are only read from your Downloads, Desktop and Pictures folders
-  (also the ones OneDrive keeps on Windows) and the folder the connector runs in, so a page or document Claude
-  reads can't get it to post other files from your computer. To allow other folders, set `LINKEDIN_FILE_DIRS`
-  (**Folders for local files** in the Claude Desktop extension's settings).
+- **Give files by name or link, not as attachments.** Claude can't pass on an image or document you attach in the
+  chat: it sees what's in it, not the file. In local mode, save the file and tell Claude its name; with a remote
+  server, give a link to the file itself. Local files are only read from your Downloads, Desktop and Pictures
+  folders (also the ones OneDrive keeps on Windows) and the folder the connector runs in, so a page or document
+  Claude reads can't get it to post other files from your computer. To use other folders, set **Folders for local
+  files** in the Claude Desktop extension's settings (`LINKEDIN_FILE_DIRS`). It replaces the default folders, so
+  list the ones you want to keep too; if a file is outside them, the error message gives the value to use.
 - **Images must be JPEG, PNG or GIF, and documents PDF or Office files.** Convert iPhone photos (HEIC) and WebP
   images to JPEG or PNG, and export Keynote or Pages files as PDF; the connector tells you what it got. Video
   posts aren't supported.
@@ -97,7 +103,8 @@ LinkedIn's API doesn't give apps your list of connections, so the connector read
 LinkedIn, open **Settings → Data privacy → Get a copy of your data**, choose **Connections**, and save the zip
 archive LinkedIn emails you. In local mode, just ask: the connector finds the newest export in your Downloads,
 Desktop and Pictures folders, zipped or not. You can also give its path or a link, or attach or paste
-`Connections.csv`.
+`Connections.csv` (not the zip archive): Claude then copies its text to the connector, which takes a while for
+thousands of connections.
 
 Claude can search it by name, company (one or several), position or connection date, and count your connections
 at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear only for
