@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ENTRY = join(ROOT, 'dist', 'index.js');
 const DEFAULT_SCOPES = 'openid profile email w_member_social';
-/** The scopes --comments and --pages add, as LINKEDIN_COMMENTS and LINKEDIN_PAGES do (src/config.ts). */
+/** The scopes --comments and --pages add, as LINKEDIN_COMMENTS and LINKEDIN_PAGES do (src/linkedin/scopes.ts). */
 const FEATURE_SCOPES = { comments: 'w_member_social_feed', pages: 'w_organization_social' };
 const IS_WINDOWS = process.platform === 'win32';
 /** How to run this script again with options, for messages. */

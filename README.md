@@ -52,9 +52,11 @@ Claude shows you the exact text and asks for your approval before publishing, ed
 **Comments, reactions and posting as a Page** need LinkedIn's **Community Management API** product, which
 LinkedIn grants on application. If you get it, turn on **Comments and reactions** and/or **Post as LinkedIn
 Pages** in the Claude Desktop extension's settings (`--comments` / `--pages` for `npm run setup`, or
-`LINKEDIN_COMMENTS=true` / `LINKEDIN_PAGES=true`), then sign in again. Posting, commenting and reacting then also
-accept an `organization` argument to act as a Page you administer. Tools for features you haven't turned on are
-not offered to Claude.
+`LINKEDIN_COMMENTS=true` / `LINKEDIN_PAGES=true`), then sign in again; until LinkedIn grants the product, signing
+in with them turned on fails. Posting, commenting and reacting then also accept an `organization` argument to act
+as a Page you're a super admin or content admin of: give Claude the address of the Page's admin view,
+`linkedin.com/company/<ID>/admin/`, or the number in it. Tools for features you haven't turned on are not offered
+to Claude.
 
 ## Other ways to install locally
 
@@ -140,6 +142,8 @@ Kubernetes, how sign-in works, logs, rate limits and rotating the secret.
   LinkedIn instead (see the [usage guide](docs/usage.md#your-connections)).
 - Only a post's text can be edited; attachments can't be changed after publishing. Video posts aren't supported yet.
 - A post can have one kind of attachment: a link preview, images, or a document.
+- Claude can't pass on images or documents you attach in the chat: it sees what's in them, not the files. Give a
+  file on your computer (local mode) or a link instead.
 - In remote mode, media sent as `data:` URIs is limited to about 20 MB per request; pass larger files as URLs.
 - LinkedIn applies daily rate limits per member and per app.
 - Posts are plain text. LinkedIn doesn't render Markdown; line breaks and `#hashtags` work. `@mentions` show as
@@ -149,10 +153,13 @@ Kubernetes, how sign-in works, logs, rate limits and rotating the secret.
 | Problem | Fix |
 |---|---|
 | LinkedIn says the redirect URI doesn't match | Add the exact callback URL (scheme, host, port, path) to the app's **Auth** tab |
-| `Port 8723 is already in use` | Set `LINKEDIN_REDIRECT_URI` to another localhost port and register it in the app |
+| `Port 8723 is already in use` | Set `LINKEDIN_REDIRECT_URI` (**Redirect URL** in the Claude Desktop extension's settings) to another localhost port and register it in the app |
+| `Scope "w_member_social_feed" is not authorized for your application` | The app lacks the Community Management API: turn off **Comments and reactions** (`LINKEDIN_COMMENTS`) or **Post as LinkedIn Pages** (`LINKEDIN_PAGES`, for `w_organization_social`) until LinkedIn grants it. Another scope means a missing product from step 1 of the quick start |
 | `invalid_client: Client authentication failed` when signing in | The Client ID or Client Secret is wrong, or the secret was regenerated: copy both again from the app's **Auth** tab |
 | `LinkedIn denied permission` (403) | The app lacks the product for that feature, or you signed in before adding the scope. Fix the app, then sign in again |
-| A file `is outside the folders this connector may read files from` | Move it to Downloads, Desktop or Pictures, or add its folder to `LINKEDIN_FILE_DIRS` (**Folders for local files** in the Claude Desktop extension's settings) |
+| A file `is outside the folders this connector may read files from` | Move it to one of the folders listed, or set `LINKEDIN_FILE_DIRS` (**Folders for local files** in the Claude Desktop extension's settings) to the value the message gives. The setting replaces the default folders, so that value lists them too |
+| `LinkedIn didn't let you act as the Page` | Only a Page's super admins and content admins can post, comment and react as it. Check your role, and that the number is the one in the address of the Page's admin view |
+| Signing in again keeps the same LinkedIn account | LinkedIn signs in whoever is signed in to linkedin.com in your browser: sign out there first |
 | Editing or deleting a post fails with `not the activity URN` | Links copied from linkedin.com often point to the post's activity rather than the post. In local mode, ask Claude to find the post among the ones it published; otherwise use the URL Claude gave you when publishing, or the code from the post's **Embed this post** menu item |
 | `access token … expired or been revoked` | Sign in again (local) or reconnect the connector (remote) |
 | Remote connection fails after a restart | Set a fixed `SERVER_SECRET` |
@@ -174,7 +181,7 @@ Kubernetes, how sign-in works, logs, rate limits and rotating the secret.
 | `LINKEDIN_REDIRECT_URI` | local | `http://localhost:8723/callback` | Sign-in callback; must match the LinkedIn app exactly |
 | `LINKEDIN_TOKEN_FILE` | local | per-user config dir | Where the token is stored |
 | `LINKEDIN_ACCESS_TOKEN` | local | | Use this token instead of signing in |
-| `LINKEDIN_FILE_DIRS` | local | `~/Downloads`, `~/Desktop`, `~/Pictures`, working directory | Comma-separated folders local images, documents and `Connections.csv` may be read from (symlinks out of them are refused) |
+| `LINKEDIN_FILE_DIRS` | local | `~/Downloads`, `~/Desktop`, `~/Pictures`, working directory | Comma-separated folders local images, documents and `Connections.csv` may be read from, instead of the defaults (list them too to keep them). Symlinks out of them are refused |
 | `PUBLIC_URL` | remote | | Public origin, e.g. `https://linkedin-mcp.example.com` (required) |
 | `SERVER_SECRET` | remote | | At least 32 characters; keep it the same across restarts and replicas. Required unless `PUBLIC_URL` is localhost, where a random one is used |
 | `SERVER_SECRET_PREVIOUS` | remote | | The secret used before `SERVER_SECRET`, still accepted for tokens issued with it, while [rotating](docs/deployment.md#rotating-server_secret) |

@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { ConfigError } from '../errors.js';
 import { escapeHtml, page } from '../html.js';
+import { decodeHtmlEntities } from '../linkedin/link-preview.js';
 import { buildAuthorizationUrl, exchangeAuthorizationCode, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
+import { refusedScope, type RefusedScope } from '../linkedin/scopes.js';
 import { isLoopbackHostname } from '../net/loopback.js';
 
 export interface LoopbackLoginOptions {
@@ -21,13 +23,31 @@ export interface LoopbackLoginHandle {
   expiresAt: number;
 }
 
+/** The setting as the Claude Desktop extension names it, then as an environment variable. */
+const REDIRECT_SETTING = '"Redirect URL" (LINKEDIN_REDIRECT_URI)';
+
 export function validateLoopbackRedirect(redirectUri: string): URL {
   const url = URL.parse(redirectUri);
-  if (!url) throw new ConfigError(`LINKEDIN_REDIRECT_URI "${redirectUri}" is not a valid URL.`);
+  if (!url) throw new ConfigError(`${REDIRECT_SETTING} "${redirectUri}" is not a valid URL.`);
   if (url.protocol !== 'http:' || !isLoopbackHostname(url.hostname) || !url.port || url.port === '0') {
-    throw new ConfigError(`LINKEDIN_REDIRECT_URI must look like http://localhost:<port>/<path> (got "${redirectUri}").`);
+    throw new ConfigError(`${REDIRECT_SETTING} must look like http://localhost:<port>/<path> (got "${redirectUri}").`);
   }
   return url;
+}
+
+const APPS = 'https://www.linkedin.com/developers/apps';
+
+/** What to do when LinkedIn won't authorize a scope because the app lacks its product; otherwise signing in just fails. */
+function refusedScopeHelp({ scope, product, feature }: RefusedScope): string {
+  if (feature) {
+    return (
+      `Your LinkedIn app doesn't have the Community Management API product, which "${feature.setting}" needs. ` +
+      `Turn that setting off (${feature.variable}, or remove ${scope} from LINKEDIN_SCOPES), or add the product to the app at ${APPS}; then sign in again.`
+    );
+  }
+  return product
+    ? `Your LinkedIn app doesn't have the ${product} product: add it at ${APPS}, then sign in again.`
+    : `Your LinkedIn app doesn't have the product that grants ${scope}: add that product at ${APPS}, or remove ${scope} from LINKEDIN_SCOPES; then sign in again.`;
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {
@@ -107,9 +127,12 @@ export class LoopbackLogin {
       }
       const error = url.searchParams.get('error');
       if (error) {
-        const description = url.searchParams.get('error_description') ?? error;
-        respond(res, 400, 'Sign-in cancelled', `<h1>LinkedIn sign-in was not completed</h1><p>${escapeHtml(description)}</p>`);
-        finish(new Error(`LinkedIn sign-in was not completed: ${description}`));
+        // LinkedIn HTML-escapes quotes in descriptions: Scope &quot;w_member_social_feed&quot; is not authorized.
+        const description = decodeHtmlEntities(url.searchParams.get('error_description') ?? error);
+        const refused = refusedScope(error, description, this.options.app.scopes);
+        const message = refused ? `${description.replace(/\.?$/, '.')} ${refusedScopeHelp(refused)}` : description;
+        respond(res, 400, 'Sign-in cancelled', `<h1>LinkedIn sign-in was not completed</h1><p>${escapeHtml(message)}</p>`);
+        finish(new Error(`LinkedIn sign-in was not completed: ${message}`));
         return;
       }
       const code = url.searchParams.get('code');
@@ -146,7 +169,7 @@ export class LoopbackLogin {
           throw new ConfigError(
             `Port ${port} is already in use, so the sign-in callback cannot listen on ${redirect.origin}. ` +
               'Another LinkedIn sign-in may be waiting (for example in another Claude window or terminal): finish it or close it and try again. ' +
-              "Otherwise free the port, or set LINKEDIN_REDIRECT_URI to another localhost port and add it to your LinkedIn app's authorized redirect URLs.",
+              `Otherwise free the port, or set ${REDIRECT_SETTING} to another localhost port and add it to your LinkedIn app's authorized redirect URLs.`,
           );
         }
         throw error;

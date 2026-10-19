@@ -2,7 +2,9 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { OAuthError, OAuthErrorCode, type AuthInfo, type OAuthMetadata, type OAuthTokenVerifier } from '@modelcontextprotocol/server';
 import type { RemoteConfig } from '../config.js';
 import { LinkedInClient } from '../linkedin/client.js';
+import { decodeHtmlEntities } from '../linkedin/link-preview.js';
 import { buildAuthorizationUrl, exchangeAuthorizationCode, type LinkedInOAuthApp } from '../linkedin/oauth.js';
+import { refusedScope } from '../linkedin/scopes.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { HOMEPAGE } from '../version.js';
 import { redirectUriMatches, type ClientRegistry, type OAuthClient } from './clients.js';
@@ -267,8 +269,20 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     const request = pending.req;
     const back = (params: Record<string, string | undefined>) => redirectWith(res, request.ru, { ...params, state: request.st, iss: issuer });
 
-    if (str(query.error)) {
-      return back({ error: 'access_denied', error_description: str(query.error_description) ?? 'LinkedIn sign-in was cancelled.' });
+    const error = str(query.error);
+    if (error) {
+      // LinkedIn HTML-escapes quotes in descriptions: Scope &quot;w_member_social_feed&quot; is not authorized.
+      const description = decodeHtmlEntities(str(query.error_description) ?? 'LinkedIn sign-in was cancelled.');
+      // The app lacks a product for a scope this server asks for: only its operator can fix that.
+      const refused = refusedScope(error, description, config.scopes);
+      if (!refused) return back({ error: 'access_denied', error_description: description });
+      logger('warn', 'linkedin_scope_not_authorized', { scope: refused.scope, clientId: request.cid });
+      const product = refused.product ? `the ${refused.product} product` : `the product that grants ${refused.scope}`;
+      const off = refused.feature ? ` or turn off ${refused.feature.variable}` : '';
+      return back({
+        error: 'access_denied',
+        error_description: `This connector's LinkedIn app doesn't have ${product}. Ask whoever runs the connector to add it${off}.`,
+      });
     }
     const code = str(query.code);
     if (!code) return back({ error: 'server_error', error_description: 'LinkedIn did not return an authorization code.' });

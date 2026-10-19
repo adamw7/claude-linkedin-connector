@@ -59,6 +59,7 @@ describe('command line', () => {
     const { status, stdout } = cli(['help']);
     expect(status).toBe(0);
     for (const command of ['stdio', 'http', 'login', 'logout', 'status']) expect(stdout).toContain(`  ${command} `);
+    expect(stdout).toContain('To switch\n            accounts, sign out of linkedin.com in the browser first.');
   });
 
   it('rejects unknown commands with exit code 2', () => {
@@ -186,6 +187,23 @@ describe('login command', () => {
       expect(login.output).toContain(`Signed in to LinkedIn as Ada Lovelace. Token saved to ${tokenFile}`);
       expect(JSON.parse(readFileSync(tokenFile, 'utf8'))).toMatchObject({ accessToken: 'li-token', member: { id: 'abc123', name: 'Ada Lovelace' } });
       expect(existsSync(browserLog)).toBe(false);
+      expect(login.output).not.toContain('already signed in with');
+    } finally {
+      login.child.kill();
+    }
+  });
+
+  it('says how to switch accounts when signing in again kept the same one', async () => {
+    storeToken();
+    const login = await startLogin(['--no-browser']);
+    try {
+      const state = login.authorization.searchParams.get('state')!;
+      await fetch(`http://127.0.0.1:${login.port}/callback?code=li-code&state=${encodeURIComponent(state)}`);
+      expect(await login.exited).toEqual([0, null]);
+      expect(login.output).toContain(
+        'That is the account you were already signed in with. If you meant to switch to another LinkedIn account, sign out of linkedin.com ' +
+          'in your browser first, then sign in again: LinkedIn signs in whoever is signed in there.',
+      );
     } finally {
       login.child.kill();
     }

@@ -33,7 +33,11 @@ export function describeError(error: unknown, mode: Mode): string {
           reauthHint(mode)
         );
       case 426:
-        return `LinkedIn no longer accepts the configured API version: ${detail} Set LINKEDIN_API_VERSION to a recent month (YYYYMM).`;
+        // The client already tried the versions of the past year, so the clock or the connector is off.
+        return (
+          `LinkedIn accepts none of the API versions the connector tried: ${detail} ` +
+          'Check the clock of the computer the connector runs on and update the connector to its latest release, or set LINKEDIN_API_VERSION to a version LinkedIn supports (YYYYMM).'
+        );
       case 429:
         return `LinkedIn's rate limit was reached${error.details.retryAfter ? ` (retry after ${error.details.retryAfter}s)` : ''}. Try again later.`;
       default:

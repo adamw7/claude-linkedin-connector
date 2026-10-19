@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult, type ToolAnnotations, type ToolCallback } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { SIGN_IN_HINT } from '../auth/local-auth.js';
+import { SIGN_IN_HINT, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
 import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../errors.js';
@@ -8,6 +8,7 @@ import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } f
 import { countCompanies, findConnectionsExport, foldText, MAX_CONNECTIONS_BYTES, MAX_EXPORT_BYTES, parseConnections } from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
+import { COMMENTS, PAGES, type Feature } from '../linkedin/scopes.js';
 import { escapeLittleText, textWarnings } from '../linkedin/text.js';
 import { organizationUrn, parsePostReference, personUrn, postUrl } from '../linkedin/urn.js';
 import type { ApiVersion } from '../linkedin/versions.js';
@@ -77,7 +78,7 @@ interface PreparedPost {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function instructions(mode: Mode, engagement: boolean, history: boolean): string {
+function instructions(mode: Mode, engagement: boolean, history: boolean, folders: string | undefined): string {
   return [
     "Tools for the user's own LinkedIn account: read their profile and their exported list of connections, publish posts (text, a link, images or a document), and edit or delete them" +
       (engagement ? ', and comment on or react to posts.' : '.'),
@@ -88,6 +89,11 @@ function instructions(mode: Mode, engagement: boolean, history: boolean): string
       ? ["LinkedIn doesn't let apps read the user's posts. To edit or delete a post from an earlier conversation, find it with linkedin_list_posts, which remembers the posts published from this computer."]
       : []),
     `If linkedin_create_post times out, the post may have been published anyway: ${history ? 'check linkedin_list_posts' : 'ask the user to look on LinkedIn'} before trying again, so it isn't published twice.`,
+    // An image attached to the chat reaches Claude as a picture, not as bytes it could pass on as a data: URI.
+    "Images and documents the user attached to the chat can't be passed to these tools: only their contents reach you, not the file. " +
+      (folders !== undefined
+        ? `Ask the user to save the file in one of the folders local files may come from (${folders}) and pass its path.`
+        : 'Ask the user for a link to the file itself.'),
     mode === 'local'
       ? "When the user isn't signed in, LinkedIn tools open the sign-in page in their browser and wait for it. If a tool says the user just signed in, call it again; if it gives a sign-in link instead, show the link and retry once they say they approved access."
       : 'If a tool says the LinkedIn authorization expired, ask the user to reconnect the connector in Claude.',
@@ -105,14 +111,17 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const now = options.now ?? Date.now;
   // A remote server must never read its own disk.
   const localFileDirs = mode === 'local' ? (options.localFileDirs ?? []) : undefined;
+  const folders = localFileDirs && (localFileDirs.join(', ') || 'no folder: local files are disabled');
   const mediaSources =
     localFileDirs !== undefined
-      ? `an absolute local file path (inside ${localFileDirs.join(', ') || 'no folder: local files are disabled'}), an http(s) URL or a base64 data: URI`
+      ? `an absolute local file path (inside ${folders}), an http(s) URL or a base64 data: URI`
       : 'an http(s) URL or a base64 data: URI (data: URIs up to about 20 MB; use a URL for larger files)';
+  /** Names a feature's setting for whoever can change it: the user (in the Claude Desktop extension or as a variable), or the server's operator. */
+  const settingName = (feature: Feature) => (mode === 'local' ? `"${feature.setting}" (${feature.variable})` : feature.variable);
 
   const server = new McpServer(
     { name: NAME, title: 'LinkedIn', version: VERSION },
-    { instructions: instructions(mode, engagement, history !== undefined) },
+    { instructions: instructions(mode, engagement, history !== undefined, folders) },
   );
 
   /** Local mode: starts a browser sign-in and waits a while for the user to finish it. */
@@ -125,15 +134,16 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       ),
       sleep(SIGN_IN_WAIT_MS).then(() => undefined),
     ]);
-    if (finished && !('error' in finished)) {
+    // A failed sign-in has closed its link, so there is nothing to open: the failure says what to do.
+    if (finished && 'error' in finished) return { signedIn: false, message: finished.error.message.replace(/\.?$/, '.') };
+    if (finished) {
       return { signedIn: true, name: finished.name, message: `Signed in to LinkedIn${finished.name ? ` as ${finished.name}` : ''}.` };
     }
     const minutes = Math.round(start.expiresInSeconds / 60);
-    const link = start.browserOpened
+    const message = start.browserOpened
       ? `The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for ${minutes} minutes): ${start.authorizationUrl}`
       : `Open this link to sign in to LinkedIn and approve access (valid for ${minutes} minutes): ${start.authorizationUrl}`;
-    const failure = finished ? `${finished.error.message.replace(/\.?$/, '.')} ` : '';
-    return { signedIn: false, authorizationUrl: start.authorizationUrl, expiresInSeconds: start.expiresInSeconds, message: `${failure}${link}` };
+    return { signedIn: false, authorizationUrl: start.authorizationUrl, expiresInSeconds: start.expiresInSeconds, message };
   });
 
   /** Registers a tool whose handler returns its structured result. Failures become error results; every call is reported to `onToolCall`. */
@@ -159,8 +169,17 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     server.registerTool(name, config, callback as ToolCallback<In>);
   };
 
-  const connect = async (): Promise<{ client: LinkedInClient; session: LinkedInSession }> => {
+  /** The client for the signed-in member; `feature` is one the call needs, which a sign-in from before it was turned on lacks. */
+  const connect = async (feature?: Feature): Promise<{ client: LinkedInClient; session: LinkedInSession }> => {
     const session = await auth.getSession();
+    if (feature && !session.scopes.includes(feature.scope)) {
+      // Local mode signs the user in again on this error, which also says if the LinkedIn app lacks the product.
+      throw new NotAuthenticatedError(
+        mode === 'local'
+          ? `Your LinkedIn sign-in predates turning on ${settingName(feature)}, so LinkedIn doesn't allow this yet. ${SIGN_IN_HINT}`
+          : `Your LinkedIn connection predates ${feature.variable} being turned on for this connector, so LinkedIn doesn't allow this yet. Disconnect and reconnect the LinkedIn connector in Claude's settings.`,
+      );
+    }
     const { version, apiBaseUrl, fetch } = options;
     return { client: new LinkedInClient({ accessToken: session.accessToken, version, apiBaseUrl, fetch }), session };
   };
@@ -183,6 +202,21 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
 
   const actorUrn = async (client: LinkedInClient, session: LinkedInSession, organization: string | undefined) =>
     organization ? organizationUrn(organization) : memberUrn(client, session);
+
+  /** Runs `operation` for `actor`; LinkedIn refuses a Page's actions to members without the right role on it, which signing in again won't fix. */
+  const actingAs = async <T>(actor: string, operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (actor.startsWith('urn:li:organization:') && error instanceof LinkedInApiError && error.status === 403) {
+        throw new UserInputError(
+          `LinkedIn didn't let you act as the Page ${actor}: ${error.message.replace(/\.?$/, '.')} ` +
+            "Only a Page's super admins and content admins can post, comment and react as it: check your role on the Page, and that it is the right Page.",
+        );
+      }
+      throw error;
+    }
+  };
 
   const sources = { localFileDirs, allowPrivateNetwork: options.allowPrivateNetwork };
   const load = (source: string, kind: MediaKind): Promise<LoadedMedia> => loadMedia(source, kind, sources);
@@ -208,12 +242,12 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     .string()
     .optional()
     .describe(
-      'Act as this LinkedIn Page instead of as the member: its organization ID or urn:li:organization:<id>. The user must be an admin of the Page.',
+      "Act as this LinkedIn Page instead of as the member: its organization ID (the number in the address of the Page's admin view, " +
+        'linkedin.com/company/<ID>/admin/), that address, or urn:li:organization:<ID>. The user must be a super admin or content admin of the Page.',
     );
   // Strict, because these tools publish: an argument dropped silently (a mistyped key, or `organization` without Pages)
   // would publish something other than what the user approved, or as someone else.
-  const pagesOff =
-    'Acting as a Page needs LINKEDIN_PAGES turned on for this connector (Community Management API). Leave out "organization" to act as yourself.';
+  const pagesOff = `Acting as a Page needs ${settingName(PAGES)} turned on for this connector (Community Management API). Leave out "organization" to act as yourself.`;
   const withOrganization = <T extends z.ZodRawShape>(shape: T) =>
     (organizations
       ? z.strictObject({ ...shape, organization: organizationField })
@@ -283,7 +317,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections). ' +
         (localFileDirs !== undefined
           ? 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv; with neither, the newest export in the folders local files may come from is used. '
-          : 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv. ') +
+          : 'Pass the text of Connections.csv as csv when the user attached or pasted it (an attached zip archive cannot be passed on), or a link to the file. ') +
         'Filter with query, company and connection dates; matching ignores case and accents. Results are newest first and paged with limit and offset. ' +
           'Set companyCounts to also see how many matching connections work at each company, e.g. to find where the network is concentrated.',
       inputSchema: z.object({
@@ -336,7 +370,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         if (found === undefined) {
           throw new UserInputError(
             `No LinkedIn data export was found in ${localFileDirs.join(', ') || 'any folder: local files are disabled'}. ` +
-              'Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and save the zip archive LinkedIn emails you in your Downloads folder, or pass its path.',
+              'Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and save the zip archive LinkedIn emails you in one of those folders, or pass its path.',
           );
         }
       }
@@ -396,7 +430,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     visibility: z
       .enum(['PUBLIC', 'CONNECTIONS'])
       .default('PUBLIC')
-      .describe('PUBLIC: anyone on or off LinkedIn. CONNECTIONS: 1st-degree connections only.'),
+      .describe("PUBLIC: anyone on or off LinkedIn. CONNECTIONS: 1st-degree connections only (not for a Page's posts, which are public)."),
     article: z
       .object({
         url: z.url({ protocol: /^https?$/ }).describe('The link to share.'),
@@ -434,7 +468,12 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     if ([args.article, args.images, args.document].filter((value) => value !== undefined).length > 1) {
       throw new UserInputError('A post can have only one of: article, images or document.');
     }
-    if (args.organization) organizationUrn(args.organization);
+    if (args.organization) {
+      organizationUrn(args.organization);
+      if (args.visibility === 'CONNECTIONS') {
+        throw new UserInputError('A Page has followers, not connections, so its posts are public. Leave out visibility, or set it to PUBLIC.');
+      }
+    }
     const warnings = textWarnings(args.text);
     if (args.images) {
       const images = await Promise.all(
@@ -560,27 +599,28 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       // From the start, like the client's timeout: loading and uploading the media take time too.
       const deadline = now() + PROCESSING_DEADLINE_MS;
       const post = await preparePost(args);
-      const { client, session } = await connect();
+      const { client, session } = await connect(args.organization ? PAGES : undefined);
       const author = await actorUrn(client, session, args.organization);
-
-      let content: PostContent | undefined;
-      let linkPreview: { title: string; description?: string; thumbnail: boolean } | undefined;
-      if (post.images) {
-        const images: Array<{ id: string; altText?: string }> = [];
-        for (const { media, altText } of post.images) images.push({ id: await upload(client, 'images', author, media, deadline), altText });
-        content = images.length === 1 ? { media: images[0]! } : { multiImage: { images } };
-      } else if (post.document) {
-        content = { media: { id: await upload(client, 'documents', author, post.document.media, deadline), title: post.document.title } };
-      } else if (post.article) {
-        const { url, title, description, thumbnail, pageImageUrl } = post.article;
-        const uploading = thumbnail && upload(client, 'images', author, thumbnail, deadline);
-        // As when loading it, the page's own image is optional: post without it if LinkedIn won't take it.
-        const thumbnailUrn = await (pageImageUrl ? uploading?.catch(() => undefined) : uploading);
-        content = { article: { source: url, title, description, thumbnail: thumbnailUrn } };
-        linkPreview = { title, description, thumbnail: thumbnailUrn !== undefined };
-      }
-
-      const postUrn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
+      const { postUrn, linkPreview } = await actingAs(author, async () => {
+        let content: PostContent | undefined;
+        let preview: { title: string; description?: string; thumbnail: boolean } | undefined;
+        if (post.images) {
+          const images: Array<{ id: string; altText?: string }> = [];
+          for (const { media, altText } of post.images) images.push({ id: await upload(client, 'images', author, media, deadline), altText });
+          content = images.length === 1 ? { media: images[0]! } : { multiImage: { images } };
+        } else if (post.document) {
+          content = { media: { id: await upload(client, 'documents', author, post.document.media, deadline), title: post.document.title } };
+        } else if (post.article) {
+          const { url, title, description, thumbnail, pageImageUrl } = post.article;
+          const uploading = thumbnail && upload(client, 'images', author, thumbnail, deadline);
+          // As when loading it, the page's own image is optional: post without it if LinkedIn won't take it.
+          const thumbnailUrn = await (pageImageUrl ? uploading?.catch(() => undefined) : uploading);
+          content = { article: { source: url, title, description, thumbnail: thumbnailUrn } };
+          preview = { title, description, thumbnail: thumbnailUrn !== undefined };
+        }
+        const urn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
+        return { postUrn: urn, linkPreview: preview };
+      });
       const url = postUrl(postUrn);
       const { attachment } = post;
       await remember((history) => history.add({ postUrn, url, author, text: args.text, visibility: args.visibility, attachment }));
@@ -691,11 +731,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     const engage = async ({ post, organization }: { post: string; organization?: string }) => {
       if (!organization && !memberEngagement) {
         throw new UserInputError(
-          'Acting as yourself needs the w_member_social_feed scope (Community Management API). Pass "organization" to act as a Page instead.',
+          `Commenting and reacting as yourself needs ${settingName(COMMENTS)} turned on for this connector (Community Management API). Pass "organization" to act as a Page instead.`,
         );
       }
       const target = parsePostReference(post);
-      const { client, session } = await connect();
+      const { client, session } = await connect(organization ? PAGES : COMMENTS);
       return { client, target, actor: await actorUrn(client, session, organization) };
     };
 
@@ -714,7 +754,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       },
       async (args) => {
         const { client, target, actor } = await engage(args);
-        const commentId = await client.createComment(target, actor, escapeLittleText(args.text));
+        const commentId = await actingAs(actor, () => client.createComment(target, actor, escapeLittleText(args.text)));
         return { postUrn: target, actor, commentId };
       },
     );
@@ -736,7 +776,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       },
       async (args) => {
         const { client, target, actor } = await engage(args);
-        await client.createReaction(target, actor, REACTIONS[args.reaction]!);
+        await actingAs(actor, () => client.createReaction(target, actor, REACTIONS[args.reaction]!));
         return { postUrn: target, reaction: args.reaction, actor };
       },
     );
@@ -774,9 +814,13 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       {
         title: 'Sign in to LinkedIn',
         description:
-          "Opens LinkedIn's sign-in page in the user's browser and waits a while for them to approve access. Use it when the user asks to connect or switch LinkedIn accounts. If it returns a link because the sign-in isn't finished yet, show the link to the user; once they say they approved access, retry what they asked for.",
+          "Opens LinkedIn's sign-in page in the user's browser and waits a while for them to approve access. Use it when the user asks to connect or switch LinkedIn accounts. If it returns a link because the sign-in isn't finished yet, show the link to the user; once they say they approved access, retry what they asked for. " +
+          'LinkedIn signs in whoever is signed in to linkedin.com in that browser: to switch accounts, the user must sign out of linkedin.com there first.',
         inputSchema: z.object({
-          force: z.boolean().default(false).describe('Start a new sign-in even if already signed in, e.g. to switch accounts or when LinkedIn rejected the stored token.'),
+          force: z
+            .boolean()
+            .default(false)
+            .describe('Start a new sign-in even if already signed in, e.g. to switch accounts (after signing out of linkedin.com in the browser) or when LinkedIn rejected the stored token.'),
         }),
         outputSchema: z.object({
           alreadySignedIn: z.boolean(),
@@ -789,11 +833,14 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
       async (args) => {
-        if (!args.force) {
-          const status = await auth.status();
-          if (status.authenticated && !status.missingScopes) return { alreadySignedIn: true, signedIn: true, message: status.message };
+        const before = await auth.status();
+        if (!args.force && before.authenticated && !before.missingScopes) return { alreadySignedIn: true, signedIn: true, message: before.message };
+        const outcome = await signIn!();
+        // Users force a sign-in to switch accounts, but LinkedIn keeps whoever is signed in to linkedin.com in the browser.
+        if (args.force && outcome.signedIn && before.memberUrn !== undefined && (await auth.status()).memberUrn === before.memberUrn) {
+          outcome.message += ` That is the account you were already signed in with. ${SWITCH_ACCOUNT_HINT}`;
         }
-        return { alreadySignedIn: false, ...(await signIn!()) };
+        return { alreadySignedIn: false, ...outcome };
       },
     );
 
@@ -834,9 +881,10 @@ async function signInFor(tool: string, error: NotAuthenticatedError, signIn: () 
   let text: string;
   try {
     const outcome = await signIn();
+    const waiting = outcome.authorizationUrl !== undefined ? ' Once you have approved access, try again.' : '';
     text = outcome.signedIn
       ? `${outcome.message} Nothing was done yet: call ${tool} again to continue.`
-      : `${error.message.replace(` ${SIGN_IN_HINT}`, '')} ${outcome.message} Once you have approved access, try again.`;
+      : `${error.message.replace(` ${SIGN_IN_HINT}`, '')} ${outcome.message}${waiting}`;
   } catch (cause) {
     // E.g. missing app credentials or a busy callback port: that is what the user has to fix first.
     text = describeError(cause, 'local');

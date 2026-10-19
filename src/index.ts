@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { LocalAuth } from './auth/local-auth.js';
+import { LocalAuth, SWITCH_ACCOUNT_HINT } from './auth/local-auth.js';
 import { openBrowser } from './auth/open-browser.js';
 import { PostHistory } from './auth/post-history.js';
 import { loadLocalConfig, loadRemoteConfig } from './config.js';
@@ -22,7 +22,8 @@ Commands:
   stdio     Run the MCP server over stdio (default). For Claude Desktop and Claude Code.
   http      Run the remote MCP server (Streamable HTTP + OAuth). For claude.ai custom connectors.
   login     Sign in to LinkedIn in your browser and store the token locally.
-            Add --no-browser to print the link instead of opening it.
+            Add --no-browser to print the link instead of opening it. To switch
+            accounts, sign out of linkedin.com in the browser first.
   logout    Delete the locally stored LinkedIn token.
   status    Show whether you are signed in to LinkedIn.
   help      Show this help.
@@ -113,11 +114,15 @@ async function runLogin(browser: boolean): Promise<void> {
   if (config.accessToken) {
     log('Note: LINKEDIN_ACCESS_TOKEN is set and takes precedence over the token stored by this login.');
   }
+  const before = (await auth.status()).memberUrn;
   const name = await auth.loginAndWait((url) => {
     console.log(`Open this link to sign in to LinkedIn:\n\n  ${url}\n`);
     console.log(`Waiting for LinkedIn to redirect to ${config.redirectUri} ...`);
   });
   console.log(`Signed in to LinkedIn${name ? ` as ${name}` : ''}. Token saved to ${auth.store.path}`);
+  if (before !== undefined && (await auth.status()).memberUrn === before) {
+    console.log(`That is the account you were already signed in with. ${SWITCH_ACCOUNT_HINT}`);
+  }
 }
 
 async function runLogout(): Promise<void> {

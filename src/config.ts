@@ -7,13 +7,12 @@ import { ConfigError } from './errors.js';
 import { LINKEDIN_API_BASE } from './linkedin/client.js';
 import { expandHome, isInside } from './linkedin/media.js';
 import { LINKEDIN_OAUTH_BASE, parseScopes } from './linkedin/oauth.js';
+import { FEATURES } from './linkedin/scopes.js';
 import { isValidApiVersion } from './linkedin/versions.js';
 import { isLoopbackHostname } from './net/loopback.js';
 
 /** Scopes granted by the self-serve "Sign In with LinkedIn using OpenID Connect" and "Share on LinkedIn" products. */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
-/** Yes/no switches for the features of LinkedIn's Community Management API, so nobody has to know the scope names. */
-export const FEATURE_SCOPES = { LINKEDIN_COMMENTS: 'w_member_social_feed', LINKEDIN_PAGES: 'w_organization_social' } as const;
 export const DEFAULT_LOCAL_REDIRECT_URI = 'http://localhost:8723/callback';
 /** Where Claude (web, desktop and mobile) receives OAuth redirects for remote connectors. */
 export const CLAUDE_REDIRECT_URIS = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback'];
@@ -111,7 +110,8 @@ function common(env: Env): CommonConfig {
   }
   const listed = parseScopes(value(env, 'LINKEDIN_SCOPES'));
   const scopes = new Set(listed.length > 0 ? listed : DEFAULT_SCOPES);
-  for (const [name, scope] of Object.entries(FEATURE_SCOPES)) if (flag(env, name)) scopes.add(scope);
+  // Yes/no switches for the features of LinkedIn's Community Management API, so nobody has to know the scope names.
+  for (const { variable, scope } of FEATURES) if (flag(env, variable)) scopes.add(scope);
   return {
     clientId: value(env, 'LINKEDIN_CLIENT_ID'),
     clientSecret: secretValue(env, 'LINKEDIN_CLIENT_SECRET'),

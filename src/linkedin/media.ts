@@ -125,24 +125,30 @@ export async function readSource(
   const path = trimmed.startsWith('file://') ? fileUrlPath(trimmed) : expandHome(trimmed);
   const relativePath = !isAbsolute(path);
   const absolute = relativePath ? resolve(options.cwd ?? process.cwd(), path) : path;
-  const outside = () =>
+  const folders = `the folders this connector may read files from (${dirs.join(', ') || 'none'})`;
+  const lexicallyInside = dirs.some((dir) => isInside(resolve(dir), absolute));
+  /** `link`: the path lies in an allowed folder but leads out of it, so allowing its folder wouldn't help. */
+  const outside = (link: boolean) =>
     new UserInputError(
-      `${absolute} is outside the folders this connector may read files from (${dirs.join(', ') || 'none'}). ` +
-        'Move the file into one of them, or add its folder to LINKEDIN_FILE_DIRS.',
+      link
+        ? `${absolute} links to a file outside ${folders}. Move or copy the file itself into one of them.`
+        : `${absolute} is outside ${folders}. Move the file into one of them, or allow its folder by setting ` +
+            `"Folders for local files" (LINKEDIN_FILE_DIRS) to ${[...dirs, dirname(absolute)].join(',')}: ` +
+            'the setting replaces the folders allowed now rather than adding to them, so this keeps them.',
     );
   let real: string;
   let size: number;
   try {
     real = await realpath(absolute);
     // Checked before anything else about the file, so a path outside the folders reveals nothing about it.
-    if (!(await inAllowedDir(real, dirs))) throw outside();
+    if (!(await inAllowedDir(real, dirs))) throw outside(lexicallyInside);
     const info = await stat(real);
     if (!info.isFile()) throw new UserInputError(`${absolute} is not a file.`);
     size = info.size;
   } catch (error) {
     if (error instanceof UserInputError) throw error;
     // Not even whether it exists.
-    if (!dirs.some((dir) => isInside(resolve(dir), absolute))) throw outside();
+    if (!lexicallyInside) throw outside(false);
     const { code, message } = error as NodeJS.ErrnoException;
     const reason = code === 'ENOENT' ? 'the file does not exist' : code === 'EACCES' ? 'permission denied' : message;
     // The server's working directory is rarely the user's (Claude Desktop starts it in /).

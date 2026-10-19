@@ -59,7 +59,15 @@ describe('loadMedia', () => {
 
   it('only reads local files inside the allowed folders', async () => {
     const message = /outside the folders this connector may read files from .*LINKEDIN_FILE_DIRS/;
-    await expect(loadMedia(join(outside, 'secret.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(message);
+    // The setting replaces the folders allowed now, so the value to set keeps them.
+    await expect(loadMedia(join(outside, 'secret.png'), 'image', { localFileDirs: [dir, '/data/media'] })).rejects.toThrow(
+      new UserInputError(
+        `${join(outside, 'secret.png')} is outside the folders this connector may read files from (${dir}, /data/media). ` +
+          `Move the file into one of them, or allow its folder by setting "Folders for local files" (LINKEDIN_FILE_DIRS) to ${dir},/data/media,${outside}: ` +
+          'the setting replaces the folders allowed now rather than adding to them, so this keeps them.',
+      ),
+    );
+    await expect(loadMedia(join(outside, 'missing.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(`(LINKEDIN_FILE_DIRS) to ${dir},${outside}:`);
     await expect(loadMedia(join(dir, '..', 'private', 'secret.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(message);
     await expect(loadMedia('../private/secret.png', 'image', { localFileDirs: [dir], cwd: dir })).rejects.toThrow(message);
     await expect(loadMedia(join(outside, 'secret.png'), 'image', { localFileDirs: [] })).rejects.toThrow(/\(none\)/);
@@ -68,9 +76,12 @@ describe('loadMedia', () => {
   });
 
   it('does not follow symlinks out of the allowed folders', async () => {
-    const message = /outside the folders/;
-    await expect(loadMedia(join(dir, 'link.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(message);
-    await expect(loadMedia(join(dir, 'private-folder', 'secret.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(message);
+    // Allowing the link's folder wouldn't help, and where it leads isn't for a caller to learn.
+    for (const path of [join(dir, 'link.png'), join(dir, 'private-folder', 'secret.png')]) {
+      await expect(loadMedia(path, 'image', { localFileDirs: [dir] })).rejects.toThrow(
+        new UserInputError(`${path} links to a file outside the folders this connector may read files from (${dir}). Move or copy the file itself into one of them.`),
+      );
+    }
   });
 
   it('does not reveal whether files outside the allowed folders exist', async () => {
