@@ -7,6 +7,7 @@ npm run test:coverage  # tests with a coverage report in coverage/
 npm run test:mutation  # Stryker mutation tests, report in reports/mutation/ (slow)
 npm run build          # dist/
 npm run bundle         # single-file build for the .mcpb
+node scripts/smoke-test-package.mjs  # packs, installs and runs the npm package
 ```
 
 ```
@@ -29,6 +30,13 @@ or sign-in, `mcp/` doesn't depend on the HTTP transport, and remote mode never t
 CI reports coverage on every push and pull request; mutation tests run
 nightly (and on demand) in the `Mutation tests` workflow.
 
+The tests run `src/`, so they can't tell whether the npm package works. `scripts/smoke-test-package.mjs`, which CI
+runs, packs it, installs the tarball with production dependencies only and runs the installed command against a
+fake LinkedIn: signing in from the terminal, publishing a post with an image over stdio, and starting and stopping the
+remote server. It fails on a file left out of `files`, a runtime dependency listed under `devDependencies` or a
+broken `bin`. Give it a version to test a release instead: `node scripts/smoke-test-package.mjs
+claude-linkedin-connector@<version>`.
+
 ## Releasing
 
 1. Set the new version in `package.json` (`npm version --no-git-tag-version <version>` also updates
@@ -43,8 +51,9 @@ a GitHub release with it attached and the changelog entry as notes. It then smok
 make the package public in its settings on GitHub (packages start out private), so `docker pull` works without
 signing in.
 
-Last, it publishes the package to npm with provenance, using the `NPM_TOKEN` repository secret (an npm
-automation or granular access token allowed to publish `claude-linkedin-connector`). Pre-release versions such
+Last, it smoke tests the npm package as CI does, then publishes it to npm with provenance, using the `NPM_TOKEN`
+repository secret (an npm automation or granular access token allowed to publish `claude-linkedin-connector`).
+A broken package fails the smoke test and is never published. Pre-release versions such
 as `1.2.0-rc.1` get the `next` dist-tag, so `npm install` keeps getting the latest release. The job then installs
 the version it published from the registry, checks that `--version` and `--help` work and runs
 `npm audit signatures`. A tag can only be published once: to fix a broken npm release, release a new version

@@ -16,6 +16,7 @@ npm run build        # tsc -p tsconfig.build.json -> dist/
 npm run test:mutation  # Stryker; slow, CI runs it incrementally
 npm run pack:mcpb    # bundle the Claude Desktop extension
 docker build -t connector . && scripts/smoke-test-image.sh connector  # the remote image; CI runs both
+node scripts/smoke-test-package.mjs  # packs, installs and runs the npm package; CI runs it
 ```
 
 ## Layout and layering

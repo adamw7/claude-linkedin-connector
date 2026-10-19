@@ -41,6 +41,8 @@ jobs:
           name: coverage-report
           path: coverage/
       - run: npm run build
+      - name: Smoke test the npm package
+        run: node scripts/smoke-test-package.mjs
       - name: Bundle the Claude Desktop extension
         run: |
           npm run bundle
