@@ -7,6 +7,7 @@ import {
   countCompanies,
   findConnectionsExport,
   foldText,
+  matchesWordStart,
   parseConnectedOn,
   parseConnections,
   parseCsv,
@@ -108,6 +109,28 @@ describe('foldText', () => {
     expect(foldText('Zażółć gęślą jaźń')).toBe('zazolc gesla jazn');
     expect(foldText('Øresund Straße Æther Œuvre')).toBe('oresund strasse aether oeuvre');
     expect(foldText('Société Générale')).toBe('societe generale');
+  });
+});
+
+describe('matchesWordStart', () => {
+  it('matches the start of a word, not the middle of one', () => {
+    expect(matchesWordStart('ing bank', 'ing')).toBe(true);
+    expect(matchesWordStart('boeing', 'ing')).toBe(false);
+    expect(matchesWordStart('digital marketing agency', 'ing')).toBe(false);
+    expect(matchesWordStart('ey', 'ey')).toBe(true);
+    expect(matchesWordStart('disney', 'ey')).toBe(false);
+    // A later occurrence can still start a word.
+    expect(matchesWordStart('boeing ing', 'ing')).toBe(true);
+    expect(matchesWordStart('jane doe', 'doe')).toBe(true);
+    expect(matchesWordStart('google llc', 'goo')).toBe(true);
+    expect(matchesWordStart('https://www.linkedin.com/in/jane-doe', 'jane-doe')).toBe(true);
+    expect(matchesWordStart('jane@gmail.com', 'gmail')).toBe(true);
+    expect(matchesWordStart('acme', 'acme corp')).toBe(false);
+  });
+
+  it('lets a term that starts with a symbol match anywhere', () => {
+    expect(matchesWordStart('jane@gmail.com', '@gmail')).toBe(true);
+    expect(matchesWordStart('jane@gmail.com', '@yahoo')).toBe(false);
   });
 });
 

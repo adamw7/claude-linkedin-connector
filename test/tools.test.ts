@@ -54,6 +54,7 @@ class StubLocalAuth extends StubAuth {
   browserOpened = true;
   /** Who the next sign-in signs in, when not whoever was signed in before. */
   signsInAs: MemberInfo | undefined;
+  rejected?: (session: LinkedInSession) => Promise<boolean>;
 
   async login(): Promise<LoginStart> {
     this.logins += 1;
@@ -214,7 +215,7 @@ describe('tool list', () => {
   it('tells Claude how to get files that were attached to the chat', async () => {
     const attached = "Images and documents the user attached to the chat can't be passed to these tools: only their contents reach you, not the file. ";
     expect((await harness({ localFileDirs: ['/home/ada/Downloads', '/home/ada/Desktop'] })).client.getInstructions()).toContain(
-      `${attached}Ask the user to save the file in one of the folders local files may come from (/home/ada/Downloads, /home/ada/Desktop) and pass its path.`,
+      `${attached}Ask the user to save the file in one of the folders local files may come from (/home/ada/Downloads, /home/ada/Desktop) and pass its name or path.`,
     );
     const remote = await harness({ mode: 'remote' });
     expect(remote.client.getInstructions()).toContain(`${attached}Ask the user for a link to the file itself.`);
@@ -292,6 +293,24 @@ describe('linkedin_read_connections', () => {
     expect(await names({ query: 'zielinski' })).toEqual(['Piotr Zieliński']);
     expect(await names({ company: ['xyz', 'ABC'] })).toEqual(['Jan Kowalski', 'Anna Nowak']);
     expect(await names({ company: ['xyz', 'abc'], query: 'engineer' })).toEqual(['Jan Kowalski']);
+  });
+
+  it('matches the start of words, so a short company name finds only that company', async () => {
+    const h = await harness();
+    const csv = [
+      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+      'Anna,Bank,,,ING Bank,Analyst,01 Oct 2026',
+      'Joanna,Boe,,,Boeing,Engineer,02 Sep 2026',
+      'Marek,Agent,,,Digital Marketing Agency,Lead,03 Aug 2026',
+      'Ewa,Young,,,EY,Consultant,04 Jul 2026',
+      'Dan,Mouse,,,Disney,Producer,05 Jun 2026',
+    ].join('\n');
+    const names = async (args: Record<string, unknown>) =>
+      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    expect(await names({ company: 'ING' })).toEqual(['Anna Bank']);
+    expect(await names({ company: ['ey', 'boeing'] })).toEqual(['Joanna Boe', 'Ewa Young']);
+    expect(await names({ query: 'ann' })).toEqual(['Anna Bank']);
+    expect(await names({ query: 'ey' })).toEqual(['Ewa Young']);
   });
 
   it('counts connections per company, optionally without listing them', async () => {
@@ -586,6 +605,15 @@ describe('linkedin_create_post', () => {
     }
     expect(h.linkedin.requests).toHaveLength(0);
     expect((await call(h, 'linkedin_create_post', { text: 'For my network', visibility: 'CONNECTIONS' })).data).toMatchObject({ visibility: 'CONNECTIONS' });
+  });
+
+  it('never calls a post LinkedIn accepted rejected, so it is not published twice', async () => {
+    const h = await harness();
+    h.linkedin.override((r) => (r.method === 'POST' && r.url.pathname === '/rest/posts' ? new Response(null, { status: 201 }) : undefined));
+    expect(await call(h, 'linkedin_create_post', { text: 'My news' })).toMatchObject({
+      isError: true,
+      text: 'LinkedIn accepted the post but did not return its ID, so it has probably been published. Look for it on LinkedIn before trying again, so it is not published twice.',
+    });
   });
 
   it("explains that only a Page's admins can post as it, since signing in again won't help", async () => {
@@ -1011,6 +1039,27 @@ describe('linkedin_delete_post', () => {
     expect(h.linkedin.find('DELETE', '/rest/posts/')[0]!.url.pathname).toBe('/rest/posts/urn%3Ali%3Ashare%3A42');
   });
 
+  it("explains that only a post's author can edit or delete it, rather than suggest signing in again", async () => {
+    const forbidden = (h: Harness) =>
+      h.linkedin.override((r) => (r.url.pathname.startsWith('/rest/posts/') ? Response.json({ message: 'Not enough permissions' }, { status: 403 }) : undefined));
+    const h = await harness();
+    forbidden(h);
+    expect((await call(h, 'linkedin_edit_post', { post: 'urn:li:share:7', text: 'New' })).text).toBe(
+      "LinkedIn didn't let you edit urn:li:share:7: Not enough permissions. Only its author can edit a post: check that you published it. " +
+        "Signing in again won't help with that. To edit a Page's posts, \"Post as LinkedIn Pages\" (LINKEDIN_PAGES) must be turned on for this connector before you sign in.",
+    );
+    const pages = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    forbidden(pages);
+    expect((await call(pages, 'linkedin_delete_post', { post: 'urn:li:ugcPost:8' })).text).toBe(
+      "LinkedIn didn't let you delete urn:li:ugcPost:8: Not enough permissions. Only its author can delete a post: check that you published it. " +
+        "Signing in again won't help with that. If a Page published it, you need to be a super admin or content admin of the Page.",
+    );
+    // Without the scope to edit and delete posts, the sign-in is the problem after all.
+    const unscoped = await harness({ scopes: ['openid', 'profile'] });
+    forbidden(unscoped);
+    expect((await call(unscoped, 'linkedin_delete_post', { post: 'urn:li:share:7' })).text).toMatch(/^LinkedIn denied permission for this action: .*linkedin_login/);
+  });
+
   it('explains when an activity URN cannot be deleted', async () => {
     const h = await harness();
     h.linkedin.override((r) => (r.method === 'DELETE' ? new Response('{"message":"Invalid post id"}', { status: 400 }) : undefined));
@@ -1092,18 +1141,25 @@ describe('engagement tools', () => {
     expect(h.linkedin.requests).toHaveLength(0);
   });
 
-  it("explains that only a Page's admins can comment and react as it", async () => {
+  it("explains a refusal without suggesting a new sign-in: only a Page's admins act as it, and a post may refuse the member", async () => {
     const h = await harness({ scopes });
     h.linkedin.override((r) =>
       r.url.pathname.startsWith('/rest/socialActions/') || r.url.pathname === '/rest/reactions' ? new Response('{"message":"Forbidden"}', { status: 403 }) : undefined,
     );
-    for (const [name, args] of [
-      ['linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats' }],
-      ['linkedin_react_to_post', { post: 'urn:li:share:9' }],
+    for (const [name, args, action] of [
+      ['linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats' }, 'comment on'],
+      ['linkedin_react_to_post', { post: 'urn:li:share:9' }, 'react to'],
     ] as const) {
       expect((await call(h, name, { ...args, organization: '77' })).text).toMatch(/^LinkedIn didn't let you act as the Page urn:li:organization:77: Forbidden\. Only a Page's/);
-      expect((await call(h, name, args)).text).toMatch(/^LinkedIn denied permission for this action: Forbidden\./);
+      expect((await call(h, name, args)).text).toBe(
+        `LinkedIn didn't let you ${action} urn:li:share:9: Forbidden. Check on linkedin.com that you can see the post and ${action} it. ` +
+          "Your sign-in has the permission for this, so signing in again won't help.",
+      );
     }
+    // Other refusals keep the generic explanation.
+    const duplicate = await harness({ scopes });
+    duplicate.linkedin.override((r) => (r.url.pathname === '/rest/reactions' ? new Response('{"message":"Duplicate"}', { status: 409 }) : undefined));
+    expect((await call(duplicate, 'linkedin_react_to_post', { post: 'urn:li:share:9' })).text).toBe('LinkedIn rejected the request (HTTP 409): Duplicate.');
   });
 });
 
@@ -1133,6 +1189,39 @@ describe('errors', () => {
       text: 'Signed in to LinkedIn as Ada Lovelace. Nothing was done yet: call linkedin_create_post again to continue.',
     });
     expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('signs in again when LinkedIn rejects the stored token, after forgetting it', async () => {
+    const auth = new StubLocalAuth();
+    const rejected: LinkedInSession[] = [];
+    auth.rejected = async (session) => {
+      rejected.push(session);
+      auth.signedIn = false;
+      return true;
+    };
+    const h = await harness({ auth });
+    h.linkedin.override(() => Response.json({ message: 'Invalid access token' }, { status: 401 }));
+    expect(await call(h, 'linkedin_get_profile')).toMatchObject({
+      isError: true,
+      text:
+        "LinkedIn rejected your sign-in: it has expired or been revoked. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link " +
+        '(valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+    });
+    expect(rejected).toEqual([expect.objectContaining({ accessToken: 'li-token' })]);
+    expect(auth.logins).toBe(1);
+  });
+
+  it('only says how to replace a rejected token it cannot forget, such as LINKEDIN_ACCESS_TOKEN', async () => {
+    const auth = new StubLocalAuth();
+    auth.rejected = async () => false;
+    const h = await harness({ auth });
+    h.linkedin.override(() => Response.json({ message: 'Invalid access token' }, { status: 401 }));
+    expect((await call(h, 'linkedin_get_profile')).text).toMatch(/^LinkedIn rejected the access token \(it has expired or been revoked\)\. .*LINKEDIN_ACCESS_TOKEN/);
+    auth.rejected = async () => {
+      throw new Error('EACCES');
+    };
+    expect((await call(h, 'linkedin_get_profile')).text).toMatch(/^LinkedIn rejected the access token/);
+    expect(auth.logins).toBe(0);
   });
 
   it('reports why the sign-in could not start', async () => {

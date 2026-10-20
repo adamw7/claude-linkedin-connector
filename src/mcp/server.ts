@@ -5,7 +5,15 @@ import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js'
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
-import { countCompanies, findConnectionsExport, foldText, MAX_CONNECTIONS_BYTES, MAX_EXPORT_BYTES, parseConnections } from '../linkedin/connections.js';
+import {
+  countCompanies,
+  findConnectionsExport,
+  foldText,
+  matchesWordStart,
+  MAX_CONNECTIONS_BYTES,
+  MAX_EXPORT_BYTES,
+  parseConnections,
+} from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
 import { COMMENTS, PAGES, type Feature } from '../linkedin/scopes.js';
@@ -76,6 +84,9 @@ interface PreparedPost {
   warnings: string[];
 }
 
+/** The LinkedIn client for the signed-in member, and their session; `feature` is one the call needs. */
+type Connect = (feature?: Feature) => Promise<{ client: LinkedInClient; session: LinkedInSession }>;
+
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function instructions(mode: Mode, engagement: boolean, history: boolean, folders: string | undefined): string {
@@ -92,7 +103,7 @@ function instructions(mode: Mode, engagement: boolean, history: boolean, folders
     // An image attached to the chat reaches Claude as a picture, not as bytes it could pass on as a data: URI.
     "Images and documents the user attached to the chat can't be passed to these tools: only their contents reach you, not the file. " +
       (folders !== undefined
-        ? `Ask the user to save the file in one of the folders local files may come from (${folders}) and pass its path.`
+        ? `Ask the user to save the file in one of the folders local files may come from (${folders}) and pass its name or path.`
         : 'Ask the user for a link to the file itself.'),
     mode === 'local'
       ? "When the user isn't signed in, LinkedIn tools open the sign-in page in their browser and wait for it. If a tool says the user just signed in, call it again; if it gives a sign-in link instead, show the link and retry once they say they approved access."
@@ -114,7 +125,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const folders = localFileDirs && (localFileDirs.join(', ') || 'no folder: local files are disabled');
   const mediaSources =
     localFileDirs !== undefined
-      ? `an absolute local file path (inside ${folders}), an http(s) URL or a base64 data: URI`
+      ? `a local file in ${folders} (its absolute path, or just its name), an http(s) URL or a base64 data: URI`
       : 'an http(s) URL or a base64 data: URI (data: URIs up to about 20 MB; use a URL for larger files)';
   /** Names a feature's setting for whoever can change it: the user (in the Claude Desktop extension or as a variable), or the server's operator. */
   const settingName = (feature: Feature) => (mode === 'local' ? `"${feature.setting}" (${feature.variable})` : feature.variable);
@@ -146,31 +157,48 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     return { signedIn: false, authorizationUrl: start.authorizationUrl, expiresInSeconds: start.expiresInSeconds, message };
   });
 
-  /** Registers a tool whose handler returns its structured result. Failures become error results; every call is reported to `onToolCall`. */
+  /**
+   * Registers a tool whose handler returns its structured result. Failures become error results; every call is reported to `onToolCall`.
+   * The handler gets the LinkedIn client from `connect`, which notes the session the call used.
+   */
   const tool = <In extends z.ZodType, Out extends z.ZodType>(
     name: string,
     config: { title: string; description: string; inputSchema: In; outputSchema: Out; annotations: ToolAnnotations },
-    handler: (args: z.output<In>) => Promise<z.input<Out>>,
+    handler: (args: z.output<In>, connect: Connect) => Promise<z.input<Out>>,
   ): void => {
     const callback = async (args: z.output<In>): Promise<CallToolResult> => {
       const start = performance.now();
       const report = (error?: unknown) =>
         options.onToolCall?.({ tool: name, ok: error === undefined, durationMs: Math.round(performance.now() - start), error });
+      const used: { session?: LinkedInSession } = {};
+      const connect: Connect = async (feature) => {
+        const connected = await openClient(feature);
+        used.session = connected.session;
+        return connected;
+      };
       try {
-        const structured = (await handler(args)) as Record<string, unknown>;
+        const structured = (await handler(args, connect)) as Record<string, unknown>;
         report();
         return { content: [{ type: 'text', text: JSON.stringify(structured, null, 2) }], structuredContent: structured };
       } catch (error) {
         report(error);
-        if (error instanceof NotAuthenticatedError && signIn) return signInFor(name, error, signIn);
+        if (signIn && error instanceof NotAuthenticatedError) return signInFor(name, error, signIn);
+        // A token LinkedIn no longer accepts is as good as none once it is forgotten: sign in now, as above, rather
+        // than say how to, while status and linkedin_login would still report the user signed in.
+        if (signIn && used.session && error instanceof LinkedInApiError && error.status === 401 && (await forget(used.session))) {
+          return signInFor(name, new NotAuthenticatedError('LinkedIn rejected your sign-in: it has expired or been revoked.'), signIn);
+        }
         return errorResult(error, mode);
       }
     };
     server.registerTool(name, config, callback as ToolCallback<In>);
   };
 
+  /** Forgets a token LinkedIn rejected; false when that didn't happen (so the user is told how to replace it). */
+  const forget = (session: LinkedInSession): Promise<boolean> => auth.rejected?.(session).catch(() => false) ?? Promise.resolve(false);
+
   /** The client for the signed-in member; `feature` is one the call needs, which a sign-in from before it was turned on lacks. */
-  const connect = async (feature?: Feature): Promise<{ client: LinkedInClient; session: LinkedInSession }> => {
+  const openClient: Connect = async (feature) => {
     const session = await auth.getSession();
     if (feature && !session.scopes.includes(feature.scope)) {
       // Local mode signs the user in again on this error, which also says if the LinkedIn app lacks the product.
@@ -203,17 +231,24 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   const actorUrn = async (client: LinkedInClient, session: LinkedInSession, organization: string | undefined) =>
     organization ? organizationUrn(organization) : memberUrn(client, session);
 
-  /** Runs `operation` for `actor`; LinkedIn refuses a Page's actions to members without the right role on it, which signing in again won't fix. */
-  const actingAs = async <T>(actor: string, operation: () => Promise<T>): Promise<T> => {
+  /**
+   * Runs `operation` for `actor`. The generic message for a 403 suggests signing in again, which won't fix the ones
+   * explained here instead: a Page refuses its actions to members without the right role on it, and `refusal`, when
+   * given, says why a post may refuse the member although their sign-in has the scope the action needs.
+   */
+  const actingAs = async <T>(actor: string, operation: () => Promise<T>, refusal?: (detail: string) => string): Promise<T> => {
     try {
       return await operation();
     } catch (error) {
-      if (actor.startsWith('urn:li:organization:') && error instanceof LinkedInApiError && error.status === 403) {
+      if (!(error instanceof LinkedInApiError) || error.status !== 403) throw error;
+      const detail = error.message.replace(/\.?$/, '.');
+      if (actor.startsWith('urn:li:organization:')) {
         throw new UserInputError(
-          `LinkedIn didn't let you act as the Page ${actor}: ${error.message.replace(/\.?$/, '.')} ` +
+          `LinkedIn didn't let you act as the Page ${actor}: ${detail} ` +
             "Only a Page's super admins and content admins can post, comment and react as it: check your role on the Page, and that it is the right Page.",
         );
       }
+      if (refusal) throw new UserInputError(refusal(detail));
       throw error;
     }
   };
@@ -276,7 +311,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => {
+    async (_args, connect) => {
       const { client } = await connect();
       const info = await client.getUserInfo();
       await auth.rememberMember({ id: info.sub, name: info.name, email: info.email });
@@ -318,7 +353,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         (localFileDirs !== undefined
           ? 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv; with neither, the newest export in the folders local files may come from is used. '
           : 'Pass the text of Connections.csv as csv when the user attached or pasted it (an attached zip archive cannot be passed on), or a link to the file. ') +
-        'Filter with query, company and connection dates; matching ignores case and accents. Results are newest first and paged with limit and offset. ' +
+        'Filter with query, company and connection dates; text matches the start of words, ignoring case and accents. Results are newest first and paged with limit and offset. ' +
           'Set companyCounts to also see how many matching connections work at each company, e.g. to find where the network is concentrated.',
       inputSchema: z.object({
         file: z.string().optional().describe(`Connections.csv or LinkedIn's export zip archive, as ${mediaSources}.`),
@@ -326,12 +361,15 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         query: z
           .string()
           .optional()
-          .describe('Text that must appear in the name, company, position, email or profile URL. Ignores case and accents.'),
+          .describe(
+            'Text that must start a word in the name, company, position, email or profile URL ("ann" finds Ann and Annette, not Joanna). Ignores case and accents.',
+          ),
         company: z
           .union([z.string(), z.array(z.string()).min(1)])
           .optional()
           .describe(
-            'Only connections whose company contains this text, or any of these texts (e.g. ["xyz", "abc"] for everyone at xyz or abc). Ignores case and accents.',
+            'Only connections whose company has a word starting with this text, or with any of these texts (e.g. ["xyz", "abc"] for everyone at xyz or abc). ' +
+              '"ING" finds ING Bank but not Boeing. Ignores case and accents.',
           ),
         connectedAfter: isoDate.optional().describe('Only connections made on or after this date (YYYY-MM-DD).'),
         connectedBefore: isoDate.optional().describe('Only connections made on or before this date (YYYY-MM-DD).'),
@@ -385,11 +423,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       const matches = all.filter((connection) => {
         if (query) {
           const fields = [connection.name, connection.company, connection.position, connection.email, connection.profileUrl];
-          if (!fields.some((field) => field && foldText(field).includes(query))) return false;
+          if (!fields.some((field) => field && matchesWordStart(foldText(field), query))) return false;
         }
         if (companies.length > 0) {
           const company = foldText(connection.company ?? '');
-          if (!company || !companies.some((name) => company.includes(name))) return false;
+          if (!company || !companies.some((name) => matchesWordStart(company, name))) return false;
         }
         if (args.connectedAfter || args.connectedBefore) {
           const date = dated(connection.connectedOn);
@@ -596,7 +634,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async (args) => {
+    async (args, connect) => {
       // From the start, like the client's timeout: loading and uploading the media take time too.
       const deadline = now() + PROCESSING_DEADLINE_MS;
       const post = await preparePost(args);
@@ -629,17 +667,31 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     },
   );
 
-  /** Runs an operation on an authored post, explaining the common activity-URN mix-up when LinkedIn rejects it. */
-  const onOwnPost = async (post: string, verb: string, operation: (client: LinkedInClient, urn: string) => Promise<void>) => {
+  /**
+   * Runs an operation on an authored post, explaining why LinkedIn may reject it: the common activity-URN mix-up, or,
+   * for a 403 when the sign-in has the scope for the member's posts, that the post isn't theirs. The generic 403
+   * message suggests signing in again, which won't fix that.
+   */
+  const onOwnPost = async (connect: Connect, post: string, verb: string, operation: (client: LinkedInClient, urn: string) => Promise<void>) => {
     const urn = parsePostReference(post);
-    const { client } = await connect();
+    const { client, session } = await connect();
     try {
       await operation(client, urn);
     } catch (error) {
-      if (urn.startsWith('urn:li:activity:') && error instanceof LinkedInApiError && error.status < 500) {
+      if (!(error instanceof LinkedInApiError)) throw error;
+      if (urn.startsWith('urn:li:activity:') && error.status < 500) {
         throw new UserInputError(
           `LinkedIn could not ${verb} ${urn}. This needs the post's share or ugcPost URN (as returned by linkedin_create_post), not the activity URN that links copied from linkedin.com often contain. ` +
             `To find it, choose "Embed this post" in the post's menu on linkedin.com and pass the embed code, which contains urn:li:share:… or urn:li:ugcPost:…. LinkedIn said: ${error.message}`,
+        );
+      }
+      if (error.status === 403 && session.scopes.includes('w_member_social')) {
+        const page = session.scopes.includes(PAGES.scope)
+          ? ' If a Page published it, you need to be a super admin or content admin of the Page.'
+          : ` To ${verb} a Page's posts, ${settingName(PAGES)} must be turned on for this connector before you sign in.`;
+        throw new UserInputError(
+          `LinkedIn didn't let you ${verb} ${urn}: ${error.message.replace(/\.?$/, '.')} Only its author can ${verb} a post: check that you published it. ` +
+            `Signing in again won't help with that.${page}`,
         );
       }
       throw error;
@@ -663,8 +715,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       outputSchema: z.object({ updated: z.boolean(), postUrn: z.string(), url: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async (args) => {
-      const urn = await onOwnPost(args.post, 'edit', (client, urn) => client.updatePostText(urn, escapeLittleText(args.text)));
+    async (args, connect) => {
+      const urn = await onOwnPost(connect, args.post, 'edit', (client, urn) => client.updatePostText(urn, escapeLittleText(args.text)));
       await remember((history) => history.edited(urn, args.text));
       return { updated: true, postUrn: urn, url: postUrl(urn) };
     },
@@ -681,8 +733,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       outputSchema: z.object({ deleted: z.boolean(), postUrn: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
-    async (args) => {
-      const urn = await onOwnPost(args.post, 'delete', (client, urn) => client.deletePost(urn));
+    async (args, connect) => {
+      const urn = await onOwnPost(connect, args.post, 'delete', (client, urn) => client.deletePost(urn));
       await remember((history) => history.deleted(urn));
       return { deleted: true, postUrn: urn };
     },
@@ -728,8 +780,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   // ---------------------------------------------------------------- engagement (Community Management API)
 
   if (engagement) {
-    /** The post to act on, and who acts: the member, or the Page given as `organization`. */
-    const engage = async ({ post, organization }: { post: string; organization?: string }) => {
+    /**
+     * The post to act on, who acts (the member, or the Page given as `organization`), and `act`, which runs the
+     * action (e.g. "comment on") for them. The sign-in has the action's scope, so a 403 is the post refusing it.
+     */
+    const engage = async (connect: Connect, { post, organization }: { post: string; organization?: string }, action: string) => {
       if (!organization && !memberEngagement) {
         throw new UserInputError(
           `Commenting and reacting as yourself needs ${settingName(COMMENTS)} turned on for this connector (Community Management API). Pass "organization" to act as a Page instead.`,
@@ -737,7 +792,16 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       }
       const target = parsePostReference(post);
       const { client, session } = await connect(organization ? PAGES : COMMENTS);
-      return { client, target, actor: await actorUrn(client, session, organization) };
+      const actor = await actorUrn(client, session, organization);
+      const act = <T>(operation: () => Promise<T>) =>
+        actingAs(
+          actor,
+          operation,
+          (detail) =>
+            `LinkedIn didn't let you ${action} ${target}: ${detail} Check on linkedin.com that you can see the post and ${action} it. ` +
+            "Your sign-in has the permission for this, so signing in again won't help.",
+        );
+      return { client, target, actor, act };
     };
 
     tool(
@@ -753,9 +817,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         outputSchema: z.object({ postUrn: z.string(), commentId: z.string().optional(), actor: z.string() }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
-      async (args) => {
-        const { client, target, actor } = await engage(args);
-        const commentId = await actingAs(actor, () => client.createComment(target, actor, escapeLittleText(args.text)));
+      async (args, connect) => {
+        const { client, target, actor, act } = await engage(connect, args, 'comment on');
+        const commentId = await act(() => client.createComment(target, actor, escapeLittleText(args.text)));
         return { postUrn: target, actor, commentId };
       },
     );
@@ -775,9 +839,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         outputSchema: z.object({ postUrn: z.string(), reaction: z.string(), actor: z.string() }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       },
-      async (args) => {
-        const { client, target, actor } = await engage(args);
-        await actingAs(actor, () => client.createReaction(target, actor, REACTIONS[args.reaction]!));
+      async (args, connect) => {
+        const { client, target, actor, act } = await engage(connect, args, 'react to');
+        await act(() => client.createReaction(target, actor, REACTIONS[args.reaction]!));
         return { postUrn: target, reaction: args.reaction, actor };
       },
     );

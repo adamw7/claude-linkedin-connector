@@ -27,6 +27,7 @@ export interface MediaSourceOptions {
   localFileDirs?: string[];
   allowPrivateNetwork?: boolean;
   cwd?: string;
+  home?: string;
 }
 
 const DOCUMENT_TYPES = 'PDF, DOC, DOCX, PPT or PPTX';
@@ -94,6 +95,31 @@ async function inAllowedDir(path: string, dirs: string[]): Promise<boolean> {
   return false;
 }
 
+/**
+ * The file a relative path such as "photo.jpg" or "Downloads/photo.jpg" names. The working directory comes first, as
+ * Claude Code starts the server in the project; but Claude Desktop starts it in /, so otherwise the one file by that
+ * path in the allowed folders, or under the home folder, is meant. Nothing outside the folders is looked at.
+ */
+async function locate(path: string, dirs: string[], cwd: string, home: string, folders: string): Promise<string> {
+  /** The real path of an existing candidate inside the folders. */
+  const existing = async (candidate: string) =>
+    dirs.some((dir) => isInside(resolve(dir), candidate)) ? realpath(candidate).catch(() => undefined) : undefined;
+  const inCwd = resolve(cwd, path);
+  if ((await existing(inCwd)) !== undefined) return inCwd;
+  // By real path, so a folder listed twice, or linked from another, doesn't make the file look ambiguous.
+  const found = new Map<string, string>();
+  for (const candidate of [home, ...dirs].map((base) => resolve(base, path))) {
+    const real = await existing(candidate);
+    if (real !== undefined && !found.has(real)) found.set(real, candidate);
+  }
+  const matches = [...found.values()];
+  if (matches.length === 0) throw new UserInputError(`Cannot find "${path}" in ${folders}. If it is somewhere else, pass its full path.`);
+  if (matches.length > 1) {
+    throw new UserInputError(`"${path}" matches more than one file: ${matches.join(', ')}. Pass the full path of the one you mean.`);
+  }
+  return matches[0]!;
+}
+
 /** Reads up to `maxBytes` from a local path (when allowed), an http(s) URL or a base64 data: URI. */
 export async function readSource(
   source: string,
@@ -123,19 +149,26 @@ export async function readSource(
     throw new UserInputError(`"${source}" is not an http(s) URL or base64 data: URI. Local files cannot be read by a remote connector.`);
   }
   const path = trimmed.startsWith('file://') ? fileUrlPath(trimmed) : expandHome(trimmed);
-  const relativePath = !isAbsolute(path);
-  const absolute = relativePath ? resolve(options.cwd ?? process.cwd(), path) : path;
   const folders = `the folders this connector may read files from (${dirs.join(', ') || 'none'})`;
+  const home = options.home ?? homedir();
+  const absolute = isAbsolute(path) ? path : await locate(path, dirs, options.cwd ?? process.cwd(), home, folders);
   const lexicallyInside = dirs.some((dir) => isInside(resolve(dir), absolute));
+  const folder = dirname(absolute);
   /** `link`: the path lies in an allowed folder but leads out of it, so allowing its folder wouldn't help. */
-  const outside = (link: boolean) =>
-    new UserInputError(
-      link
-        ? `${absolute} links to a file outside ${folders}. Move or copy the file itself into one of them.`
-        : `${absolute} is outside ${folders}. Move the file into one of them, or allow its folder by setting ` +
-            `"Folders for local files" (LINKEDIN_FILE_DIRS) to ${[...dirs, dirname(absolute)].join(',')}: ` +
-            'the setting replaces the folders allowed now rather than adding to them, so this keeps them.',
+  const outside = (link: boolean) => {
+    if (link) return new UserInputError(`${absolute} links to a file outside ${folders}. Move or copy the file itself into one of them.`);
+    // Allowing the home folder, or one holding it such as /, would let a page Claude reads get any of the user's files posted.
+    if (isInside(folder, home)) {
+      return new UserInputError(
+        `${absolute} is outside ${folders}. Move or copy the file into one of them: allowing ${folder} would let the connector read every file in your home folder.`,
+      );
+    }
+    return new UserInputError(
+      `${absolute} is outside ${folders}. Move the file into one of them, or allow its folder by setting ` +
+        `"Folders for local files" (LINKEDIN_FILE_DIRS) to ${[...dirs, folder].join(',')}: ` +
+        'the setting replaces the folders allowed now rather than adding to them, so this keeps them.',
     );
+  };
   let real: string;
   let size: number;
   try {
@@ -151,9 +184,7 @@ export async function readSource(
     if (!lexicallyInside) throw outside(false);
     const { code, message } = error as NodeJS.ErrnoException;
     const reason = code === 'ENOENT' ? 'the file does not exist' : code === 'EACCES' ? 'permission denied' : message;
-    // The server's working directory is rarely the user's (Claude Desktop starts it in /).
-    const hint = relativePath ? ` "${path}" was resolved against ${dirname(absolute)}; pass an absolute path instead.` : '';
-    throw new UserInputError(`Cannot read ${absolute}: ${reason}.${hint}`);
+    throw new UserInputError(`Cannot read ${absolute}: ${reason}.`);
   }
   if (size > maxBytes) throw new UserInputError(`${absolute} is larger than ${maxBytes / 1024 / 1024} MB.`);
   return { data: await readFile(real), filename: basename(absolute) };

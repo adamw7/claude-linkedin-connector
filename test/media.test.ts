@@ -1,11 +1,13 @@
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { UserInputError } from '../src/errors.js';
 import { loadMedia, sniffDocument, sniffImage } from '../src/linkedin/media.js';
 import { PDF, PNG, startServer, type TestServer } from './helpers/http.js';
+
+const GIF = Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1');
 
 describe('file type detection', () => {
   it('recognizes LinkedIn image formats', () => {
@@ -26,16 +28,25 @@ describe('file type detection', () => {
 });
 
 describe('loadMedia', () => {
+  /** Stands in for the home folder where a test says so. */
+  let root: string;
   let dir: string;
+  let second: string;
   let outside: string;
   let server: TestServer;
 
   beforeAll(async () => {
-    const root = await mkdtemp(join(tmpdir(), 'linkedin-media-'));
+    root = await mkdtemp(join(tmpdir(), 'linkedin-media-'));
     dir = join(root, 'allowed');
+    second = join(root, 'second');
     outside = join(root, 'private');
     await mkdir(dir);
+    await mkdir(second);
     await mkdir(outside);
+    await writeFile(join(root, 'top.png'), PNG);
+    await writeFile(join(second, 'photo.png'), PNG);
+    await writeFile(join(dir, 'dupe.png'), PNG);
+    await writeFile(join(second, 'dupe.png'), GIF);
     await writeFile(join(outside, 'secret.png'), PNG);
     await writeFile(join(dir, '..pixel.png'), PNG);
     await symlink(join(outside, 'secret.png'), join(dir, 'link.png'));
@@ -69,7 +80,12 @@ describe('loadMedia', () => {
     );
     await expect(loadMedia(join(outside, 'missing.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(`(LINKEDIN_FILE_DIRS) to ${dir},${outside}:`);
     await expect(loadMedia(join(dir, '..', 'private', 'secret.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(message);
-    await expect(loadMedia('../private/secret.png', 'image', { localFileDirs: [dir], cwd: dir })).rejects.toThrow(message);
+    // A relative path is only looked for inside the folders.
+    await expect(loadMedia('../private/secret.png', 'image', { localFileDirs: [dir], cwd: dir })).rejects.toThrow(
+      new UserInputError(
+        `Cannot find "../private/secret.png" in the folders this connector may read files from (${dir}). If it is somewhere else, pass its full path.`,
+      ),
+    );
     await expect(loadMedia(join(outside, 'secret.png'), 'image', { localFileDirs: [] })).rejects.toThrow(/\(none\)/);
     // A file name that merely starts with two dots is still inside.
     expect((await loadMedia(join(dir, '..pixel.png'), 'image', { localFileDirs: [dir] })).mimeType).toBe('image/png');
@@ -197,10 +213,37 @@ describe('loadMedia', () => {
     await expect(failure).rejects.toThrow(/^"file:\/\/server\/share\/photo\.png" is not a local file URL \(.+\)\. Pass the file's path instead\.$/);
   });
 
-  it('suggests an absolute path when a relative one is not found', async () => {
-    await expect(loadMedia('missing.png', 'image', { localFileDirs: [dir], cwd: dir })).rejects.toThrow(
-      `"missing.png" was resolved against ${dir}; pass an absolute path instead.`,
+  it('looks for a file name in the allowed folders, since Claude Desktop runs the server in /', async () => {
+    const options = { localFileDirs: [dir, second], cwd: '/', home: root };
+    expect(await loadMedia('photo.png', 'image', options)).toMatchObject({ mimeType: 'image/png', filename: 'photo.png' });
+    // Or under the home folder, as in "Downloads/photo.png".
+    expect((await loadMedia('second/photo.png', 'image', options)).filename).toBe('photo.png');
+    await expect(loadMedia('missing.png', 'image', options)).rejects.toThrow(
+      new UserInputError(
+        `Cannot find "missing.png" in the folders this connector may read files from (${dir}, ${second}). If it is somewhere else, pass its full path.`,
+      ),
     );
+  });
+
+  it('asks which file is meant when a file name is in several folders, unless one is the working directory', async () => {
+    await expect(loadMedia('dupe.png', 'image', { localFileDirs: [dir, second], cwd: '/', home: root })).rejects.toThrow(
+      new UserInputError(`"dupe.png" matches more than one file: ${join(dir, 'dupe.png')}, ${join(second, 'dupe.png')}. Pass the full path of the one you mean.`),
+    );
+    // Claude Code runs the server in the project, which is one of the folders.
+    expect((await loadMedia('dupe.png', 'image', { localFileDirs: [dir, second], cwd: second, home: root })).mimeType).toBe('image/gif');
+    // A folder listed twice holds the file once.
+    expect((await loadMedia('pixel.png', 'image', { localFileDirs: [dir, dir], cwd: '/', home: root })).filename).toBe('pixel.png');
+  });
+
+  it('never suggests allowing the home folder, or a folder holding it such as /', async () => {
+    for (const path of [join(root, 'top.png'), '/top.png']) {
+      await expect(loadMedia(path, 'image', { localFileDirs: [dir], home: root })).rejects.toThrow(
+        new UserInputError(
+          `${path} is outside the folders this connector may read files from (${dir}). ` +
+            `Move or copy the file into one of them: allowing ${dirname(path)} would let the connector read every file in your home folder.`,
+        ),
+      );
+    }
   });
 
   it('decodes base64 data URIs', async () => {

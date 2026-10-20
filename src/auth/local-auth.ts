@@ -39,6 +39,8 @@ export class LocalAuth implements LinkedInAuth {
   private readonly now: () => number;
   private envMember: MemberInfo | undefined;
   private loopback: LoopbackLogin | undefined;
+  /** The sign-in page last opened in the browser. */
+  private opened: string | undefined;
 
   constructor(private readonly options: LocalAuthOptions) {
     this.store = options.store ?? new TokenStore(options.config.tokenFile);
@@ -141,12 +143,11 @@ export class LocalAuth implements LinkedInAuth {
 
   async login(): Promise<LoginStart> {
     const flow = await this.startLoopback();
-    const { openBrowser } = this.options;
-    openBrowser?.(flow.authorizationUrl);
+    this.open(flow.authorizationUrl);
     return {
       authorizationUrl: flow.authorizationUrl,
       expiresInSeconds: Math.max(0, Math.round((flow.expiresAt - this.now()) / 1000)),
-      browserOpened: openBrowser !== undefined,
+      browserOpened: this.options.openBrowser !== undefined,
       completion: flow.completion,
     };
   }
@@ -155,8 +156,18 @@ export class LocalAuth implements LinkedInAuth {
   async loginAndWait(onUrl: (url: string) => void): Promise<string | undefined> {
     const flow = await this.startLoopback();
     onUrl(flow.authorizationUrl);
-    this.options.openBrowser?.(flow.authorizationUrl);
+    this.open(flow.authorizationUrl);
     return flow.completion;
+  }
+
+  /**
+   * Opens a sign-in page once: every tool call made while signed out (parallel ones, retries) joins the sign-in
+   * that is waiting, and would otherwise open another tab of it. Each sign-in has its own URL.
+   */
+  private open(authorizationUrl: string): void {
+    if (authorizationUrl === this.opened) return;
+    this.opened = authorizationUrl;
+    this.options.openBrowser?.(authorizationUrl);
   }
 
   private startLoopback() {
@@ -171,6 +182,13 @@ export class LocalAuth implements LinkedInAuth {
 
   async logout(): Promise<boolean> {
     this.envMember = undefined;
+    return this.store.clear();
+  }
+
+  async rejected(session: LinkedInSession): Promise<boolean> {
+    if (this.config.accessToken) return false;
+    // Not a token stored since, by a sign-in that finished while this one was in use.
+    if ((await this.store.read())?.accessToken !== session.accessToken) return false;
     return this.store.clear();
   }
 

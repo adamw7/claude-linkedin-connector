@@ -34,7 +34,10 @@ export interface AuthStatus {
 export interface LoginStart {
   authorizationUrl: string;
   expiresInSeconds: number;
-  /** Whether the sign-in page was opened in the user's browser; they may still need the link if it didn't appear. */
+  /**
+   * Whether the sign-in page was opened in the user's browser, by this call or an earlier one joining the same
+   * sign-in; they may still need the link if it didn't appear.
+   */
   browserOpened: boolean;
   /** Settles when the browser sign-in finishes: with the member's name, or rejected with why it failed. */
   completion: Promise<string | undefined>;
@@ -51,4 +54,10 @@ export interface LinkedInAuth {
   login?(): Promise<LoginStart>;
   /** Forgets stored credentials (stdio mode only). Returns whether anything was removed. */
   logout?(): Promise<boolean>;
+  /**
+   * LinkedIn rejected the session's token (it was revoked, or expired early): forgets it, so the user counts as
+   * signed out and a sign-in replaces it (stdio mode only). Returns false when it isn't the stored token, such as
+   * LINKEDIN_ACCESS_TOKEN, which only the user can replace.
+   */
+  rejected?(session: LinkedInSession): Promise<boolean>;
 }
