@@ -103,8 +103,8 @@ More things to try:
 
 LinkedIn's API doesn't give apps your list of connections, so the connector reads your data export instead: on
 LinkedIn, open **Settings → Data privacy → Get a copy of your data**, choose **Connections**, and save the zip
-archive LinkedIn emails you. In local mode, just ask: the connector finds the newest export in your Downloads,
-Desktop and Pictures folders, zipped or not. You can also give its path or a link, or attach or paste
+archive LinkedIn emails you. In local mode, just ask: the connector finds the newest export with your connections in
+your Downloads, Desktop and Pictures folders, zipped or not. You can also give its path or a link, or attach or paste
 `Connections.csv` (not the zip archive): Claude then copies its text to the connector, which takes a while for
 thousands of connections.
 

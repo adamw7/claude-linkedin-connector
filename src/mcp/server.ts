@@ -7,12 +7,14 @@ import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../erro
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
 import {
   countCompanies,
-  findConnectionsExport,
+  findConnectionsExports,
   foldText,
   matchesWordStart,
   MAX_CONNECTIONS_BYTES,
   MAX_EXPORT_BYTES,
+  NoConnectionsCsvError,
   parseConnections,
+  type Connection,
 } from '../linkedin/connections.js';
 import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js';
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
@@ -138,13 +140,16 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   /** Local mode: starts a browser sign-in and waits a while for the user to finish it. */
   const signIn = auth.login && (async (): Promise<SignInOutcome> => {
     const start = await auth.login!();
-    const finished = await Promise.race([
-      start.completion.then(
-        (name) => ({ name }),
-        (error: unknown) => ({ error: error instanceof Error ? error : new Error(String(error)) }),
-      ),
-      sleep(SIGN_IN_WAIT_MS).then(() => undefined),
-    ]);
+    // A page that didn't open can't be approved while this call waits: the user needs its link now.
+    const finished = start.browserOpened
+      ? await Promise.race([
+          start.completion.then(
+            (name) => ({ name }),
+            (error: unknown) => ({ error: error instanceof Error ? error : new Error(String(error)) }),
+          ),
+          sleep(SIGN_IN_WAIT_MS).then(() => undefined),
+        ])
+      : undefined;
     // A failed sign-in has closed its link, so there is nothing to open: the failure says what to do.
     if (finished && 'error' in finished) return { signedIn: false, message: finished.error.message.replace(/\.?$/, '.') };
     if (finished) {
@@ -351,7 +356,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         "Reads the user's 1st-degree connections from the Connections.csv file in LinkedIn's data export (LinkedIn's API does not offer connections). " +
         'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections). ' +
         (localFileDirs !== undefined
-          ? 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv; with neither, the newest export in the folders local files may come from is used. '
+          ? 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv; with neither, the newest export that has them is read from the folders local files may come from. '
           : 'Pass the text of Connections.csv as csv when the user attached or pasted it (an attached zip archive cannot be passed on), or a link to the file. ') +
         'Filter with query, company and connection dates; text matches the start of words, ignoring case and accents. Results are newest first and paged with limit and offset. ' +
           'Set companyCounts to also see how many matching connections work at each company, e.g. to find where the network is concentrated.',
@@ -402,21 +407,41 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     },
     async (args) => {
       if (args.file !== undefined && args.csv !== undefined) throw new UserInputError('Pass either file or csv, not both.');
+      // A remote server doesn't hold whole export archives in memory for anyone who asks.
+      const maxBytes = mode === 'local' ? MAX_EXPORT_BYTES : MAX_CONNECTIONS_BYTES;
+      const read = async (file: string) => parseConnections((await readSource(file, maxBytes, 'file', sources)).data);
       let found: string | undefined;
+      let all: Connection[] | undefined;
       if (args.file === undefined && args.csv === undefined) {
         if (localFileDirs === undefined) throw new UserInputError('Pass either file or csv.');
-        found = await findConnectionsExport(localFileDirs);
-        if (found === undefined) {
+        const exports = await findConnectionsExports(localFileDirs);
+        const folders = localFileDirs.join(', ') || 'any folder: local files are disabled';
+        if (exports.length === 0) {
           throw new UserInputError(
-            `No LinkedIn data export was found in ${localFileDirs.join(', ') || 'any folder: local files are disabled'}. ` +
+            `No LinkedIn data export was found in ${folders}. ` +
               'Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and save the zip archive LinkedIn emails you in one of those folders, or pass its path.',
           );
         }
+        // The newest export that has the connections: one requested for other data, such as messages, lacks them.
+        for (const path of exports) {
+          all = await read(path).catch((error: unknown) => {
+            if (error instanceof NoConnectionsCsvError) return undefined;
+            throw error;
+          });
+          if (all) {
+            found = path;
+            break;
+          }
+        }
+        if (!all) {
+          throw new UserInputError(
+            `The LinkedIn data export${exports.length > 1 ? 's' : ''} in ${folders} (${exports.join(', ')}) ${exports.length > 1 ? 'have' : 'has'} no Connections.csv. ` +
+              'Request your data again at https://www.linkedin.com/mypreferences/d/download-my-data, choose Connections, and save the zip archive LinkedIn emails you in one of those folders.',
+          );
+        }
+      } else {
+        all = args.file !== undefined ? await read(args.file) : parseConnections(args.csv!);
       }
-      const file = args.file ?? found;
-      // A remote server doesn't hold whole export archives in memory for anyone who asks.
-      const maxBytes = mode === 'local' ? MAX_EXPORT_BYTES : MAX_CONNECTIONS_BYTES;
-      const all = parseConnections(file !== undefined ? (await readSource(file, maxBytes, 'file', sources)).data : args.csv!);
       const query = args.query === undefined ? '' : foldText(args.query);
       const companies = [args.company ?? []].flat().map(foldText).filter(Boolean);
       const dated = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);

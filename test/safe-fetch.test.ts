@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import https from 'node:https';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FetchError, isBlockedAddress, safeFetch } from '../src/net/safe-fetch.js';
 import { fakeTransport } from './helpers/fake-transport.js';
@@ -140,5 +142,30 @@ describe('safeFetch redirects from a public site', () => {
     ]);
     const result = await safeFetch('https://public.example/link', { maxBytes: 1_000 });
     expect(result).toMatchObject({ url: 'https://cdn.example/a.png', data: Buffer.from('ok') });
+  });
+});
+
+describe('safeFetch from a site without TLS 1.3', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // A server that knows TLS 1.3 but has it turned off sends a protocol_version alert (see tls.test.ts). One too old to
+  // know it answers in TLS 1.2, which OpenSSL refuses as an "unsupported protocol".
+  it('says so instead of quoting OpenSSL', async () => {
+    const failure = new Error(
+      'write EPROTO 40A8C3B6:error:0A000102:SSL routines:ssl_choose_client_version:unsupported protocol:../deps/openssl/openssl/ssl/statem/statem_lib.c:1956:\n',
+    );
+    vi.spyOn(https, 'request').mockImplementation((() => {
+      const request = new EventEmitter() as EventEmitter & { end(): void; destroy(): void };
+      request.end = () =>
+        queueMicrotask(() => {
+          request.emit('error', failure);
+          request.emit('close');
+        });
+      request.destroy = () => {};
+      return request;
+    }) as unknown as typeof https.request);
+    await expect(safeFetch('https://public.example/old.png', { maxBytes: 1_000 })).rejects.toThrow(
+      "Fetching https://public.example/old.png failed: the site doesn't support TLS 1.3, which the connector requires.",
+    );
   });
 });

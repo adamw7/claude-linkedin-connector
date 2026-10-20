@@ -69,6 +69,14 @@ All notable changes to this project are documented here. The format follows
   on linkedin.com), the connector still said you were signed in, and signing in again needed `force: true`. In
   Claude Desktop and Claude Code it now forgets the rejected sign-in and opens a new one, as it does when you
   aren't signed in. A token from `LINKEDIN_ACCESS_TOKEN` is never forgotten: the error says to replace it.
+- Where the sign-in page can't be opened in a browser, such as in WSL or on a server without `xdg-open`, signing in
+  from Claude waited 45 seconds and then said the page was open in your browser. Claude now gives you the link to
+  open right away.
+- Asking about your connections failed when the newest LinkedIn data export in your Downloads, Desktop or Pictures
+  folder had no `Connections.csv`, as when you requested only other data, such as your messages. The connector now
+  reads the newest export that has your connections, and when none has, names the exports it found.
+- An image, document or connections export linked from a site that doesn't support TLS 1.3 failed with a line of
+  OpenSSL error codes. The error now says that the site doesn't support TLS 1.3, which the connector requires.
 
 ### Security
 

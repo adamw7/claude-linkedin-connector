@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   countCompanies,
-  findConnectionsExport,
+  findConnectionsExports,
   foldText,
   matchesWordStart,
+  NoConnectionsCsvError,
   parseConnectedOn,
   parseConnections,
   parseCsv,
@@ -69,6 +70,7 @@ describe('parseConnections', () => {
     expect(() => parseConnections(zipArchive({ 'Profile.csv': 'x' }))).toThrow(
       'This zip archive has no Connections.csv. Request your data again on LinkedIn under Settings → Data privacy → Get a copy of your data, and include Connections.',
     );
+    expect(() => parseConnections(zipArchive({ 'Profile.csv': 'x' }))).toThrow(NoConnectionsCsvError);
   });
 
   it('refuses files larger than 20 MB', () => {
@@ -76,30 +78,34 @@ describe('parseConnections', () => {
   });
 });
 
-describe('findConnectionsExport', () => {
+describe('findConnectionsExports', () => {
   const at = async (path: string, minutesAgo: number, content = 'x') => {
     await writeFile(path, content);
     const time = new Date(Date.now() - minutesAgo * 60_000);
     await utimes(path, time, time);
   };
 
-  it('finds the newest export archive, Connections.csv or extracted export folder', async () => {
+  it('finds export archives, Connections.csv files and extracted export folders, newest first', async () => {
     const downloads = await mkdtemp(join(tmpdir(), 'linkedin-downloads-'));
     const desktop = await mkdtemp(join(tmpdir(), 'linkedin-desktop-'));
-    expect(await findConnectionsExport([downloads, desktop, join(downloads, 'missing')])).toBeUndefined();
+    expect(await findConnectionsExports([downloads, desktop, join(downloads, 'missing')])).toEqual([]);
 
     await at(join(downloads, 'report.zip'), 0);
     await at(join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip'), 30);
-    expect(await findConnectionsExport([downloads, desktop])).toBe(join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip'));
+    expect(await findConnectionsExports([downloads, desktop])).toEqual([join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip')]);
 
     await at(join(desktop, 'connections.csv'), 20);
-    expect(await findConnectionsExport([downloads, desktop])).toBe(join(desktop, 'connections.csv'));
+    expect(await findConnectionsExports([downloads, desktop])).toEqual([join(desktop, 'connections.csv'), join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip')]);
 
     const extracted = join(downloads, 'Complete_LinkedInDataExport_03-04-2026');
     await mkdir(extracted);
-    expect(await findConnectionsExport([downloads, desktop])).toBe(join(desktop, 'connections.csv'));
+    expect(await findConnectionsExports([downloads, desktop])).toHaveLength(2);
     await at(join(extracted, 'Connections.csv'), 10);
-    expect(await findConnectionsExport([downloads, desktop])).toBe(join(extracted, 'Connections.csv'));
+    expect(await findConnectionsExports([downloads, desktop])).toEqual([
+      join(extracted, 'Connections.csv'),
+      join(desktop, 'connections.csv'),
+      join(downloads, 'Basic_LinkedInDataExport_01-02-2026.zip'),
+    ]);
   });
 });
 

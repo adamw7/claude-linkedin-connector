@@ -88,6 +88,9 @@ function isoDate(year: number, month: number, day: number): string | undefined {
   return date.toISOString().slice(0, 10);
 }
 
+/** An export archive without Connections.csv, as LinkedIn sends when only other data, such as messages, was requested. */
+export class NoConnectionsCsvError extends UserInputError {}
+
 /**
  * Parses LinkedIn's Connections.csv. The export starts with a few "Notes" lines before the header row,
  * so the header is located by its column names rather than assumed to be first.
@@ -96,7 +99,7 @@ export function parseConnections(data: Buffer | string): Connection[] {
   if (Buffer.isBuffer(data) && isZip(data)) {
     const csv = extractZipEntry(data, isConnectionsCsv, MAX_CONNECTIONS_BYTES);
     if (!csv) {
-      throw new UserInputError(
+      throw new NoConnectionsCsvError(
         'This zip archive has no Connections.csv. Request your data again on LinkedIn under Settings → Data privacy → Get a copy of your data, and include Connections.',
       );
     }
@@ -207,10 +210,10 @@ export function countCompanies(connections: Connection[]): CompanyCount[] {
 }
 
 /**
- * Finds the newest LinkedIn export in these folders: a Connections.csv or export archive directly in one, or the
- * Connections.csv in an extracted export folder. Returns its path, or undefined when there is none.
+ * Finds the LinkedIn exports in these folders, newest first: a Connections.csv or export archive directly in one, or
+ * the Connections.csv in an extracted export folder.
  */
-export async function findConnectionsExport(dirs: string[]): Promise<string | undefined> {
+export async function findConnectionsExports(dirs: string[]): Promise<string[]> {
   const candidates: string[] = [];
   for (const dir of dirs) {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -223,10 +226,10 @@ export async function findConnectionsExport(dirs: string[]): Promise<string | un
       }
     }
   }
-  let newest: { path: string; modified: number } | undefined;
+  const found: Array<{ path: string; modified: number }> = [];
   for (const path of candidates) {
     const info = await stat(path).catch(() => undefined);
-    if (info?.isFile() && (!newest || info.mtimeMs > newest.modified)) newest = { path, modified: info.mtimeMs };
+    if (info?.isFile()) found.push({ path, modified: info.mtimeMs });
   }
-  return newest?.path;
+  return found.sort((a, b) => b.modified - a.modified).map(({ path }) => path);
 }

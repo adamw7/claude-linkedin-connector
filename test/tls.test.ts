@@ -62,7 +62,7 @@ describe('TLS', () => {
   it('makes safeFetch refuse servers older than TLS 1.3 without the process-wide setting', async () => {
     const open = { maxBytes: 1_000, allowPrivateNetwork: true };
     const tls12 = urlFor('TLSv1.2');
-    await expect(safeFetch(tls12, open)).rejects.toThrow(new RegExp(`^Fetching ${tls12} failed: .*alert protocol version`));
+    await expect(safeFetch(tls12, open)).rejects.toThrow(`Fetching ${tls12} failed: the site doesn't support TLS 1.3, which the connector requires.`);
     await expect(safeFetch(urlFor('TLSv1.3'), open)).rejects.toThrow(`Fetching ${urlFor('TLSv1.3')} failed: self-signed certificate`);
   });
 });
