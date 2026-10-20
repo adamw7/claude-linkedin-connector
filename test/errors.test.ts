@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { REAUTH_HINT } from '../src/auth/local-auth.js';
 import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, UserInputError } from '../src/errors.js';
-import { describeError, errorResult } from '../src/mcp/errors.js';
+import { describeError, errorKind, errorResult } from '../src/mcp/errors.js';
 import { FetchError } from '../src/net/safe-fetch.js';
 
 describe('describeError', () => {
@@ -55,6 +55,27 @@ describe('describeError', () => {
     expect(describeError(new TypeError('fetch failed'), 'local')).toBe('Could not reach LinkedIn. Check the internet connection and try again.');
     expect(describeError(new Error('boom'), 'local')).toBe('Unexpected error: boom');
     expect(describeError('plain string', 'local')).toBe('Unexpected error: plain string');
+  });
+});
+
+describe('errorKind', () => {
+  it("names a failure without its message, which can quote the tool's arguments", () => {
+    expect(errorKind(new FetchError('Fetching https://cdn.example/a.png?X-Amz-Signature=abc failed with HTTP 403.'))).toBe('FetchError');
+    expect(errorKind(new UserInputError('Could not find a LinkedIn post in "my draft".'))).toBe('UserInputError');
+    expect(errorKind(new NotAuthenticatedError('Sign in first.'))).toBe('NotAuthenticatedError');
+    expect(errorKind(new DOMException('timed out', 'TimeoutError'))).toBe('TimeoutError');
+    expect(errorKind(new TypeError("Cannot read properties of undefined (reading 'x')"))).toBe('TypeError');
+    expect(errorKind('plain string')).toBe('string');
+  });
+
+  it("keeps LinkedIn's status and error codes, and the network error's code", () => {
+    const denied = new LinkedInApiError(403, 'Not enough permissions to access: urn:li:share:1', { code: 'ACCESS_DENIED', serviceErrorCode: 100 });
+    expect(errorKind(denied)).toBe('LinkedInApiError: HTTP 403 ACCESS_DENIED (service error 100)');
+    expect(errorKind(new LinkedInApiError(502, 'Bad gateway'))).toBe('LinkedInApiError: HTTP 502');
+    expect(errorKind(new LinkedInOAuthError('invalid_grant', 'Code expired'))).toBe('LinkedInOAuthError: invalid_grant');
+    const offline = new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.linkedin.com'), { code: 'ENOTFOUND' }) });
+    expect(errorKind(offline)).toBe('TypeError: fetch failed (ENOTFOUND)');
+    expect(errorKind(new TypeError('fetch failed'))).toBe('TypeError: fetch failed');
   });
 });
 

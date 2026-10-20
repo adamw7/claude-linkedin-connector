@@ -121,6 +121,12 @@ describe('logging', () => {
     }
   });
 
+  it('never logs error messages written for the user, which quote what was passed to the tool, such as a signed URL', () => {
+    for (const { file, event, values } of calls) {
+      for (const [field, value] of Object.entries(values)) expect(value, `${file}: ${event}.${field}`).not.toMatch(/describeError|errorResult|\.message\b/);
+    }
+  });
+
   it('tags request-scoped events with the request ID', () => {
     for (const { file, event, fields } of calls.filter((call) => ['http_request', 'tool_call', 'unhandled_error'].includes(call.event))) {
       expect(fields, `${file}: ${event}`).toContain('requestId');

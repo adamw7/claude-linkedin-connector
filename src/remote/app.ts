@@ -10,7 +10,7 @@ import { buildOAuthProtectedResourceMetadata, createMcpHandler } from '@modelcon
 import type { RemoteConfig } from '../config.js';
 import { escapeHtml } from '../html.js';
 import type { ApiVersion } from '../linkedin/versions.js';
-import { describeError } from '../mcp/errors.js';
+import { errorKind } from '../mcp/errors.js';
 import { createConnectorServer } from '../mcp/server.js';
 import { HOMEPAGE } from '../version.js';
 import { ClientRegistry, RedirectPolicy } from './clients.js';
@@ -153,7 +153,8 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
         apiBaseUrl: config.apiBaseUrl,
         fetch,
         allowPrivateNetwork,
-        // The audit trail: who called which tool and how it went (never the arguments, which hold post text).
+        // The audit trail: who called which tool and how it went. Never the arguments, which hold post text, nor
+        // the error message, which can quote them.
         onToolCall: ({ tool, ok, durationMs, error }) =>
           logger(ok ? 'info' : 'warn', 'tool_call', {
             tool,
@@ -162,7 +163,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
             member: grant?.sub,
             clientId: ctx.authInfo?.clientId,
             requestId: ctx.requestInfo?.headers.get('x-request-id') ?? undefined,
-            error: ok ? undefined : describeError(error, 'remote'),
+            error: ok ? undefined : errorKind(error),
           }),
       });
     },

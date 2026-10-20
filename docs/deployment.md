@@ -226,7 +226,7 @@ The server writes one JSON object per line to stderr, with `time`, `level` (`inf
 | `warning` | warn | Something to look at, e.g. LinkedIn retired the configured API version and the server switched to a newer one |
 | `http_request` | info, error for 5xx | One per request except health checks: method, path, status, duration, client IP, request ID |
 | `member_authorized` / `member_not_allowed` | info / warn | Someone finished connecting, or was refused by `LINKEDIN_ALLOWED_MEMBERS` |
-| `tool_call` | info, warn if it failed | Audit trail: tool, member, client, duration, error, request ID; never the arguments |
+| `tool_call` | info, warn if it failed | Audit trail: tool, member, client, duration, request ID, and for a failure its kind with LinkedIn's HTTP status and error code (e.g. `LinkedInApiError: HTTP 403 ACCESS_DENIED`); never the arguments, nor the error message, which can quote them |
 | `linkedin_token_exchange_failed` | warn | LinkedIn rejected a sign-in, often a wrong client secret or redirect URL |
 | `linkedin_scope_not_authorized` | warn | LinkedIn refused a scope the server asks for because the app lacks the product that grants it, e.g. `LINKEDIN_COMMENTS` without the Community Management API: add the product or turn the feature off |
 | `mcp_error` | warn | A malformed or unsupported MCP request |

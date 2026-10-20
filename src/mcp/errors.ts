@@ -59,6 +59,23 @@ export function describeError(error: unknown, mode: Mode): string {
   return `Unexpected error: ${error instanceof Error ? error.message : String(error)}`;
 }
 
+/**
+ * Names a failure for the remote audit log: its kind, with LinkedIn's status and error code or the network error's
+ * code. Never its message, which can quote the tool's arguments, such as an image URL with a signed query string.
+ */
+export function errorKind(error: unknown): string {
+  if (error instanceof LinkedInApiError) {
+    const { code, serviceErrorCode } = error.details;
+    return `${error.name}: HTTP ${error.status}${code ? ` ${code}` : ''}${serviceErrorCode === undefined ? '' : ` (service error ${serviceErrorCode})`}`;
+  }
+  if (error instanceof LinkedInOAuthError) return `${error.name}: ${error.error}`;
+  if (error instanceof TypeError && error.message === 'fetch failed') {
+    const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
+    return `${error.name}: fetch failed${code ? ` (${code})` : ''}`;
+  }
+  return error instanceof Error ? error.name : typeof error;
+}
+
 export function errorResult(error: unknown, mode: Mode): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: describeError(error, mode) }] };
 }

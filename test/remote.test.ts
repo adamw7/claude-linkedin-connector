@@ -335,11 +335,20 @@ describe('remote connector end to end', () => {
     expect(sent.headers.get('authorization')).toBe('Bearer li-token');
     // The member was resolved during sign-in, so no userinfo call was needed when posting.
     expect(remote.linkedin.find('GET', '/v2/userinfo')).toHaveLength(1);
+    // A failure is logged by its kind: its message would quote the arguments, here an image URL's signature.
+    const failed = await client.callTool({
+      name: 'linkedin_create_post',
+      arguments: { text: 'Hello with a picture', images: [{ source: 'http://127.0.0.1:1/photo.png?X-Amz-Signature=signed-url-secret' }] },
+    });
+    expect(failed.isError).toBe(true);
     await client.close();
 
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'member_authorized', member: 'abc123' }));
     expect(remote.logs).toContainEqual(
       expect.objectContaining({ level: 'info', event: 'tool_call', tool: 'linkedin_create_post', ok: true, member: 'abc123' }),
+    );
+    expect(remote.logs).toContainEqual(
+      expect.objectContaining({ level: 'warn', event: 'tool_call', tool: 'linkedin_create_post', ok: false, member: 'abc123', error: 'FetchError' }),
     );
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'GET', path: '/oauth/callback', status: 302 }));
     // Each tool call can be matched with the request that carried it.
@@ -348,7 +357,9 @@ describe('remote connector end to end', () => {
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'POST', path: '/mcp', requestId: call.requestId }));
     // Neither tokens, codes nor post text reach the logs.
     const logged = JSON.stringify(remote.logs);
-    for (const secret of ['li-token', 'li-code', provider.saved!.access_token, 'Hello from Claude']) expect(logged).not.toContain(secret);
+    for (const secret of ['li-token', 'li-code', provider.saved!.access_token, 'Hello from Claude', 'Hello with a picture', 'signed-url-secret']) {
+      expect(logged).not.toContain(secret);
+    }
   });
 
   it('works with a Client ID Metadata Document instead of registration', async () => {
