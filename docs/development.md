@@ -8,6 +8,7 @@ npm run test:mutation  # Stryker mutation tests, report in reports/mutation/ (sl
 npm run build          # dist/
 npm run bundle         # single-file build for the .mcpb
 node scripts/smoke-test-package.mjs  # packs, installs and runs the npm package
+node scripts/live-test.mjs  # runs dist/ against the real LinkedIn API; changes nothing there without options
 ```
 
 ```
@@ -36,6 +37,34 @@ fake LinkedIn: signing in from the terminal, publishing a post with an image ove
 remote server. It fails on a file left out of `files`, a runtime dependency listed under `devDependencies` or a
 broken `bin`. Give it a version to test a release instead: `node scripts/smoke-test-package.mjs
 claude-linkedin-connector@<version>`.
+
+## Testing against the real LinkedIn API
+
+Everything above runs against a fake LinkedIn, built from LinkedIn's documentation. `scripts/live-test.mjs` runs the
+built connector against the real API, to catch what the fake can't: LinkedIn retiring the API version the connector
+sends, or answering differently than documented. Run it with your own LinkedIn app, for example before a release:
+
+```sh
+npm run build
+LINKEDIN_ACCESS_TOKEN=<token> node scripts/live-test.mjs  # or after claude-linkedin-connector login
+node scripts/live-test.mjs --login --upload --publish --remote
+```
+
+Without options it changes nothing on LinkedIn. It checks how LinkedIn refuses made-up credentials, and, signed in,
+reads your profile, checks that LinkedIn accepts the API version the connector sends, and that the connector moves to a
+live version when one is retired. Get a token from the OAuth 2.0 tools on your app's page in the developer portal (with
+the `openid profile email w_member_social` scopes), or sign in with `--login`, which keeps the token apart from yours.
+
+- `--upload` uploads an image and a document without posting them, which nobody sees, and waits for LinkedIn to
+  process them.
+- `--publish` publishes test posts visible to your connections (text with every character LinkedIn treats as markup,
+  one image, two images, a PDF and a link), edits one and deletes them all. `--comments` and `--page <id>` add a
+  comment and a reaction, and a post as a Page; both need the Community Management API. `--keep` leaves the posts up
+  to check how they look.
+- `--remote` connects to the remote server the way Claude does, through its consent screen and LinkedIn's in your
+  browser. Add `http://localhost:3000/oauth/callback` to your app's redirect URLs first.
+
+Behind a proxy, set `NODE_USE_ENV_PROXY=1`: Node doesn't use `HTTPS_PROXY` otherwise.
 
 ## Releasing
 
