@@ -36,6 +36,14 @@ describe('describeError', () => {
     expect(describeError(new LinkedInApiError(429, 'Slow down'), 'local')).toBe("LinkedIn's rate limit was reached. Try again later.");
   });
 
+  it('never calls a request LinkedIn accepted rejected', () => {
+    expect(describeError(new LinkedInApiError(201, 'LinkedIn accepted the post but did not return its ID.'), 'local')).toBe(
+      'LinkedIn accepted the post but did not return its ID.',
+    );
+    expect(describeError(new LinkedInApiError(399, 'Unexpected answer.'), 'remote')).toBe('Unexpected answer.');
+    expect(describeError(new LinkedInApiError(400, 'Bad request'), 'local')).toBe('LinkedIn rejected the request (HTTP 400): Bad request.');
+  });
+
   it('distinguishes server errors from other rejections', () => {
     expect(describeError(new LinkedInApiError(503, 'Unavailable'), 'local')).toBe(
       'LinkedIn had an internal problem (HTTP 503): Unavailable. Try again in a moment.',

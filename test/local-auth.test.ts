@@ -149,9 +149,35 @@ describe('LocalAuth', () => {
     const start = await signIn.login();
     expect(start).toMatchObject({ browserOpened: true });
     expect(opened).toEqual([start.authorizationUrl]);
+    // Tool calls made while it waits, at once or one after another, join it without opening it again.
+    const joined = await Promise.all([signIn.login(), signIn.login()]);
+    expect(joined.map((joining) => joining.authorizationUrl)).toEqual([start.authorizationUrl, start.authorizationUrl]);
+    expect(joined.map((joining) => joining.browserOpened)).toEqual([true, true]);
+    expect(opened).toEqual([start.authorizationUrl]);
     const state = new URL(start.authorizationUrl).searchParams.get('state')!;
     await fetch(`http://127.0.0.1:${port}/callback?code=li-code&state=${state}`);
     expect(await start.completion).toBe('Ada Lovelace');
+    // The next sign-in opens its own page.
+    const next = await signIn.login();
+    expect(opened).toEqual([start.authorizationUrl, next.authorizationUrl]);
+    expect(next.authorizationUrl).not.toBe(start.authorizationUrl);
+  });
+
+  it('forgets a stored token LinkedIn rejected, but not a newer one or LINKEDIN_ACCESS_TOKEN', async () => {
+    const local = auth();
+    await local.store.write(token());
+    const session = await local.getSession();
+    await local.store.write(token({ accessToken: 'newer-token' }));
+    expect(await local.rejected(session)).toBe(false);
+    expect(await local.store.read()).toMatchObject({ accessToken: 'newer-token' });
+    expect(await local.rejected(await local.getSession())).toBe(true);
+    expect(await local.store.read()).toBeUndefined();
+    expect(await local.status()).toMatchObject({ authenticated: false });
+
+    const environment = auth({ accessToken: 'env-token' });
+    await environment.store.write(token({ accessToken: 'env-token' }));
+    expect(await environment.rejected(await environment.getSession())).toBe(false);
+    expect(await environment.store.read()).toMatchObject({ accessToken: 'env-token' });
   });
 
   it('tells Claude why the last browser sign-in failed, until the next one starts', async () => {

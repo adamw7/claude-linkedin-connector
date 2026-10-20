@@ -76,7 +76,12 @@ export class LinkedInClient {
     };
     const response = await this.callAndDiscard('POST', '/rest/posts', { body });
     const id = response.headers.get('x-restli-id') ?? response.headers.get('x-linkedin-id');
-    if (!id) throw new LinkedInApiError(response.status, 'LinkedIn created the post but did not return its ID.');
+    if (!id) {
+      throw new LinkedInApiError(
+        response.status,
+        'LinkedIn accepted the post but did not return its ID, so it has probably been published. Look for it on LinkedIn before trying again, so it is not published twice.',
+      );
+    }
     return id;
   }
 

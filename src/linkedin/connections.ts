@@ -166,6 +166,19 @@ export function foldText(text: string): string {
     .trim();
 }
 
+const WORD_CHARACTER = /[\p{L}\p{N}]/u;
+
+/**
+ * Whether `term` starts a word in `text` (both folded): "ing" finds "ing bank" but not "boeing", and "ey" finds "ey"
+ * but not "disney", which plain substring matching would. A term that starts with a symbol ("@gmail") may match anywhere.
+ */
+export function matchesWordStart(text: string, term: string): boolean {
+  for (let index = text.indexOf(term); index >= 0; index = text.indexOf(term, index + 1)) {
+    if (index === 0 || !WORD_CHARACTER.test(text[index - 1]!) || !WORD_CHARACTER.test(term[0]!)) return true;
+  }
+  return false;
+}
+
 export interface CompanyCount {
   company: string;
   count: number;

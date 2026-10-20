@@ -87,12 +87,14 @@ More things to try:
   Claude gives you after publishing: a link copied from linkedin.com often won't work, but the code from the
   post's **Embed this post** menu item will.
 - **Give files by name or link, not as attachments.** Claude can't pass on an image or document you attach in the
-  chat: it sees what's in it, not the file. In local mode, save the file and tell Claude its name; with a remote
-  server, give a link to the file itself. Local files are only read from your Downloads, Desktop and Pictures
-  folders (also the ones OneDrive keeps on Windows) and the folder the connector runs in, so a page or document
-  Claude reads can't get it to post other files from your computer. To use other folders, set **Folders for local
-  files** in the Claude Desktop extension's settings (`LINKEDIN_FILE_DIRS`). It replaces the default folders, so
-  list the ones you want to keep too; if a file is outside them, the error message gives the value to use.
+  chat: it sees what's in it, not the file. In local mode, save the file and tell Claude its name: the connector
+  finds it, and asks for the full path if two folders have a file by that name. With a remote server, give a link
+  to the file itself. Local files are only read from your Downloads, Desktop and Pictures folders (also the ones
+  OneDrive keeps on Windows) and the folder the connector runs in, so a page or document Claude reads can't get it
+  to post other files from your computer. To use other folders, set **Folders for local files** in the Claude
+  Desktop extension's settings (`LINKEDIN_FILE_DIRS`). It replaces the default folders, so list the ones you want
+  to keep too; if a file is outside them, the error message gives the value to use. It never suggests your home
+  folder itself, which would open up all your files: move the file instead.
 - **Images must be JPEG, PNG or GIF, and documents PDF or Office files.** Convert iPhone photos (HEIC) and WebP
   images to JPEG or PNG, and export Keynote or Pages files as PDF; the connector tells you what it got. Video
   posts aren't supported.
@@ -107,7 +109,7 @@ Desktop and Pictures folders, zipped or not. You can also give its path or a lin
 thousands of connections.
 
 Claude can search it by name, company (one or several), position or connection date, and count your connections
-at each company. Matching ignores case and accents, so "Lodz" finds "Łódź". Email addresses appear only for
-connections who allow it.
+at each company. Matching ignores case and accents, so "Lodz" finds "Łódź", and looks at the start of words, so
+"ING" finds ING Bank but not Boeing. Email addresses appear only for connections who allow it.
 
 If something goes wrong, see [Troubleshooting](../README.md#troubleshooting).

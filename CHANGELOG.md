@@ -16,6 +16,8 @@ All notable changes to this project are documented here. The format follows
   (`linkedin.com/company/<ID>/admin/`). A Page given by name now gets an explanation of where to find its ID.
 - Messages about a setting name it as the Claude Desktop extension's settings show it, as well as by its
   environment variable, e.g. "Post as LinkedIn Pages" (`LINKEDIN_PAGES`).
+- Searching your connections matches the start of words: "ING" finds ING Bank but no longer Boeing or Digital
+  Marketing Agency, "EY" no longer finds Disney, and "Ann" finds Ann and Annette but not Joanna.
 
 ### Fixed
 
@@ -52,6 +54,21 @@ All notable changes to this project are documented here. The format follows
   (such as one on a network share), now get an explanation instead of "Unexpected error".
 - Stack traces from the npm package can be mapped back to the TypeScript source: its source maps now carry the
   source they point to, which the package doesn't include.
+- A file given by name, such as "photo.jpg", is found in the folders the connector may read files from. In Claude
+  Desktop it was looked for in `/` instead, and the error suggested allowing `/`, which would have let the
+  connector read every file on the computer. If two folders have a file by that name, Claude asks which one you
+  mean. A file outside the folders no longer gets a suggestion to allow your home folder or a folder holding it.
+- If LinkedIn accepted a post without saying which post it created, the error said LinkedIn had rejected it, so
+  Claude could publish it again. It now says the post has probably been published and to check before trying again.
+- Several tool calls made while you weren't signed in (at once, or retries) each opened another browser tab with
+  the same sign-in page. The page now opens once per sign-in.
+- Editing or deleting someone else's post, and commenting on or reacting to a post that won't let you, told you to
+  check your LinkedIn app and sign in again, which can't help. The error now says why else LinkedIn refuses it, and
+  only suggests signing in again when your sign-in lacks the permission the action needs.
+- When LinkedIn stopped accepting your sign-in before it expired (for example after you revoked the app's access
+  on linkedin.com), the connector still said you were signed in, and signing in again needed `force: true`. In
+  Claude Desktop and Claude Code it now forgets the rejected sign-in and opens a new one, as it does when you
+  aren't signed in. A token from `LINKEDIN_ACCESS_TOKEN` is never forgotten: the error says to replace it.
 
 ### Security
 

@@ -22,6 +22,9 @@ export function describeError(error: unknown, mode: Mode): string {
     return error.message;
   }
   if (error instanceof LinkedInApiError) {
+    // LinkedIn did what was asked but its answer lacked something, e.g. a created post's ID: never say it was rejected,
+    // which could get the post published again.
+    if (error.status < 400) return error.message;
     const detail = error.message.replace(/\.?$/, '.');
     switch (error.status) {
       case 401:
