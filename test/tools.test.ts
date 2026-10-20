@@ -192,7 +192,8 @@ describe('tool list', () => {
     const changes = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
     expect(contract).toEqual({
       linkedin_get_profile: ['Get LinkedIn profile', reads],
-      linkedin_read_connections: ['Read exported LinkedIn connections', reads],
+      // It downloads the export when given a link to it.
+      linkedin_read_connections: ['Read exported LinkedIn connections', { readOnlyHint: true, openWorldHint: true }],
       linkedin_preview_post: ['Preview a LinkedIn post', { readOnlyHint: true, openWorldHint: true }],
       linkedin_create_post: ['Publish a LinkedIn post', publishes],
       linkedin_edit_post: ['Edit a LinkedIn post', changes],
@@ -647,6 +648,31 @@ describe('linkedin_create_post', () => {
     expect((await call(h, 'linkedin_create_post', { text: 'Only for my network', visibilty: 'CONNECTIONS' })).text).toBe(
       'Input validation error: Invalid arguments for tool linkedin_create_post: Unrecognized key: "visibilty"',
     );
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
+
+  it('refuses unknown keys in images, documents and links, which would otherwise publish without them', async () => {
+    const h = await harness();
+    const create = (await h.client.listTools()).tools.find((t) => t.name === 'linkedin_create_post')!;
+    const properties = create.inputSchema.properties as Record<string, { additionalProperties?: boolean; items?: { additionalProperties?: boolean } }>;
+    expect([properties.article!.additionalProperties, properties.images!.items!.additionalProperties, properties.document!.additionalProperties]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const photo = join(files, 'photo.png');
+    for (const name of ['linkedin_create_post', 'linkedin_preview_post']) {
+      const invalid = `Input validation error: Invalid arguments for tool ${name}: `;
+      expect((await call(h, name, { text: 'Our results', images: [{ source: photo, alt_text: 'A chart' }] })).text).toBe(
+        `${invalid}images.0: Unrecognized key: "alt_text"`,
+      );
+      expect((await call(h, name, { text: 'Our results', document: { source: photo, name: 'Q3 results' } })).text).toBe(
+        `${invalid}document: Unrecognized key: "name"`,
+      );
+      expect((await call(h, name, { text: 'Our results', article: { url: 'https://example.com/q3', image: photo } })).text).toBe(
+        `${invalid}article: Unrecognized key: "image"`,
+      );
+    }
     expect(h.linkedin.requests).toHaveLength(0);
   });
 });

@@ -43,13 +43,24 @@ All notable changes to this project are documented here. The format follows
   `LINKEDIN_API_VERSION`, which the Claude Desktop extension doesn't offer.
 - Asking to post, comment or react as a LinkedIn Page when posting as Pages isn't turned on now fails with an
   explanation. Before, the Page was ignored and the post, comment or reaction went out as you. The tools that
-  publish now also refuse other arguments they don't know, such as a mistyped one, instead of ignoring them.
+  publish now also refuse other arguments they don't know, such as a mistyped one, instead of ignoring them. That
+  includes the details of an image, document or link: `alt_text` instead of `altText` used to publish the image
+  without its alt text.
 - A malformed request to the page the connector opens on your computer while you sign in to LinkedIn no longer
   crashes the connector.
 - A link or image URL that redirects to an invalid address, and a `file://` URL that names no file on your computer
   (such as one on a network share), now get an explanation instead of "Unexpected error".
 - Stack traces from the npm package can be mapped back to the TypeScript source: its source maps now carry the
   source they point to, which the package doesn't include.
+
+### Security
+
+- A remote server's `tool_call` log entries no longer include the error message, which could quote what was passed
+  to the tool, such as an image URL whose query string holds a signature. They now name the kind of error, with
+  LinkedIn's HTTP status and error code when LinkedIn refused the call.
+- `linkedin_read_connections` told Claude it never reaches beyond LinkedIn, but it downloads the export when given a
+  link to it. It now says it does (MCP's open-world hint), as `linkedin_preview_post` does, so Claude apps can
+  treat it like the other tools that fetch links.
 
 ## [0.3.0] - 2026-10-18
 

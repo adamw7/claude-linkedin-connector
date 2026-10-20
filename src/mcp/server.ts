@@ -245,8 +245,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       "Act as this LinkedIn Page instead of as the member: its organization ID (the number in the address of the Page's admin view, " +
         'linkedin.com/company/<ID>/admin/), that address, or urn:li:organization:<ID>. The user must be a super admin or content admin of the Page.',
     );
-  // Strict, because these tools publish: an argument dropped silently (a mistyped key, or `organization` without Pages)
-  // would publish something other than what the user approved, or as someone else.
+  // Strict, nested objects too, because these tools publish: an argument dropped silently (a mistyped key, or
+  // `organization` without Pages) would publish something other than what the user approved, or as someone else.
   const pagesOff = `Acting as a Page needs ${settingName(PAGES)} turned on for this connector (Community Management API). Leave out "organization" to act as yourself.`;
   const withOrganization = <T extends z.ZodRawShape>(shape: T) =>
     (organizations
@@ -359,7 +359,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         companiesTotal: z.number().optional().describe('Distinct companies among the matching connections.'),
         withoutCompany: z.number().optional().describe('Matching connections with no company listed.'),
       }),
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      // Open world: `file` may be a link, which it downloads.
+      annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async (args) => {
       if (args.file !== undefined && args.csv !== undefined) throw new UserInputError('Pass either file or csv, not both.');
@@ -432,7 +433,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       .default('PUBLIC')
       .describe("PUBLIC: anyone on or off LinkedIn. CONNECTIONS: 1st-degree connections only (not for a Page's posts, which are public)."),
     article: z
-      .object({
+      .strictObject({
         url: z.url({ protocol: /^https?$/ }).describe('The link to share.'),
         title: z.string().max(200).optional().describe("Preview title. Defaults to the page's own title."),
         description: z.string().max(300).optional().describe("Preview description. Defaults to the page's description."),
@@ -445,7 +446,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       .describe('Share a link with a preview card.'),
     images: z
       .array(
-        z.object({
+        z.strictObject({
           source: z.string().describe(`A JPEG, PNG or GIF as ${mediaSources}.`),
           altText: z.string().max(4000).optional().describe('Alternative text describing the image for screen readers.'),
         }),
@@ -455,7 +456,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       .optional()
       .describe('Attach 1 to 20 images.'),
     document: z
-      .object({
+      .strictObject({
         source: z.string().describe(`A PDF, PPT, PPTX, DOC or DOCX (max 100 MB, 300 pages) as ${mediaSources}.`),
         title: z.string().max(300).optional().describe('Title shown on the document. Defaults to the file name without its extension.'),
       })
