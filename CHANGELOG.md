@@ -18,9 +18,19 @@ All notable changes to this project are documented here. The format follows
   environment variable, e.g. "Post as LinkedIn Pages" (`LINKEDIN_PAGES`).
 - Searching your connections matches the start of words: "ING" finds ING Bank but no longer Boeing or Digital
   Marketing Agency, "EY" no longer finds Disney, and "Ann" finds Ann and Annette but not Joanna.
+- A post or comment that is too long now says how long it is and how many characters to cut, e.g. "The post text is
+  3214 characters long; LinkedIn allows 3000. Shorten it by at least 214 characters." Before, it only said the
+  text was too long, and Claude, which can't count characters reliably, had to guess how much to shorten it.
+- Checking a post warns when its text has a link but the post has no link preview: LinkedIn shows no preview card
+  for a link in the text of a post published by an app, so Claude can offer to add one before you approve.
+- Commenting on and reacting to a post give back the post's address on linkedin.com, so Claude can link you to it.
 
 ### Fixed
 
+- When LinkedIn shows an error page instead of asking you to approve access, as it does for a redirect URL your
+  LinkedIn app doesn't list or a Client ID it doesn't know, it never sends the browser back to the connector, so
+  Claude only said the sign-in page was open. A sign-in that is still waiting now says to add the exact redirect URL
+  to the app's Auth tab and to check the Client ID, and `claude-linkedin-connector login` says so while it waits.
 - Claude no longer tries to post images or documents you attach in the chat, which it can't pass on to the
   connector. It asks you to save the file and give its name (Claude Desktop, Claude Code) or for a link (remote
   server). The usage guide no longer says attachments work.

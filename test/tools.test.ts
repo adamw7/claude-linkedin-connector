@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { SWITCH_ACCOUNT_HINT } from '../src/auth/local-auth.js';
+import { signInPageHint, SWITCH_ACCOUNT_HINT } from '../src/auth/local-auth.js';
 import { PostHistory } from '../src/auth/post-history.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from '../src/auth/types.js';
 import { ConfigError, NotAuthenticatedError } from '../src/errors.js';
@@ -16,6 +16,8 @@ import { PDF, PNG, startServer, type TestServer } from './helpers/http.js';
 import { zipArchive } from './helpers/zip.js';
 
 const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
+/** What a sign-in that is still waiting says to check, should LinkedIn show an error page instead. */
+const CHECK_APP = signInPageHint('http://localhost:8723/callback');
 const PAGES_OFF =
   'Acting as a Page needs "Post as LinkedIn Pages" (LINKEDIN_PAGES) turned on for this connector (Community Management API). Leave out "organization" to act as yourself.';
 
@@ -62,6 +64,7 @@ class StubLocalAuth extends StubAuth {
     return {
       authorizationUrl: 'https://www.linkedin.com/oauth/v2/authorization?state=x',
       expiresInSeconds: 600,
+      redirectUri: 'http://localhost:8723/callback',
       browserOpened: this.browserOpened,
       completion: this.completion,
     };
@@ -681,7 +684,7 @@ describe('linkedin_create_post', () => {
       text:
         'Your LinkedIn sign-in predates turning on "Post as LinkedIn Pages" (LINKEDIN_PAGES), so LinkedIn doesn\'t allow this yet. ' +
         "The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): " +
-        'https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+        `https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP} Once you have approved access, try again.`,
     });
     expect(h.auth.logins).toBe(1);
     expect(h.linkedin.requests).toHaveLength(0);
@@ -800,6 +803,37 @@ describe('linkedin_preview_post', () => {
     });
     expect(withThumbnail.data!.linkPreview).toEqual({ url: missing, title: 'Mine', thumbnail: true });
     expect(withThumbnail.data!.warnings).toEqual([]);
+  });
+
+  it('warns that a link in the text gets no preview card, unless it is also the article', async () => {
+    const h = await harness();
+    const linked = await call(h, 'linkedin_preview_post', { text: 'Out now: https://example.com/launch' });
+    expect(linked.data!.warnings).toEqual([
+      'The text has a link, but LinkedIn shows no preview card for links in the text. To show one, also pass the link as article.url.',
+    ]);
+    expect((await call(h, 'linkedin_preview_post', { text: 'Out now (HTTP://example.com)' })).data!.warnings).toHaveLength(1);
+    expect((await call(h, 'linkedin_preview_post', { text: 'Always use https:// for logins' })).data!.warnings).toEqual([]);
+    const url = `${web.url}/article`;
+    expect((await call(h, 'linkedin_preview_post', { text: `Read ${url}`, article: { url } })).data!.warnings).toEqual([]);
+    // A post with images can't have a card as well.
+    const photo = { images: [{ source: join(files, 'photo.png') }] };
+    expect((await call(h, 'linkedin_preview_post', { text: 'More on https://example.com', ...photo })).data!.warnings).toEqual([]);
+  });
+
+  it('says by how much text is too long, which Claude cannot count', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_member_social_feed'] });
+    const invalid = (name: string, text: string) => ({ isError: true, data: undefined, text: `Input validation error: Invalid arguments for tool ${name}: text: ${text}` });
+    const long = 'x'.repeat(3214);
+    const tooLong = 'The post text is 3214 characters long; LinkedIn allows 3000. Shorten it by at least 214 characters.';
+    expect(await call(h, 'linkedin_preview_post', { text: long })).toEqual(invalid('linkedin_preview_post', tooLong));
+    expect(await call(h, 'linkedin_create_post', { text: long })).toEqual(invalid('linkedin_create_post', tooLong));
+    expect(await call(h, 'linkedin_edit_post', { post: 'urn:li:share:1', text: long })).toEqual(invalid('linkedin_edit_post', tooLong));
+    expect(await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:1', text: 'x'.repeat(1251) })).toEqual(
+      invalid('linkedin_comment_on_post', 'The comment is 1251 characters long; LinkedIn allows 1250. Shorten it by at least 1 character.'),
+    );
+    expect(h.linkedin.requests).toHaveLength(0);
+    expect((await call(h, 'linkedin_preview_post', { text: 'x'.repeat(3000) })).data).toMatchObject({ characters: 3000 });
+    expect((await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:1', text: 'x'.repeat(1250) })).isError).toBe(false);
   });
 
   it('checks images and documents, and reports problems before anything is approved', async () => {
@@ -1112,13 +1146,23 @@ describe('engagement tools', () => {
   it('comments with escaped text', async () => {
     const h = await harness({ scopes });
     const result = await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats (well deserved)' });
-    expect(result.data).toMatchObject({ postUrn: 'urn:li:share:9', actor: 'urn:li:person:abc123', commentId: expect.any(String) });
+    expect(result.data).toEqual({
+      postUrn: 'urn:li:share:9',
+      url: 'https://www.linkedin.com/feed/update/urn:li:share:9/',
+      actor: 'urn:li:person:abc123',
+      commentId: 'urn:li:comment:(urn:li:activity:1,1)',
+    });
     expect(h.linkedin.find('POST', '/rest/socialActions/')[0]!.json).toMatchObject({ message: { text: 'Congrats \\(well deserved\\)' } });
   });
 
   it('maps friendly reaction names to API values', async () => {
     const h = await harness({ scopes });
-    await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9', reaction: 'insightful' });
+    expect((await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9', reaction: 'insightful' })).data).toEqual({
+      postUrn: 'urn:li:share:9',
+      url: 'https://www.linkedin.com/feed/update/urn:li:share:9/',
+      reaction: 'insightful',
+      actor: 'urn:li:person:abc123',
+    });
     await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9', organization: '77' });
     const reactions = h.linkedin.find('POST', '/rest/reactions');
     expect(reactions.map((r) => (r.json as { reactionType: string }).reactionType)).toEqual(['INTEREST', 'LIKE']);
@@ -1209,7 +1253,7 @@ describe('errors', () => {
       data: undefined,
       text:
         "You are not signed in to LinkedIn. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): " +
-        'https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+        `https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP} Once you have approved access, try again.`,
     });
     expect(auth.logins).toBe(1);
     expect(h.linkedin.requests).toHaveLength(0);
@@ -1241,7 +1285,7 @@ describe('errors', () => {
       isError: true,
       text:
         "LinkedIn rejected your sign-in: it has expired or been revoked. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link " +
-        '(valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+        `(valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP} Once you have approved access, try again.`,
     });
     expect(rejected).toEqual([expect.objectContaining({ accessToken: 'li-token' })]);
     expect(auth.logins).toBe(1);
@@ -1315,7 +1359,10 @@ describe('authentication tools', () => {
       authorizationUrl: 'https://www.linkedin.com/oauth/v2/authorization?state=x',
       expiresInSeconds: 600,
       message:
-        "The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x",
+        "The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x " +
+        // LinkedIn shows these mistakes on its own page, without coming back to the connector.
+        'If LinkedIn shows an error instead of asking you to approve access, add http://localhost:8723/callback to the authorized redirect URLs ' +
+        "on the Auth tab of your LinkedIn app at https://www.linkedin.com/developers/apps, exactly as written, and check that the connector's Client ID is the app's.",
     });
   });
 
@@ -1352,7 +1399,7 @@ describe('authentication tools', () => {
     // Still waiting for the user: nothing to compare yet.
     auth.member = { id: 'abc123' };
     auth.completion = new Promise(() => {});
-    expect((await call(h, 'linkedin_login', { force: true })).data!.message).toMatch(/^The LinkedIn sign-in page is open in your browser; .*state=x$/);
+    expect((await call(h, 'linkedin_login', { force: true })).data!.message).toMatch(/^The LinkedIn sign-in page is open in your browser; .*state=x If LinkedIn shows an error/);
   });
 
   it('gives the link to open at once when no browser could be opened', async () => {
@@ -1362,13 +1409,13 @@ describe('authentication tools', () => {
     auth.browserOpened = false;
     const h = await harness({ auth, clock });
     expect((await call(h, 'linkedin_login')).data!.message).toBe(
-      'Open this link to sign in to LinkedIn and approve access (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x',
+      `Open this link to sign in to LinkedIn and approve access (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP}`,
     );
     expect(await call(h, 'linkedin_get_profile')).toMatchObject({
       isError: true,
       text:
         'You are not signed in to LinkedIn. Open this link to sign in to LinkedIn and approve access (valid for 10 minutes): ' +
-        'https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+        `https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP} Once you have approved access, try again.`,
     });
     // Nobody can approve a page that didn't open, so there was nothing to wait for; one that opened gets 45 seconds.
     expect(clock.time).toBe(0);

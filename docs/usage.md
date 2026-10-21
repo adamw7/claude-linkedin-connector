@@ -72,10 +72,12 @@ More things to try:
 - **Claude checks the post first.** Before asking for your OK, Claude previews the post without publishing it:
   it loads the images or document, so a wrong path or format shows up now rather than after you've approved,
   and tells you what the link preview card will show. If the page has no usable title or image, you can give
-  your own (for example "use cover.png from my Downloads as the preview image").
+  your own (for example "use cover.png from my Downloads as the preview image"). A link in the text alone gets no
+  card, so Claude tells you when a post has one without a link preview.
 - **Write plain text.** LinkedIn doesn't render Markdown. Line breaks, emoji and `#hashtags` work, and the
   connector escapes characters such as `( ) * _` so LinkedIn doesn't cut the post short. `@mentions` show as
-  plain text and don't tag anyone.
+  plain text and don't tag anyone. A post can have up to 3,000 characters and a comment 1,250; for a longer draft,
+  the connector tells Claude how much to cut.
 - **Claude gets the post's URL back**, so you can say "edit that post" or "delete it" right afterwards.
 - **One kind of attachment per post**: a link preview, 1–20 images, or one document.
 - **Posting as a Page** (if turned on) works for Pages you're a super admin or content admin of. Name the Page by

@@ -176,6 +176,10 @@ describe('login command', () => {
     const login = await startLogin(['--no-browser']);
     try {
       expect(login.authorization.searchParams.get('redirect_uri')).toBe(`http://127.0.0.1:${login.port}/callback`);
+      // LinkedIn shows a redirect URL its app doesn't list on its own page, and the CLI would just wait.
+      expect(login.output).toContain(
+        `If LinkedIn shows an error instead of asking you to approve access, add http://127.0.0.1:${login.port}/callback to the authorized redirect URLs`,
+      );
       const state = login.authorization.searchParams.get('state')!;
 
       const page = await fetch(`http://127.0.0.1:${login.port}/callback?code=li-code&state=${encodeURIComponent(state)}`);
