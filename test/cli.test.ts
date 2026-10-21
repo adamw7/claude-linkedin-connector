@@ -166,7 +166,7 @@ describe('login command', () => {
     });
     const login = { child, port, output: '', exited: once(child, 'exit'), authorization: undefined as unknown as URL };
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (login.output += chunk));
-    // The link is printed first; the CLI is listening by the time it says it is waiting.
+    // The link and what to check are printed first; the CLI is listening by the time it says it is waiting.
     while (!login.output.includes('Waiting for LinkedIn')) await once(child.stdout, 'data');
     login.authorization = new URL(/https?:\/\/\S+authorization\S*/.exec(login.output)![0]);
     return login;

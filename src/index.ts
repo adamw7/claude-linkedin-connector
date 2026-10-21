@@ -117,8 +117,8 @@ async function runLogin(browser: boolean): Promise<void> {
   const before = (await auth.status()).memberUrn;
   const name = await auth.loginAndWait((url) => {
     console.log(`Open this link to sign in to LinkedIn:\n\n  ${url}\n`);
-    console.log(`Waiting for LinkedIn to redirect to ${config.redirectUri} ...`);
     console.log(signInPageHint(config.redirectUri));
+    console.log(`Waiting for LinkedIn to redirect to ${config.redirectUri} ...`);
   });
   console.log(`Signed in to LinkedIn${name ? ` as ${name}` : ''}. Token saved to ${auth.store.path}`);
   if (before !== undefined && (await auth.status()).memberUrn === before) {
