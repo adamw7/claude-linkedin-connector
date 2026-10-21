@@ -29,8 +29,8 @@ export interface LocalAuthOptions {
   store?: TokenStore;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
-  /** Opens a sign-in page in the user's browser; without it, sign-in only hands out the link. */
-  openBrowser?: (url: string) => void;
+  /** Opens a sign-in page in the user's browser, resolving false if it couldn't; without it, sign-in only hands out the link. */
+  openBrowser?: (url: string) => Promise<boolean>;
 }
 
 /** Tokens for stdio mode: LINKEDIN_ACCESS_TOKEN, or the file written by the browser sign-in. */
@@ -39,8 +39,8 @@ export class LocalAuth implements LinkedInAuth {
   private readonly now: () => number;
   private envMember: MemberInfo | undefined;
   private loopback: LoopbackLogin | undefined;
-  /** The sign-in page last opened in the browser. */
-  private opened: string | undefined;
+  /** The sign-in page last opened in the browser, and whether that worked. */
+  private opened: { url: string; result: Promise<boolean> } | undefined;
 
   constructor(private readonly options: LocalAuthOptions) {
     this.store = options.store ?? new TokenStore(options.config.tokenFile);
@@ -143,11 +143,11 @@ export class LocalAuth implements LinkedInAuth {
 
   async login(): Promise<LoginStart> {
     const flow = await this.startLoopback();
-    this.open(flow.authorizationUrl);
+    const browserOpened = await this.open(flow.authorizationUrl);
     return {
       authorizationUrl: flow.authorizationUrl,
       expiresInSeconds: Math.max(0, Math.round((flow.expiresAt - this.now()) / 1000)),
-      browserOpened: this.options.openBrowser !== undefined,
+      browserOpened,
       completion: flow.completion,
     };
   }
@@ -156,18 +156,20 @@ export class LocalAuth implements LinkedInAuth {
   async loginAndWait(onUrl: (url: string) => void): Promise<string | undefined> {
     const flow = await this.startLoopback();
     onUrl(flow.authorizationUrl);
-    this.open(flow.authorizationUrl);
+    void this.open(flow.authorizationUrl);
     return flow.completion;
   }
 
   /**
    * Opens a sign-in page once: every tool call made while signed out (parallel ones, retries) joins the sign-in
-   * that is waiting, and would otherwise open another tab of it. Each sign-in has its own URL.
+   * that is waiting, and would otherwise open another tab of it. Each sign-in has its own URL. Resolves with
+   * whether the page opened.
    */
-  private open(authorizationUrl: string): void {
-    if (authorizationUrl === this.opened) return;
-    this.opened = authorizationUrl;
-    this.options.openBrowser?.(authorizationUrl);
+  private open(authorizationUrl: string): Promise<boolean> {
+    if (this.opened?.url !== authorizationUrl) {
+      this.opened = { url: authorizationUrl, result: this.options.openBrowser?.(authorizationUrl) ?? Promise.resolve(false) };
+    }
+    return this.opened.result;
   }
 
   private startLoopback() {

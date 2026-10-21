@@ -130,6 +130,17 @@ interface SingleResponse {
   contentType?: string;
 }
 
+/**
+ * Why a request failed, in words. OpenSSL reports a site that only offers TLS versions older than the connector's
+ * minimum as a line of error codes ("…:tlsv1 alert protocol version:…" or "…:unsupported protocol:…").
+ */
+function reason(error: Error): string {
+  if (/alert protocol version|unsupported protocol/i.test(error.message)) {
+    return `the site doesn't support ${MIN_TLS_VERSION.replace('v', ' ')}, which the connector requires.`;
+  }
+  return error.message;
+}
+
 function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Promise<SingleResponse> {
   const allowPrivate = options.allowPrivateNetwork ?? false;
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
@@ -137,7 +148,7 @@ function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Pro
     return Promise.reject(new FetchError(`Refusing to fetch from ${url.host}: it is a private or reserved address.`));
   }
   const timedOut = () => new FetchError(`Timed out fetching ${url.toString()}.`);
-  const failed = (error: Error) => new FetchError(`Fetching ${url.toString()} failed: ${error.message}`);
+  const failed = (error: Error) => new FetchError(`Fetching ${url.toString()} failed: ${reason(error)}`);
   const remaining = deadline - Date.now();
   if (remaining <= 0) return Promise.reject(timedOut());
 

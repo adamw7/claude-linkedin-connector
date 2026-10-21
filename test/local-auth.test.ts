@@ -144,7 +144,10 @@ describe('LocalAuth', () => {
       config: { ...config, redirectUri: `http://127.0.0.1:${port}/callback` },
       version: new ApiVersion('202609'),
       fetch: linkedin.fetch,
-      openBrowser: (url) => opened.push(url),
+      openBrowser: async (url) => {
+        opened.push(url);
+        return true;
+      },
     });
     const start = await signIn.login();
     expect(start).toMatchObject({ browserOpened: true });
@@ -161,6 +164,27 @@ describe('LocalAuth', () => {
     const next = await signIn.login();
     expect(opened).toEqual([start.authorizationUrl, next.authorizationUrl]);
     expect(next.authorizationUrl).not.toBe(start.authorizationUrl);
+  });
+
+  it('says when the sign-in page could not be opened, also to the calls that join it', async () => {
+    const port = await freePort();
+    const opened: string[] = [];
+    const signIn = new LocalAuth({
+      config: { ...config, redirectUri: `http://127.0.0.1:${port}/callback` },
+      version: new ApiVersion('202609'),
+      fetch: linkedin.fetch,
+      // As when there is no xdg-open.
+      openBrowser: async (url) => {
+        opened.push(url);
+        return false;
+      },
+    });
+    const start = await signIn.login();
+    expect(start.browserOpened).toBe(false);
+    expect((await signIn.login()).browserOpened).toBe(false);
+    expect(opened).toEqual([start.authorizationUrl]);
+    const state = new URL(start.authorizationUrl).searchParams.get('state')!;
+    await fetch(`http://127.0.0.1:${port}/callback?error=cleanup&state=${state}`);
   });
 
   it('forgets a stored token LinkedIn rejected, but not a newer one or LINKEDIN_ACCESS_TOKEN', async () => {

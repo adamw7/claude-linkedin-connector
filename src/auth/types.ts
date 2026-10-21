@@ -36,7 +36,8 @@ export interface LoginStart {
   expiresInSeconds: number;
   /**
    * Whether the sign-in page was opened in the user's browser, by this call or an earlier one joining the same
-   * sign-in; they may still need the link if it didn't appear.
+   * sign-in; they may still need the link if it didn't appear. False when it couldn't be opened (e.g. there is no
+   * xdg-open): nobody can approve the sign-in until they open the link themselves.
    */
   browserOpened: boolean;
   /** Settles when the browser sign-in finishes: with the member's name, or rejected with why it failed. */

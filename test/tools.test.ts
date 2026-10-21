@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
@@ -345,6 +345,42 @@ describe('linkedin_read_connections', () => {
     const h = await harness({ localFileDirs: [downloads] });
     expect((await call(h, 'linkedin_read_connections', { file: archive, limit: 0 })).data).toEqual({ total: 3, matched: 3, offset: 0, connections: [] });
     expect((await call(h, 'linkedin_read_connections', { limit: 0 })).data).toEqual({ file: archive, total: 3, matched: 3, offset: 0, connections: [] });
+  });
+
+  it('passes over a newer export without Connections.csv, such as one requested for messages', async () => {
+    const downloads = await mkdtemp(join(tmpdir(), 'linkedin-downloads-'));
+    const older = join(downloads, 'Basic_LinkedInDataExport_10-18-2026.zip');
+    const newer = join(downloads, 'Basic_LinkedInDataExport_10-20-2026.zip');
+    await writeFile(older, zipArchive({ 'Connections.csv': CONNECTIONS_CSV }));
+    await writeFile(newer, zipArchive({ 'messages.csv': 'CONVERSATION ID,FROM' }));
+    await utimes(older, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    const h = await harness({ localFileDirs: [downloads] });
+    expect((await call(h, 'linkedin_read_connections', { limit: 0 })).data).toEqual({ file: older, total: 3, matched: 3, offset: 0, connections: [] });
+    // Given by name, the archive without the connections is still refused.
+    expect((await call(h, 'linkedin_read_connections', { file: newer })).text).toMatch(/^This zip archive has no Connections\.csv\./);
+    // Only an archive without the connections is passed over: a newer Connections.csv that isn't one says so.
+    await writeFile(join(downloads, 'Connections.csv'), 'Date,Amount\n2026-10-01,12.50\n');
+    expect((await call(h, 'linkedin_read_connections')).text).toMatch(/^This is not a LinkedIn Connections\.csv/);
+  });
+
+  it('names the exports when none has Connections.csv', async () => {
+    const downloads = await mkdtemp(join(tmpdir(), 'linkedin-downloads-'));
+    const desktop = await mkdtemp(join(tmpdir(), 'linkedin-desktop-'));
+    const archive = join(downloads, 'Basic_LinkedInDataExport_10-20-2026.zip');
+    await writeFile(archive, zipArchive({ 'messages.csv': 'CONVERSATION ID,FROM' }));
+    expect(await call(await harness({ localFileDirs: [downloads, desktop] }), 'linkedin_read_connections')).toMatchObject({
+      isError: true,
+      text:
+        `The LinkedIn data export in ${downloads}, ${desktop} (${archive}) has no Connections.csv. Request your data again at ` +
+        'https://www.linkedin.com/mypreferences/d/download-my-data, choose Connections, and save the zip archive LinkedIn emails you in one of those folders.',
+    });
+    const second = join(desktop, 'Basic_LinkedInDataExport_10-19-2026.zip');
+    await writeFile(second, zipArchive({ 'Profile.csv': 'First Name,Last Name' }));
+    await utimes(second, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    expect((await call(await harness({ localFileDirs: [downloads, desktop] }), 'linkedin_read_connections')).text).toBe(
+      `The LinkedIn data exports in ${downloads}, ${desktop} (${archive}, ${second}) have no Connections.csv. Request your data again at ` +
+        'https://www.linkedin.com/mypreferences/d/download-my-data, choose Connections, and save the zip archive LinkedIn emails you in one of those folders.',
+    );
   });
 
   it('says how to get an export when none is found', async () => {
@@ -1319,14 +1355,26 @@ describe('authentication tools', () => {
     expect((await call(h, 'linkedin_login', { force: true })).data!.message).toMatch(/^The LinkedIn sign-in page is open in your browser; .*state=x$/);
   });
 
-  it('gives the link to open when no browser could be opened', async () => {
+  it('gives the link to open at once when no browser could be opened', async () => {
+    const clock = new FakeClock();
     const auth = new StubLocalAuth();
     auth.signedIn = false;
     auth.browserOpened = false;
-    const h = await harness({ auth });
+    const h = await harness({ auth, clock });
     expect((await call(h, 'linkedin_login')).data!.message).toBe(
       'Open this link to sign in to LinkedIn and approve access (valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x',
     );
+    expect(await call(h, 'linkedin_get_profile')).toMatchObject({
+      isError: true,
+      text:
+        'You are not signed in to LinkedIn. Open this link to sign in to LinkedIn and approve access (valid for 10 minutes): ' +
+        'https://www.linkedin.com/oauth/v2/authorization?state=x Once you have approved access, try again.',
+    });
+    // Nobody can approve a page that didn't open, so there was nothing to wait for; one that opened gets 45 seconds.
+    expect(clock.time).toBe(0);
+    auth.browserOpened = true;
+    await call(h, 'linkedin_login');
+    expect(clock.time).toBe(45_000);
   });
 
   it('says why the sign-in failed', async () => {
