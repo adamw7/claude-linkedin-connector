@@ -228,6 +228,7 @@ describe('LocalAuth', () => {
     const start = await signIn.login();
     const state = new URL(start.authorizationUrl).searchParams.get('state')!;
     expect(start.expiresInSeconds).toBeGreaterThan(500);
+    expect(start.redirectUri).toBe(`http://localhost:${port}/callback`);
     expect(start.browserOpened).toBe(false);
     const cancelled = expect(signIn.loginAndWait(() => {})).rejects.toThrow(/not completed: The user cancelled/);
     const response = await fetch(`http://127.0.0.1:${port}/callback?error=user_cancelled_authorize&error_description=The+user+cancelled&state=${state}`);

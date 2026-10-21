@@ -18,6 +18,17 @@ export const SIGN_IN_HINT =
 export const SWITCH_ACCOUNT_HINT =
   'If you meant to switch to another LinkedIn account, sign out of linkedin.com in your browser first, then sign in again: LinkedIn signs in whoever is signed in there.';
 
+/**
+ * LinkedIn shows a redirect URL its app doesn't list, or a Client ID it doesn't know, on its own page and never
+ * sends the browser back, so the connector can't tell that the sign-in failed: only say what to check.
+ */
+export function signInPageHint(redirectUri: string): string {
+  return (
+    `If LinkedIn shows an error instead of asking you to approve access, add ${redirectUri} to the authorized redirect URLs ` +
+    `on the Auth tab of your LinkedIn app at https://www.linkedin.com/developers/apps, exactly as written, and check that the connector's Client ID is the app's.`
+  );
+}
+
 /** For a stored token LinkedIn rejects: linkedin_login alone would report "already signed in". */
 export const REAUTH_HINT =
   'To sign in again, run the linkedin_login tool with force: true, or run "claude-linkedin-connector login" in a terminal. ' +
@@ -147,6 +158,7 @@ export class LocalAuth implements LinkedInAuth {
     return {
       authorizationUrl: flow.authorizationUrl,
       expiresInSeconds: Math.max(0, Math.round((flow.expiresAt - this.now()) / 1000)),
+      redirectUri: this.config.redirectUri,
       browserOpened,
       completion: flow.completion,
     };

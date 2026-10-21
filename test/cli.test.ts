@@ -166,7 +166,7 @@ describe('login command', () => {
     });
     const login = { child, port, output: '', exited: once(child, 'exit'), authorization: undefined as unknown as URL };
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => (login.output += chunk));
-    // The link is printed first; the CLI is listening by the time it says it is waiting.
+    // The link and what to check are printed first; the CLI is listening by the time it says it is waiting.
     while (!login.output.includes('Waiting for LinkedIn')) await once(child.stdout, 'data');
     login.authorization = new URL(/https?:\/\/\S+authorization\S*/.exec(login.output)![0]);
     return login;
@@ -176,6 +176,10 @@ describe('login command', () => {
     const login = await startLogin(['--no-browser']);
     try {
       expect(login.authorization.searchParams.get('redirect_uri')).toBe(`http://127.0.0.1:${login.port}/callback`);
+      // LinkedIn shows a redirect URL its app doesn't list on its own page, and the CLI would just wait.
+      expect(login.output).toContain(
+        `If LinkedIn shows an error instead of asking you to approve access, add http://127.0.0.1:${login.port}/callback to the authorized redirect URLs`,
+      );
       const state = login.authorization.searchParams.get('state')!;
 
       const page = await fetch(`http://127.0.0.1:${login.port}/callback?code=li-code&state=${encodeURIComponent(state)}`);

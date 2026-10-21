@@ -34,6 +34,8 @@ export interface AuthStatus {
 export interface LoginStart {
   authorizationUrl: string;
   expiresInSeconds: number;
+  /** Where LinkedIn sends the browser back to; the LinkedIn app must list it among its redirect URLs. */
+  redirectUri: string;
   /**
    * Whether the sign-in page was opened in the user's browser, by this call or an earlier one joining the same
    * sign-in; they may still need the link if it didn't appear. False when it couldn't be opened (e.g. there is no

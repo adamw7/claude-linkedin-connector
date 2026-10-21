@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult, type ToolAnnotations, type ToolCallback } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { SIGN_IN_HINT, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
+import { SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
 import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../errors.js';
@@ -74,6 +74,24 @@ const PROCESSING_DEADLINE_MS = 45_000;
 const SIGN_IN_WAIT_MS = 45_000;
 
 const ATTACHMENTS = ['none', 'article', 'image', 'images', 'document'] as const;
+
+/** LinkedIn's limits on a post's and a comment's text. */
+const MAX_POST_CHARACTERS = 3000;
+const MAX_COMMENT_CHARACTERS = 1250;
+
+/** Text of up to `max` characters. Text that is too long says by how much, which Claude can't count for itself. */
+function limitedText(max: number, noun: string) {
+  return z
+    .string()
+    .min(1)
+    .max(max, {
+      error: (issue) => {
+        const { length } = issue.input as string;
+        const over = length - max;
+        return `The ${noun} is ${length} characters long; LinkedIn allows ${max}. Shorten it by at least ${over} character${over === 1 ? '' : 's'}.`;
+      },
+    });
+}
 
 /** A post's attachments, loaded and checked, ready to upload. */
 interface PreparedPost {
@@ -156,9 +174,10 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       return { signedIn: true, name: finished.name, message: `Signed in to LinkedIn${finished.name ? ` as ${finished.name}` : ''}.` };
     }
     const minutes = Math.round(start.expiresInSeconds / 60);
-    const message = start.browserOpened
+    const link = start.browserOpened
       ? `The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for ${minutes} minutes): ${start.authorizationUrl}`
       : `Open this link to sign in to LinkedIn and approve access (valid for ${minutes} minutes): ${start.authorizationUrl}`;
+    const message = `${link} ${signInPageHint(start.redirectUri)}`;
     return { signedIn: false, authorizationUrl: start.authorizationUrl, expiresInSeconds: start.expiresInSeconds, message };
   });
 
@@ -484,13 +503,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   // ---------------------------------------------------------------- posts
 
   const createPostInput = withOrganization({
-    text: z
-      .string()
-      .min(1)
-      .max(3000)
-      .describe(
-        'The post text, max 3000 characters. Plain text only (no Markdown); line breaks are kept and #hashtags become links. @mentions can\'t tag anyone: "@Name" shows as plain text. Special characters are escaped automatically.',
-      ),
+    text: limitedText(MAX_POST_CHARACTERS, 'post text').describe(
+      `The post text, max ${MAX_POST_CHARACTERS} characters. Plain text only (no Markdown); line breaks are kept and #hashtags become links. @mentions can't tag anyone: "@Name" shows as plain text. Special characters are escaped automatically.`,
+    ),
     visibility: z
       .enum(['PUBLIC', 'CONNECTIONS'])
       .default('PUBLIC')
@@ -506,7 +521,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           .describe(`Preview image as ${mediaSources}. Defaults to the page's preview image.`),
       })
       .optional()
-      .describe('Share a link with a preview card.'),
+      .describe('Share a link with a preview card. A link in the text alone gets no card.'),
     images: z
       .array(
         z.strictObject({
@@ -551,7 +566,13 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       const title = args.document.title ?? (media.filename?.replace(/\.(pdf|docx?|pptx?)$/i, '') || 'Document');
       return { attachment: 'document', document: { media, title }, warnings };
     }
-    if (!args.article) return { attachment: 'none', warnings };
+    if (!args.article) {
+      // LinkedIn's own editor turns a pasted link into the post's article; through the API, a link in the text gets no card.
+      if (/https?:\/\/\S/i.test(args.text)) {
+        warnings.push('The text has a link, but LinkedIn shows no preview card for links in the text. To show one, also pass the link as article.url.');
+      }
+      return { attachment: 'none', warnings };
+    }
 
     const { url, title, description, thumbnail } = args.article;
     const hostname = new URL(url).hostname;
@@ -598,7 +619,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         'Takes the same arguments as linkedin_create_post. Call it before asking the user to approve a post, and tell them about the preview card and any warnings.',
       inputSchema: createPostInput,
       outputSchema: z.object({
-        characters: z.number().describe('Length of the text; LinkedIn allows 3000.'),
+        characters: z.number().describe(`Length of the text; LinkedIn allows ${MAX_POST_CHARACTERS}.`),
         visibility: z.string(),
         attachment: z.enum(ATTACHMENTS),
         images: z.number().optional().describe('Number of images, all checked.'),
@@ -735,7 +756,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       description: `Replaces the text of a post the signed-in member (or their Page) authored; attachments stay as they are. ${findPost} Only call this after the user has approved the new text.`,
       inputSchema: z.object({
         post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
-        text: z.string().min(1).max(3000).describe('The complete new post text, max 3000 characters. Plain text only.'),
+        text: limitedText(MAX_POST_CHARACTERS, 'post text').describe(`The complete new post text, max ${MAX_POST_CHARACTERS} characters. Plain text only.`),
       }),
       outputSchema: z.object({ updated: z.boolean(), postUrn: z.string(), url: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
@@ -837,15 +858,15 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           'Adds a comment to a LinkedIn post, publicly and immediately. Only call this after the user has approved the exact comment text.',
         inputSchema: withOrganization({
           post: z.string().describe('Post URN or URL.'),
-          text: z.string().min(1).max(1250).describe('Comment text, max 1250 characters. Plain text only.'),
+          text: limitedText(MAX_COMMENT_CHARACTERS, 'comment').describe(`Comment text, max ${MAX_COMMENT_CHARACTERS} characters. Plain text only.`),
         }),
-        outputSchema: z.object({ postUrn: z.string(), commentId: z.string().optional(), actor: z.string() }),
+        outputSchema: z.object({ postUrn: z.string(), url: z.string(), commentId: z.string().optional(), actor: z.string() }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
       async (args, connect) => {
         const { client, target, actor, act } = await engage(connect, args, 'comment on');
         const commentId = await act(() => client.createComment(target, actor, escapeLittleText(args.text)));
-        return { postUrn: target, actor, commentId };
+        return { postUrn: target, url: postUrl(target), actor, commentId };
       },
     );
 
@@ -861,13 +882,13 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
             .default('like')
             .describe('Reaction type.'),
         }),
-        outputSchema: z.object({ postUrn: z.string(), reaction: z.string(), actor: z.string() }),
+        outputSchema: z.object({ postUrn: z.string(), url: z.string(), reaction: z.string(), actor: z.string() }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       },
       async (args, connect) => {
         const { client, target, actor, act } = await engage(connect, args, 'react to');
         await act(() => client.createReaction(target, actor, REACTIONS[args.reaction]!));
-        return { postUrn: target, reaction: args.reaction, actor };
+        return { postUrn: target, url: postUrl(target), reaction: args.reaction, actor };
       },
     );
   }

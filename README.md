@@ -152,7 +152,7 @@ Kubernetes, how sign-in works, logs, rate limits and rotating the secret.
 ## Troubleshooting
 | Problem | Fix |
 |---|---|
-| LinkedIn says the redirect URI doesn't match | Add the exact callback URL (scheme, host, port, path) to the app's **Auth** tab |
+| LinkedIn shows an error instead of asking you to approve, e.g. that the redirect URI doesn't match | Add the exact callback URL (scheme, host, port, path) to the app's **Auth** tab, and check that the Client ID is the one shown there |
 | `Port 8723 is already in use` | Set `LINKEDIN_REDIRECT_URI` (**Redirect URL** in the Claude Desktop extension's settings) to another localhost port and register it in the app |
 | `Scope "w_member_social_feed" is not authorized for your application` | The app lacks the Community Management API: turn off **Comments and reactions** (`LINKEDIN_COMMENTS`) or **Post as LinkedIn Pages** (`LINKEDIN_PAGES`, for `w_organization_social`) until LinkedIn grants it. Another scope means a missing product from step 1 of the quick start |
 | `invalid_client: Client authentication failed` when signing in | The Client ID or Client Secret is wrong, or the secret was regenerated: copy both again from the app's **Auth** tab |

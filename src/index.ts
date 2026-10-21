@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { LocalAuth, SWITCH_ACCOUNT_HINT } from './auth/local-auth.js';
+import { LocalAuth, signInPageHint, SWITCH_ACCOUNT_HINT } from './auth/local-auth.js';
 import { openBrowser } from './auth/open-browser.js';
 import { PostHistory } from './auth/post-history.js';
 import { loadLocalConfig, loadRemoteConfig } from './config.js';
@@ -117,6 +117,7 @@ async function runLogin(browser: boolean): Promise<void> {
   const before = (await auth.status()).memberUrn;
   const name = await auth.loginAndWait((url) => {
     console.log(`Open this link to sign in to LinkedIn:\n\n  ${url}\n`);
+    console.log(signInPageHint(config.redirectUri));
     console.log(`Waiting for LinkedIn to redirect to ${config.redirectUri} ...`);
   });
   console.log(`Signed in to LinkedIn${name ? ` as ${name}` : ''}. Token saved to ${auth.store.path}`);
