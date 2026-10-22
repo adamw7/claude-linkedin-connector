@@ -31,7 +31,7 @@ Each release after 0.1.0 publishes an image for `linux/amd64` and `linux/arm64`,
 attached:
 
 ```
-ghcr.io/adamw7/claude-linkedin-connector:<version>   # e.g. 0.3.0; pin this in production
+ghcr.io/adamw7/claude-linkedin-connector:<version>   # e.g. 0.4.0; pin this in production
 ghcr.io/adamw7/claude-linkedin-connector:<major.minor>
 ghcr.io/adamw7/claude-linkedin-connector:latest
 ```
@@ -103,7 +103,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: connector
-          image: ghcr.io/adamw7/claude-linkedin-connector:0.3.0 # the release you deploy
+          image: ghcr.io/adamw7/claude-linkedin-connector:0.4.0 # the release you deploy
           ports:
             - name: http
               containerPort: 3000

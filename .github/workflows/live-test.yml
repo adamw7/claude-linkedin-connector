@@ -1,0 +1,34 @@
+name: Live test
+
+# Runs scripts/live-test.mjs without options against the real LinkedIn API, which the tests never reach (they use a
+# fake LinkedIn): how LinkedIn refuses made-up app credentials and an invalid token. It needs no sign-in and changes
+# nothing on LinkedIn. Whether LinkedIn still accepts the API version the connector sends needs a sign-in, since
+# LinkedIn checks the token first, so that step is skipped here; the checks that need a sign-in are run by hand (see
+# docs/development.md).
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  push:
+    # Path filters don't apply to tags, so without this every release tag would run it too.
+    branches: ['**']
+    paths: ['scripts/live-test.mjs', 'src/linkedin/**', 'src/mcp/errors.ts', '.github/workflows/live-test.yml']
+  pull_request:
+    paths: ['scripts/live-test.mjs', 'src/linkedin/**', 'src/mcp/errors.ts', '.github/workflows/live-test.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/live-test.mjs

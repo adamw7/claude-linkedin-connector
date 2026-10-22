@@ -128,3 +128,20 @@ jobs:
             --annotation "index:org.opencontainers.image.description=Remote MCP server (custom connector) that lets Claude use your LinkedIn account" \
             --annotation "index:org.opencontainers.image.licenses=MIT" \
             "${tags[@]}"
+      - name: Check that the image can be pulled without signing in
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          # GitHub creates a package private on its first push, and only its settings page makes it public. ghcr.io
+          # gives anyone a pull token for a public image, and none for a private one.
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "https://ghcr.io/token?scope=repository:$repository:pull")"
+          case "$status" in
+            200) ;;
+            401 | 403)
+              echo "::error::ghcr.io/$repository is private, so pulling it needs a sign-in. Make it public: https://github.com/$GITHUB_REPOSITORY/pkgs/container/${repository#*/}, Package settings, Change visibility."
+              exit 1
+              ;;
+            *)
+              echo "::error::Could not check whether ghcr.io/$repository is public: ghcr.io answered HTTP $status."
+              exit 1
+              ;;
+          esac
