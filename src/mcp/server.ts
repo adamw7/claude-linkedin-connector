@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult, type ToolAnnotations, type ToolCallback } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
+import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
 import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../errors.js';
@@ -207,10 +207,19 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       } catch (error) {
         report(error);
         if (signIn && error instanceof NotAuthenticatedError) return signInFor(name, error, signIn);
-        // A token LinkedIn no longer accepts is as good as none once it is forgotten: sign in now, as above, rather
-        // than say how to, while status and linkedin_login would still report the user signed in.
-        if (signIn && used.session && error instanceof LinkedInApiError && error.status === 401 && (await forget(used.session))) {
-          return signInFor(name, new NotAuthenticatedError('LinkedIn rejected your sign-in: it has expired or been revoked.'), signIn);
+        if (signIn && used.session && error instanceof LinkedInApiError && error.status === 401) {
+          // A token LinkedIn no longer accepts is as good as none once it is forgotten: sign in now, as above, rather
+          // than say how to, while status and linkedin_login would still report the user signed in.
+          if (await forget(used.session)) {
+            return signInFor(name, new NotAuthenticatedError('LinkedIn rejected your sign-in: it has expired or been revoked.'), signIn);
+          }
+          // Signing in again won't replace LINKEDIN_ACCESS_TOKEN, so don't suggest it.
+          if ((await auth.status().catch(() => undefined))?.source === 'environment') {
+            return errorResult(
+              new NotAuthenticatedError(`LinkedIn rejected the access token in LINKEDIN_ACCESS_TOKEN (it has expired or been revoked). ${ACCESS_TOKEN_HINT}`),
+              mode,
+            );
+          }
         }
         return errorResult(error, mode);
       }
@@ -946,6 +955,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       async (args) => {
         const before = await auth.status();
         if (!args.force && before.authenticated && !before.missingScopes) return { alreadySignedIn: true, signedIn: true, message: before.message };
+        // The sign-in would succeed, and the tools would go on using LINKEDIN_ACCESS_TOKEN.
+        if (before.source === 'environment') throw new UserInputError(`The connector uses the access token in LINKEDIN_ACCESS_TOKEN. ${ACCESS_TOKEN_HINT}`);
         const outcome = await signIn!();
         // Users force a sign-in to switch accounts, but LinkedIn keeps whoever is signed in to linkedin.com in the browser.
         if (args.force && outcome.signedIn && before.memberUrn !== undefined && (await auth.status()).memberUrn === before.memberUrn) {
@@ -992,10 +1003,13 @@ async function signInFor(tool: string, error: NotAuthenticatedError, signIn: () 
   let text: string;
   try {
     const outcome = await signIn();
-    const waiting = outcome.authorizationUrl !== undefined ? ' Once you have approved access, try again.' : '';
+    const waiting = outcome.authorizationUrl !== undefined;
+    let reason = error.message.replace(` ${SIGN_IN_HINT}`, '');
+    // A sign-in that failed again says why itself, so the previous attempt's failure would only repeat it.
+    if (!outcome.signedIn && !waiting) reason = reason.split(` ${LAST_FAILURE} `)[0]!;
     text = outcome.signedIn
       ? `${outcome.message} Nothing was done yet: call ${tool} again to continue.`
-      : `${error.message.replace(` ${SIGN_IN_HINT}`, '')} ${outcome.message}${waiting}`;
+      : `${reason} ${outcome.message}${waiting ? ' Once you have approved access, try again.' : ''}`;
   } catch (cause) {
     // E.g. missing app credentials or a busy callback port: that is what the user has to fix first.
     text = describeError(cause, 'local');

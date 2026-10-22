@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A link preview's title and description showed most named HTML entities as written: a page whose title tag reads
+  `We launched 2.0 &mdash; finally` got a card with `&mdash;` in it on LinkedIn. Entities for punctuation, symbols
+  and accented letters (`&rsquo;`, `&hellip;`, `&eacute;` and the like) now become the characters they stand for.
+- A link to a page in an encoding other than UTF-8, as older sites use (ISO-8859-2, Windows-1252, Shift_JIS), got a
+  garbled preview title and description. The connector now reads the page in the encoding it names.
+- When LinkedIn rejected the token in `LINKEDIN_ACCESS_TOKEN`, the connector suggested signing in again, which
+  stored a token it then ignored, so every call kept failing. It now says to replace `LINKEDIN_ACCESS_TOKEN`, or to
+  remove it to sign in through the browser, and `linkedin_login` says the same instead of signing in.
+- After a sign-in failed, for example because the LinkedIn app lacks the product a setting needs, the next tool
+  call gave the reason twice.
+
 ## [0.4.0] - 2026-10-22
 
 ### Changed

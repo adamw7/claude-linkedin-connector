@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { signInPageHint, SWITCH_ACCOUNT_HINT } from '../src/auth/local-auth.js';
+import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../src/auth/local-auth.js';
 import { PostHistory } from '../src/auth/post-history.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from '../src/auth/types.js';
 import { ConfigError, NotAuthenticatedError } from '../src/errors.js';
@@ -24,13 +24,16 @@ const PAGES_OFF =
 class StubAuth implements LinkedInAuth {
   member: MemberInfo | undefined;
   signedIn = true;
+  /** Why getSession fails while signed out. */
+  signedOutMessage = 'You are not signed in to LinkedIn.';
+  source: AuthStatus['source'] = 'token-file';
   /** What the sign-in granted; the harness grants what the connector is configured with. */
   scopes = DEFAULT_SCOPES;
   missingScopes: string[] | undefined;
   logins = 0;
 
   async getSession(): Promise<LinkedInSession> {
-    if (!this.signedIn) throw new NotAuthenticatedError('You are not signed in to LinkedIn.');
+    if (!this.signedIn) throw new NotAuthenticatedError(this.signedOutMessage);
     return { accessToken: 'li-token', scopes: this.scopes, ...(this.member ? { memberId: this.member.id } : {}) };
   }
   async rememberMember(member: MemberInfo): Promise<void> {
@@ -40,7 +43,7 @@ class StubAuth implements LinkedInAuth {
     return this.signedIn
       ? {
           authenticated: true,
-          source: 'token-file',
+          source: this.source,
           scopes: this.scopes,
           missingScopes: this.missingScopes,
           ...(this.member ? { memberUrn: `urn:li:person:${this.member.id}` } : {}),
@@ -1291,16 +1294,37 @@ describe('errors', () => {
     expect(auth.logins).toBe(1);
   });
 
-  it('only says how to replace a rejected token it cannot forget, such as LINKEDIN_ACCESS_TOKEN', async () => {
+  it('only says how to sign in again when it cannot forget the rejected token', async () => {
     const auth = new StubLocalAuth();
     auth.rejected = async () => false;
     const h = await harness({ auth });
     h.linkedin.override(() => Response.json({ message: 'Invalid access token' }, { status: 401 }));
-    expect((await call(h, 'linkedin_get_profile')).text).toMatch(/^LinkedIn rejected the access token \(it has expired or been revoked\)\. .*LINKEDIN_ACCESS_TOKEN/);
+    expect((await call(h, 'linkedin_get_profile')).text).toMatch(/^LinkedIn rejected the access token \(it has expired or been revoked\)\. To sign in again, run the linkedin_login/);
     auth.rejected = async () => {
       throw new Error('EACCES');
     };
     expect((await call(h, 'linkedin_get_profile')).text).toMatch(/^LinkedIn rejected the access token/);
+    expect(auth.logins).toBe(0);
+  });
+
+  it('says to replace LINKEDIN_ACCESS_TOKEN when LinkedIn rejects it, since a sign-in would not replace it', async () => {
+    const auth = new StubLocalAuth();
+    auth.source = 'environment';
+    auth.rejected = async () => false;
+    const h = await harness({ auth });
+    h.linkedin.override(() => Response.json({ message: 'Invalid access token' }, { status: 401 }));
+    expect(await call(h, 'linkedin_get_profile')).toEqual({
+      isError: true,
+      data: undefined,
+      text: `LinkedIn rejected the access token in LINKEDIN_ACCESS_TOKEN (it has expired or been revoked). ${ACCESS_TOKEN_HINT}`,
+    });
+    // A forced sign-in would succeed, and the tools would go on using LINKEDIN_ACCESS_TOKEN.
+    expect(await call(h, 'linkedin_login', { force: true })).toEqual({
+      isError: true,
+      data: undefined,
+      text: `The connector uses the access token in LINKEDIN_ACCESS_TOKEN. ${ACCESS_TOKEN_HINT}`,
+    });
+    expect((await call(h, 'linkedin_login')).data).toMatchObject({ alreadySignedIn: true });
     expect(auth.logins).toBe(0);
   });
 
@@ -1440,6 +1464,16 @@ describe('authentication tools', () => {
       data: undefined,
       text: 'You are not signed in to LinkedIn. LinkedIn sign-in was not completed: The user cancelled.',
     });
+    // Signed out since, the reason names that failure: a sign-in that fails again says why only once.
+    auth.signedOutMessage = `You are not signed in to LinkedIn. ${LAST_FAILURE} LinkedIn sign-in was not completed: The user cancelled. ${SIGN_IN_HINT}`;
+    expect((await call(h, 'linkedin_get_profile')).text).toBe('You are not signed in to LinkedIn. LinkedIn sign-in was not completed: The user cancelled.');
+    // While a new sign-in waits for the user, why the last one failed is still news.
+    auth.completion = new Promise(() => {});
+    expect((await call(h, 'linkedin_get_profile')).text).toBe(
+      `You are not signed in to LinkedIn. ${LAST_FAILURE} LinkedIn sign-in was not completed: The user cancelled. ` +
+        "The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link (valid for 10 minutes): " +
+        `https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP} Once you have approved access, try again.`,
+    );
   });
 
   it('signs in again when the stored sign-in predates scopes that are now configured', async () => {

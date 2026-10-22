@@ -239,7 +239,8 @@ async function main() {
     const connector = await connect({ ...connectorEnv, LINKEDIN_ACCESS_TOKEN: INVALID_TOKEN });
     try {
       const result = await connector.call('linkedin_get_profile');
-      check(result.isError === true && result.text.startsWith('LinkedIn rejected the access token (it has expired or been revoked).'), 'unexpected answer', result.text);
+      const expected = 'LinkedIn rejected the access token in LINKEDIN_ACCESS_TOKEN (it has expired or been revoked).';
+      check(result.isError === true && result.text.startsWith(expected), 'unexpected answer', result.text);
     } finally {
       await connector.close();
     }
@@ -496,7 +497,8 @@ async function remote() {
       check(refused instanceof UnauthorizedError, 'the server let the client in without a sign-in', refused?.message);
       console.log(`\nApprove in your browser (${base}/oauth/callback must be among your app's redirect URLs):\n  ${saved.authorizationUrl}\n`);
       await openBrowser(saved.authorizationUrl.href);
-      const landing = await Promise.race([landed, sleep(300_000).then(() => undefined)]);
+      // Unref'd: once the browser is back, the script mustn't wait out the 5 minutes before exiting.
+      const landing = await Promise.race([landed, new Promise((resolve) => setTimeout(resolve, 300_000).unref())]);
       check(landing, 'nobody approved within 5 minutes');
       check(!landing.searchParams.has('error'), 'the sign-in failed', landing.searchParams.get('error_description') ?? landing.searchParams.get('error'));
       const transport = new StreamableHTTPClientTransport(mcpUrl, { authProvider: provider });
