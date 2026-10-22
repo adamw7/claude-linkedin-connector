@@ -52,7 +52,8 @@ node scripts/live-test.mjs --login --upload --publish --remote
 
 Without options it changes nothing on LinkedIn. It checks how LinkedIn refuses made-up credentials, and, signed in,
 reads your profile, checks that LinkedIn accepts the API version the connector sends, and that the connector moves to a
-live version when one is retired. Get a token from the OAuth 2.0 tools on your app's page in the developer portal (with
+live version when one is retired. The `Live test` workflow runs it without options and without a sign-in every Monday,
+and when the script, `src/linkedin/` or `src/mcp/errors.ts` changes. Get a token from the OAuth 2.0 tools on your app's page in the developer portal (with
 the `openid profile email w_member_social` scopes), or sign in with `--login`, which keeps the token apart from yours.
 
 - `--upload` uploads an image and a document without posting them, which nobody sees, and waits for LinkedIn to

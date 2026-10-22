@@ -124,11 +124,17 @@ async function step(name, run) {
 
 // ------------------------------------------------------------------ helpers
 
-/** An unexpected error: a network failure's reason (fetch only says "fetch failed"), otherwise its stack. */
+/**
+ * An unexpected error: a network failure's reasons (fetch only says "fetch failed", and a proxy's refusal comes two
+ * causes down, under "Request was cancelled."), otherwise its stack.
+ */
 function explain(error) {
-  const cause = error?.cause;
-  if (error instanceof TypeError && error.message === 'fetch failed' && cause) {
-    return `Could not reach LinkedIn: ${[cause.code, cause.message].filter(Boolean).join(' ')}`;
+  if (error instanceof TypeError && error.message === 'fetch failed' && error.cause) {
+    const reasons = [];
+    for (let cause = error.cause; cause && reasons.length < 5; cause = cause.cause) {
+      reasons.push([typeof cause.code === 'string' ? cause.code : undefined, cause.message].filter(Boolean).join(' '));
+    }
+    return `Could not reach LinkedIn: ${reasons.join(' <- ')}`;
   }
   return error?.stack ?? String(error);
 }
