@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { decodeHtmlEntities, parseLinkPreview } from '../src/linkedin/link-preview.js';
+import { afterAll, describe, expect, it } from 'vitest';
+import { decodeHtmlEntities, fetchLinkPreview, parseLinkPreview } from '../src/linkedin/link-preview.js';
+import { startServer, type TestServer } from './helpers/http.js';
 
 describe('parseLinkPreview', () => {
   it('reads Open Graph tags in any attribute order', () => {
@@ -36,5 +37,41 @@ describe('parseLinkPreview', () => {
 
   it('decodes numeric entities', () => {
     expect(decodeHtmlEntities('&#169; &#x1F680; &unknown;')).toBe('© 🚀 &unknown;');
+  });
+
+  it('decodes the named entities pages use for typography, symbols and accented letters', () => {
+    expect(decodeHtmlEntities('We launched 2.0 &mdash; it&rsquo;s here&hellip; &ldquo;Caf&eacute;&rdquo; &AMP; Gr&Uuml;&szlig;e &copy;&nbsp;2026')).toBe(
+      'We launched 2.0 — it’s here… “Café” & GrÜße © 2026',
+    );
+    expect(decodeHtmlEntities('&Oslash;resund &ccedil;a &scaron; &AElig;')).toBe('Øresund ça š Æ');
+    // Names that aren't entities, including inherited object keys, stay as written.
+    expect(decodeHtmlEntities('&constructor; &toString; &xyz; &eunknown;')).toBe('&constructor; &toString; &xyz; &eunknown;');
+  });
+});
+
+describe('fetchLinkPreview', () => {
+  let site: TestServer;
+  afterAll(() => site?.close());
+
+  it('reads the page in the encoding its header or <meta> tag names', async () => {
+    // "Zażółć gęślą jaźń" in ISO-8859-2, as older Polish sites serve it.
+    const latin2 = Buffer.from([0x5a, 0x61, 0xbf, 0xf3, 0xb3, 0xe6, 0x20, 0x67, 0xea, 0xb6, 0x6c, 0xb1, 0x20, 0x6a, 0x61, 0xbc, 0xf1]);
+    const pages: Record<string, [string, Buffer]> = {
+      '/header': ['text/html; charset=ISO-8859-2', Buffer.concat([Buffer.from('<title>'), latin2, Buffer.from('</title>')])],
+      '/meta': ['text/html', Buffer.concat([Buffer.from('<meta charset="iso-8859-2"><meta property="og:title" content="'), latin2, Buffer.from('">')])],
+      '/http-equiv': ['text/html', Buffer.concat([Buffer.from('<meta http-equiv="Content-Type" content="text/html; charset=windows-1252"><title>Caf'), Buffer.from([0xe9]), Buffer.from('</title>')])],
+      '/utf8': ['text/html', Buffer.from('<title>Łódź</title>')],
+      '/unknown': ['text/html; charset=x-made-up', Buffer.from('<title>Łódź</title>')],
+    };
+    site = await startServer((req, res) => {
+      const [type, body] = pages[req.url ?? ''] ?? ['text/plain', Buffer.alloc(0)];
+      res.writeHead(200, { 'Content-Type': type }).end(body);
+    });
+    const title = async (path: string) => (await fetchLinkPreview(site.url + path, { allowPrivateNetwork: true })).title;
+    expect(await title('/header')).toBe('Zażółć gęślą jaźń');
+    expect(await title('/meta')).toBe('Zażółć gęślą jaźń');
+    expect(await title('/http-equiv')).toBe('Café');
+    expect(await title('/utf8')).toBe('Łódź');
+    expect(await title('/unknown')).toBe('Łódź');
   });
 });

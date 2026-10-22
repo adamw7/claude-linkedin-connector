@@ -34,6 +34,14 @@ export const REAUTH_HINT =
   'To sign in again, run the linkedin_login tool with force: true, or run "claude-linkedin-connector login" in a terminal. ' +
   'If LINKEDIN_ACCESS_TOKEN is set, replace it with a fresh token instead.';
 
+/** LINKEDIN_ACCESS_TOKEN outranks the token a sign-in stores, so signing in again changes nothing while it is set. */
+export const ACCESS_TOKEN_HINT =
+  'Replace LINKEDIN_ACCESS_TOKEN with a fresh token, or remove it to sign in through the browser instead: ' +
+  'while it is set, the connector ignores the token a sign-in stores.';
+
+/** Starts the note, in "not signed in" messages, on why the last browser sign-in failed. */
+export const LAST_FAILURE = 'The last sign-in attempt failed:';
+
 export interface LocalAuthOptions {
   config: LocalConfig;
   version: ApiVersion;
@@ -92,7 +100,7 @@ export class LocalAuth implements LinkedInAuth {
   /** Why the last browser sign-in failed, which only the browser showed: otherwise Claude just hands out another link. */
   private lastFailure(): string {
     const error = this.loopback?.lastError;
-    return error ? ` The last sign-in attempt failed: ${error.message.replace(/\.?$/, '.')}` : '';
+    return error ? ` ${LAST_FAILURE} ${error.message.replace(/\.?$/, '.')}` : '';
   }
 
   private async tryRefresh(token: StoredToken): Promise<StoredToken | undefined> {

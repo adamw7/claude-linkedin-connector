@@ -11,7 +11,21 @@ const TITLE_KEYS = ['og:title', 'twitter:title'];
 const DESCRIPTION_KEYS = ['og:description', 'twitter:description', 'description'];
 const IMAGE_KEYS = ['og:image:secure_url', 'og:image:url', 'og:image', 'twitter:image', 'twitter:image:src'];
 
-const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+/** The named entities pages use in titles and descriptions: typography, symbols and letters without an accent. */
+const NAMED_ENTITIES = new Map(
+  Object.entries({
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', shy: '',
+    ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', sbquo: '‚', ldquo: '“', rdquo: '”', bdquo: '„', hellip: '…',
+    laquo: '«', raquo: '»', lsaquo: '‹', rsaquo: '›', bull: '•', middot: '·', iexcl: '¡', iquest: '¿', sect: '§', para: '¶',
+    copy: '©', reg: '®', trade: '™', deg: '°', euro: '€', pound: '£', yen: '¥', cent: '¢', times: '×', divide: '÷',
+    szlig: 'ß', aelig: 'æ', AElig: 'Æ', oelig: 'œ', OElig: 'Œ', oslash: 'ø', Oslash: 'Ø', eth: 'ð', ETH: 'Ð', thorn: 'þ', THORN: 'Þ',
+  }),
+);
+
+/** Accented letters are named after the letter and the accent (&eacute;, &Uuml;): the letter takes the accent's combining mark. */
+const ACCENTS = new Map(
+  Object.entries({ acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', ring: '\u030a', cedil: '\u0327', caron: '\u030c' }),
+);
 
 export function decodeHtmlEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
@@ -19,8 +33,27 @@ export function decodeHtmlEntities(text: string): string {
       const code = entity[1] === 'x' || entity[1] === 'X' ? Number.parseInt(entity.slice(2), 16) : Number.parseInt(entity.slice(1), 10);
       return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
     }
-    return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
+    const named = NAMED_ENTITIES.get(entity) ?? NAMED_ENTITIES.get(entity.toLowerCase());
+    if (named !== undefined) return named;
+    const accented = /^([a-z])([a-z]+)$/i.exec(entity);
+    const mark = accented && ACCENTS.get(accented[2]!);
+    return mark ? `${accented[1]}${mark}`.normalize('NFC') : match;
   });
+}
+
+/**
+ * The page's text in the encoding its Content-Type header or a <meta> tag names (Windows-1252, ISO-8859-2,
+ * Shift_JIS and the like on older sites), or UTF-8 when it names none or one there is no decoder for.
+ */
+function decodePage(data: Buffer, contentType: string | undefined): string {
+  const charset =
+    /charset\s*=\s*["']?([\w.:-]+)/i.exec(contentType ?? '')?.[1] ??
+    /<meta\b[^<>]*charset\s*=\s*["']?([\w.:-]+)/i.exec(data.subarray(0, 4096).toString('latin1'))?.[1];
+  try {
+    return new TextDecoder(charset ?? 'utf-8').decode(data);
+  } catch {
+    return data.toString('utf8');
+  }
 }
 
 function clean(value: string | undefined, maxLength: number): string | undefined {
@@ -64,5 +97,5 @@ export async function fetchLinkPreview(url: string, options: { allowPrivateNetwo
     allowPrivateNetwork: options.allowPrivateNetwork,
   });
   if (page.contentType && !/html|xml/i.test(page.contentType)) return {};
-  return parseLinkPreview(page.data.toString('utf8'), page.url);
+  return parseLinkPreview(decodePage(page.data, page.contentType), page.url);
 }
