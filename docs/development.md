@@ -79,7 +79,7 @@ a GitHub release with it attached and the changelog entry as notes. It then smok
 (`scripts/smoke-test-image.sh`, which CI also runs) and pushes it for amd64 and arm64 to
 `ghcr.io/adamw7/claude-linkedin-connector` as `<version>`, `<major.minor>` and `latest`. After the first push,
 make the package public in its settings on GitHub (packages start out private), so `docker pull` works without
-signing in.
+signing in: the job fails, after pushing, while the image can't be pulled without signing in.
 
 Last, it smoke tests the npm package as CI does, then publishes it to npm with provenance, using the `NPM_TOKEN`
 repository secret (an npm automation or granular access token allowed to publish `claude-linkedin-connector`).
