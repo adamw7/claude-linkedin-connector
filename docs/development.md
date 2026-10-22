@@ -53,7 +53,8 @@ node scripts/live-test.mjs --login --upload --publish --remote
 Without options it changes nothing on LinkedIn. It checks how LinkedIn refuses made-up credentials, and, signed in,
 reads your profile, checks that LinkedIn accepts the API version the connector sends, and that the connector moves to a
 live version when one is retired. The `Live test` workflow runs it without options and without a sign-in every Monday,
-and when the script, `src/linkedin/` or `src/mcp/errors.ts` changes. Get a token from the OAuth 2.0 tools on your app's page in the developer portal (with
+and when the script, `src/linkedin/` or `src/mcp/errors.ts` changes, so it checks only how LinkedIn refuses made-up
+credentials: the version checks need a sign-in, because LinkedIn checks the token before the version. Get a token from the OAuth 2.0 tools on your app's page in the developer portal (with
 the `openid profile email w_member_social` scopes), or sign in with `--login`, which keeps the token apart from yours.
 
 - `--upload` uploads an image and a document without posting them, which nobody sees, and waits for LinkedIn to
@@ -79,10 +80,11 @@ a GitHub release with it attached and the changelog entry as notes. It then smok
 (`scripts/smoke-test-image.sh`, which CI also runs) and pushes it for amd64 and arm64 to
 `ghcr.io/adamw7/claude-linkedin-connector` as `<version>`, `<major.minor>` and `latest`. After the first push,
 make the package public in its settings on GitHub (packages start out private), so `docker pull` works without
-signing in: the job fails, after pushing, while the image can't be pulled without signing in.
+signing in. Until it is, the image job fails after pushing; re-run only that job once the package is public.
 
-Last, it smoke tests the npm package as CI does, then publishes it to npm with provenance, using the `NPM_TOKEN`
-repository secret (an npm automation or granular access token allowed to publish `claude-linkedin-connector`).
+Alongside the image, it smoke tests the npm package as CI does, then publishes it to npm with provenance, using the
+`NPM_TOKEN` repository secret (an npm automation or granular access token allowed to publish
+`claude-linkedin-connector`).
 A broken package fails the smoke test and is never published. Pre-release versions such
 as `1.2.0-rc.1` get the `next` dist-tag, so `npm install` keeps getting the latest release. The job then installs
 the version it published from the registry, checks that `--version` and `--help` work and runs
