@@ -26,6 +26,10 @@ describe('describeError', () => {
 
   it('tells local users to sign in again and remote users to reconnect', () => {
     const error = new LinkedInApiError(401, 'Revoked');
+    expect(describeError(error, 'local')).toBe(
+      'LinkedIn rejected the access token (it has expired or been revoked). To sign in again, run the linkedin_login tool with force: true. ' +
+        'If LINKEDIN_ACCESS_TOKEN is set, replace it with a fresh token instead.',
+    );
     expect(describeError(error, 'local')).toContain(REAUTH_HINT);
     expect(describeError(error, 'remote')).toMatch(/Disconnect and reconnect/);
     expect(describeError(new LinkedInApiError(403, 'Not enough permissions'), 'remote')).toMatch(

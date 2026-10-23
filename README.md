@@ -117,8 +117,9 @@ docker run -p 3000:3000 \
   ghcr.io/adamw7/claude-linkedin-connector:latest
 ```
 
-`LINKEDIN_ALLOWED_MEMBERS` lists the LinkedIn emails (verified on LinkedIn) or member IDs that may connect, or `*`
-for anyone. Keep `SERVER_SECRET` the same: changing it disconnects everyone. Without Docker, set the same
+`LINKEDIN_ALLOWED_MEMBERS` lists the LinkedIn emails or member IDs that may connect, or `*` for anyone. An email
+matches only the account's primary email, once LinkedIn has verified it; someone refused is told their member ID to
+add instead. Keep `SERVER_SECRET` the same: changing it disconnects everyone. Without Docker, set the same
 variables and run `HOST=0.0.0.0 node dist/index.js http`. Then:
 
 1. Add `https://linkedin-mcp.example.com/oauth/callback` to your LinkedIn app's redirect URLs.
@@ -153,11 +154,11 @@ Kubernetes, how sign-in works, logs, rate limits and rotating the secret.
 | Problem | Fix |
 |---|---|
 | LinkedIn shows an error instead of asking you to approve, e.g. that the redirect URI doesn't match | Add the exact callback URL (scheme, host, port, path) to the app's **Auth** tab, and check that the Client ID is the one shown there |
-| `Port 8723 is already in use` | Set `LINKEDIN_REDIRECT_URI` (**Redirect URL** in the Claude Desktop extension's settings) to another localhost port and register it in the app |
+| `Port 8723 is already in use` | Set `LINKEDIN_REDIRECT_URI` (**Redirect URL** in the Claude Desktop extension's settings, `--redirect-uri` for `npm run setup`) to another localhost port and register it in the app |
 | `Scope "w_member_social_feed" is not authorized for your application` | The app lacks the Community Management API: turn off **Comments and reactions** (`LINKEDIN_COMMENTS`) or **Post as LinkedIn Pages** (`LINKEDIN_PAGES`, for `w_organization_social`) until LinkedIn grants it. Another scope means a missing product from step 1 of the quick start |
 | `invalid_client: Client authentication failed` when signing in | The Client ID or Client Secret is wrong, or the secret was regenerated: copy both again from the app's **Auth** tab |
 | `LinkedIn denied permission` (403) | The app lacks the product for that feature, or you signed in before adding the scope. Fix the app, then sign in again. When the message says signing in again won't help, LinkedIn refused the post itself: only a post's author can edit or delete it |
-| A file `is outside the folders this connector may read files from` | Move it to one of the folders listed, or set `LINKEDIN_FILE_DIRS` (**Folders for local files** in the Claude Desktop extension's settings) to the value the message gives. The setting replaces the default folders, so that value lists them too. A file directly in your home folder has to be moved: allowing the home folder would open up all your files |
+| A file `is outside the folders this connector may read files from` | Move it to one of the folders listed, or set `LINKEDIN_FILE_DIRS` (**Folders for local files** in the Claude Desktop extension's settings, `--file-dirs` for `npm run setup`) to the value the message gives. The setting replaces the default folders, so that value lists them too. A file directly in your home folder has to be moved: allowing the home folder would open up all your files |
 | `LinkedIn didn't let you act as the Page` | Only a Page's super admins and content admins can post, comment and react as it. Check your role, and that the number is the one in the address of the Page's admin view |
 | Signing in again keeps the same LinkedIn account | LinkedIn signs in whoever is signed in to linkedin.com in your browser: sign out there first |
 | Editing or deleting a post fails with `not the activity URN` | Links copied from linkedin.com often point to the post's activity rather than the post. In local mode, ask Claude to find the post among the ones it published; otherwise use the URL Claude gave you when publishing, or the code from the post's **Embed this post** menu item |
@@ -165,6 +166,7 @@ Kubernetes, how sign-in works, logs, rate limits and rotating the secret.
 | Remote connection fails after a restart | Set a fixed `SERVER_SECRET` |
 | `SERVER_SECRET is required` on startup | Generate one with `openssl rand -base64 32`, store it with your other secrets and keep it |
 | `LINKEDIN_ALLOWED_MEMBERS is required` on startup | List who may connect, or set it to `*` to allow anyone |
+| `This LinkedIn account is not allowed to use this connector` | Add the member ID the message gives (also the `member` of the `member_not_allowed` log entry) to `LINKEDIN_ALLOWED_MEMBERS` and restart. A listed email doesn't match if it isn't the account's primary email on LinkedIn, or LinkedIn hasn't verified it |
 | Some requests fail with `502` behind a proxy or load balancer | Set `KEEP_ALIVE_TIMEOUT` above the proxy's upstream idle timeout (e.g. `620` on Google Cloud) |
 | `Too many requests` (429) for everyone at once | The server is behind a proxy without `TRUST_PROXY`, so all clients share one address |
 

@@ -138,7 +138,11 @@ async function runStatus(): Promise<void> {
   console.log(status.message);
   if (status.authenticated && status.scopes.length > 0) console.log(`Scopes: ${status.scopes.join(' ')}`);
   // Non-zero whenever signing in would help, so `npm run setup` signs in again after scopes were added.
-  if (!status.authenticated || status.missingScopes) process.exitCode = 1;
+  if (!status.authenticated || status.missingScopes) {
+    // However this was started (the installed command, npx, node and a path), the same again works.
+    console.log('To sign in from this terminal, run the same command with "login" in place of "status".');
+    process.exitCode = 1;
+  }
 }
 
 interface Command {

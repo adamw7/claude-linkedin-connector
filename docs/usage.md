@@ -94,7 +94,8 @@ More things to try:
   to the file itself. Local files are only read from your Downloads, Desktop and Pictures folders (also the ones
   OneDrive keeps on Windows) and the folder the connector runs in, so a page or document Claude reads can't get it
   to post other files from your computer. To use other folders, set **Folders for local files** in the Claude
-  Desktop extension's settings (`LINKEDIN_FILE_DIRS`). It replaces the default folders, so list the ones you want
+  Desktop extension's settings, or run `npm run setup -- --yes --file-dirs <folders>` again for Claude Code
+  (`LINKEDIN_FILE_DIRS`). It replaces the default folders, so list the ones you want
   to keep too; if a file is outside them, the error message gives the value to use. It never suggests your home
   folder itself, which would open up all your files: move the file instead.
 - **Images must be JPEG, PNG or GIF, and documents PDF or Office files.** Convert iPhone photos (HEIC) and WebP

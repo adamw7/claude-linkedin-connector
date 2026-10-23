@@ -304,7 +304,10 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     }
     if (!memberAllowed(grant)) {
       logger('warn', 'member_not_allowed', { member: grant.sub, clientId: request.cid });
-      return back({ error: 'access_denied', error_description: 'This LinkedIn account is not allowed to use this connector.' });
+      // The member ID is what the operator can always add: linkedin.com shows it nowhere, and an email only matches
+      // the account's primary one, once LinkedIn has verified it.
+      const add = grant.sub ? ` Ask whoever runs it to add your LinkedIn member ID, ${grant.sub}, to LINKEDIN_ALLOWED_MEMBERS.` : '';
+      return back({ error: 'access_denied', error_description: `This LinkedIn account is not allowed to use this connector.${add}` });
     }
     logger('info', 'member_authorized', { member: grant.sub, clientId: request.cid, scopes: grant.sc });
     const codePayload: CodePayload = { req: request, li: grant, jti: randomToken(16), exp: nowSeconds() + CODE_TTL_S };
