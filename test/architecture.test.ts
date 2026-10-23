@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 // Architecture rules for src/, checked with ArchUnitTS. The intended layering, bottom to top:
 //
-//   errors, version, html  — leaf modules, no project imports
-//   net                    — outbound HTTP, no LinkedIn or MCP knowledge
-//   linkedin               — LinkedIn API and OAuth client
-//   auth, config           — local sign-in and token storage, configuration
-//   mcp                    — the MCP server and its tools, transport agnostic
-//   remote                 — the HTTP transport and connector OAuth server
-//   index                  — composition root
+//   errors, version, html, paths — leaf modules, no project imports
+//   net                          — outbound HTTP, no LinkedIn or MCP knowledge
+//   linkedin                     — LinkedIn API and OAuth client
+//   auth, config                 — local sign-in and token storage, configuration
+//   mcp                          — the MCP server and its tools, transport agnostic
+//   remote                       — the HTTP transport and connector OAuth server
+//   index                        — composition root
 //
 // Type-only imports count as dependencies too.
 
@@ -32,7 +32,7 @@ describe('architecture', () => {
     await expect(projectFiles().inFolder('src/**').should().haveNoCycles()).toPassAsync();
   }, 60_000);
 
-  it.each(['errors.ts', 'version.ts', 'html.ts'])('keeps src/%s free of project imports', async (leaf) => {
+  it.each(['errors.ts', 'version.ts', 'html.ts', 'paths.ts'])('keeps src/%s free of project imports', async (leaf) => {
     await expect(projectFiles().inPath(`src/${leaf}`).shouldNot().dependOnFiles().inPath(srcExcept(leaf))).toPassAsync();
   });
 
@@ -43,7 +43,7 @@ describe('architecture', () => {
     },
   );
 
-  it.each(['src/auth/**', 'src/mcp/**', 'src/remote/**', 'src/config.ts', 'src/html.ts'])(
+  it.each(['src/auth/**', 'src/mcp/**', 'src/remote/**', 'src/config.ts'])(
     'keeps src/linkedin independent of %s',
     async (target) => {
       await expect(projectFiles().inFolder('src/linkedin/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();

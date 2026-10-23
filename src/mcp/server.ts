@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
 import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
-import { LinkedInApiError, NotAuthenticatedError, UserInputError } from '../errors.js';
+import { LinkedInApiError, NotAuthenticatedError, sentence, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
 import {
   countCompanies,
@@ -72,6 +72,9 @@ const IMAGE_WAIT_MS = 15_000;
 const PROCESSING_DEADLINE_MS = 45_000;
 /** How long a tool call waits for the user to finish signing in in the browser, within the same 60-second limit. */
 const SIGN_IN_WAIT_MS = 45_000;
+
+/** Where members request their data export, which holds Connections.csv. */
+const DATA_EXPORT_URL = 'https://www.linkedin.com/mypreferences/d/download-my-data';
 
 const ATTACHMENTS = ['none', 'article', 'image', 'images', 'document'] as const;
 
@@ -169,7 +172,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         ])
       : undefined;
     // A failed sign-in has closed its link, so there is nothing to open: the failure says what to do.
-    if (finished && 'error' in finished) return { signedIn: false, message: finished.error.message.replace(/\.?$/, '.') };
+    if (finished && 'error' in finished) return { signedIn: false, message: sentence(finished.error.message) };
     if (finished) {
       return { signedIn: true, name: finished.name, message: `Signed in to LinkedIn${finished.name ? ` as ${finished.name}` : ''}.` };
     }
@@ -274,7 +277,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       return await operation();
     } catch (error) {
       if (!(error instanceof LinkedInApiError) || error.status !== 403) throw error;
-      const detail = error.message.replace(/\.?$/, '.');
+      const detail = sentence(error.message);
       if (actor.startsWith('urn:li:organization:')) {
         throw new UserInputError(
           `LinkedIn didn't let you act as the Page ${actor}: ${detail} ` +
@@ -382,7 +385,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       title: 'Read exported LinkedIn connections',
       description:
         "Reads the user's 1st-degree connections from the Connections.csv file in LinkedIn's data export (LinkedIn's API does not offer connections). " +
-        'If the user has no export yet, tell them to request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections). ' +
+        `If the user has no export yet, tell them to request one at ${DATA_EXPORT_URL} (choose Connections). ` +
         (localFileDirs !== undefined
           ? 'Pass the file (Connections.csv or the zip archive LinkedIn sent), or its text as csv; with neither, the newest export that has them is read from the folders local files may come from. '
           : 'Pass the text of Connections.csv as csv when the user attached or pasted it (an attached zip archive cannot be passed on), or a link to the file. ') +
@@ -443,11 +446,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       if (args.file === undefined && args.csv === undefined) {
         if (localFileDirs === undefined) throw new UserInputError('Pass either file or csv.');
         const exports = await findConnectionsExports(localFileDirs);
-        const folders = localFileDirs.join(', ') || 'any folder: local files are disabled';
+        const searched = localFileDirs.join(', ') || 'any folder: local files are disabled';
         if (exports.length === 0) {
           throw new UserInputError(
-            `No LinkedIn data export was found in ${folders}. ` +
-              'Request one at https://www.linkedin.com/mypreferences/d/download-my-data (choose Connections) and save the zip archive LinkedIn emails you in one of those folders, or pass its path.',
+            `No LinkedIn data export was found in ${searched}. ` +
+              `Request one at ${DATA_EXPORT_URL} (choose Connections) and save the zip archive LinkedIn emails you in one of those folders, or pass its path.`,
           );
         }
         // The newest export that has the connections: one requested for other data, such as messages, lacks them.
@@ -463,8 +466,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         }
         if (!all) {
           throw new UserInputError(
-            `The LinkedIn data export${exports.length > 1 ? 's' : ''} in ${folders} (${exports.join(', ')}) ${exports.length > 1 ? 'have' : 'has'} no Connections.csv. ` +
-              'Request your data again at https://www.linkedin.com/mypreferences/d/download-my-data, choose Connections, and save the zip archive LinkedIn emails you in one of those folders.',
+            `The LinkedIn data export${exports.length > 1 ? 's' : ''} in ${searched} (${exports.join(', ')}) ${exports.length > 1 ? 'have' : 'has'} no Connections.csv. ` +
+              `Request your data again at ${DATA_EXPORT_URL}, choose Connections, and save the zip archive LinkedIn emails you in one of those folders.`,
           );
         }
       } else {
@@ -745,7 +748,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           ? ' If a Page published it, you need to be a super admin or content admin of the Page.'
           : ` To ${verb} a Page's posts, ${settingName(PAGES)} must be turned on for this connector before you sign in.`;
         throw new UserInputError(
-          `LinkedIn didn't let you ${verb} ${urn}: ${error.message.replace(/\.?$/, '.')} Only its author can ${verb} a post: check that you published it. ` +
+          `LinkedIn didn't let you ${verb} ${urn}: ${sentence(error.message)} Only its author can ${verb} a post: check that you published it. ` +
             `Signing in again won't help with that.${page}`,
         );
       }
@@ -754,6 +757,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     return urn;
   };
 
+  const ownPostField = z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code.");
   const findPost = history
     ? 'Accepts the post URN returned by linkedin_create_post or linkedin_list_posts (which finds posts from earlier conversations), or the post URL.'
     : 'Accepts the post URN returned by linkedin_create_post or the post URL.';
@@ -764,7 +768,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       title: 'Edit a LinkedIn post',
       description: `Replaces the text of a post the signed-in member (or their Page) authored; attachments stay as they are. ${findPost} Only call this after the user has approved the new text.`,
       inputSchema: z.object({
-        post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
+        post: ownPostField,
         text: limitedText(MAX_POST_CHARACTERS, 'post text').describe(`The complete new post text, max ${MAX_POST_CHARACTERS} characters. Plain text only.`),
       }),
       outputSchema: z.object({ updated: z.boolean(), postUrn: z.string(), url: z.string() }),
@@ -783,7 +787,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       title: 'Delete a LinkedIn post',
       description: `Permanently deletes a post the signed-in member (or their Page) authored. ${findPost} Confirm with the user first.`,
       inputSchema: z.object({
-        post: z.string().describe("Post URN (urn:li:share:… or urn:li:ugcPost:…), post URL, or the post's embed code."),
+        post: ownPostField,
       }),
       outputSchema: z.object({ deleted: z.boolean(), postUrn: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },

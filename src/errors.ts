@@ -43,3 +43,8 @@ export class UserInputError extends Error {
 export class ConfigError extends Error {
   override readonly name = 'ConfigError';
 }
+
+/** `text` ending in a full stop, so a sentence can follow it; LinkedIn's own messages often lack one. */
+export function sentence(text: string): string {
+  return text.replace(/\.?$/, '.');
+}

@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { REAUTH_HINT } from '../auth/local-auth.js';
-import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, UserInputError } from '../errors.js';
+import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UserInputError } from '../errors.js';
 import { FetchError } from '../net/safe-fetch.js';
 
 export type Mode = 'local' | 'remote';
@@ -25,7 +25,7 @@ export function describeError(error: unknown, mode: Mode): string {
     // LinkedIn did what was asked but its answer lacked something, e.g. a created post's ID: never say it was rejected,
     // which could get the post published again.
     if (error.status < 400) return error.message;
-    const detail = error.message.replace(/\.?$/, '.');
+    const detail = sentence(error.message);
     switch (error.status) {
       case 401:
         return `LinkedIn rejected the access token (it has expired or been revoked). ${reauthHint(mode)}`;

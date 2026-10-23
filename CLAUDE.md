@@ -26,7 +26,7 @@ Each layer imports only from layers below it; `test/architecture.test.ts` enforc
 
 | Layer | Path | Rule |
 |---|---|---|
-| Leaf | `src/errors.ts`, `src/version.ts`, `src/html.ts` | No project imports |
+| Leaf | `src/errors.ts`, `src/version.ts`, `src/html.ts`, `src/paths.ts` | No project imports |
 | Network | `src/net/` | `safeFetch` refuses private/loopback addresses; no LinkedIn or MCP knowledge |
 | LinkedIn | `src/linkedin/` | REST + OAuth clients; the only code that may call the global `fetch` |
 | Auth, config | `src/auth/`, `src/config.ts` | Local sign-in, token storage, `LINKEDIN_*` env vars |

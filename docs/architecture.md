@@ -162,7 +162,7 @@ Bottom to top; each layer may import only from layers below it.
 
 | Layer | Modules | Notes |
 |---|---|---|
-| Leaf | `errors.ts`, `version.ts`, `html.ts` | No project imports |
+| Leaf | `errors.ts`, `version.ts`, `html.ts`, `paths.ts` | No project imports |
 | Network | `net/` | Outbound HTTP, no LinkedIn or MCP knowledge |
 | LinkedIn | `linkedin/` | API and OAuth client; the only code allowed to call the global `fetch` |
 | Local auth, config | `auth/`, `config.ts` | Sign-in, token storage, environment |
