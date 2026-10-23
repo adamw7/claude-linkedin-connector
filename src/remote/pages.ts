@@ -2,7 +2,7 @@ import type { Response } from 'express';
 import { escapeHtml, page } from '../html.js';
 import type { OAuthClient } from './clients.js';
 
-export const SECURITY_HEADERS = {
+const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',

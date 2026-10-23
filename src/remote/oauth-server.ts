@@ -1,8 +1,8 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { OAuthError, OAuthErrorCode, type AuthInfo, type OAuthMetadata, type OAuthTokenVerifier } from '@modelcontextprotocol/server';
 import type { RemoteConfig } from '../config.js';
+import { decodeHtmlEntities } from '../html.js';
 import { LinkedInClient } from '../linkedin/client.js';
-import { decodeHtmlEntities } from '../linkedin/link-preview.js';
 import { buildAuthorizationUrl, exchangeAuthorizationCode, type LinkedInOAuthApp } from '../linkedin/oauth.js';
 import { refusedScope } from '../linkedin/scopes.js';
 import type { ApiVersion } from '../linkedin/versions.js';
@@ -74,7 +74,7 @@ function str(value: unknown): string | undefined {
 }
 
 /** Compares resource indicators, ignoring case of scheme/host, a trailing slash and any fragment. */
-export function sameResource(a: string, b: string): boolean {
+function sameResource(a: string, b: string): boolean {
   const normalize = (value: string) => {
     const url = URL.parse(value);
     if (url) url.hash = '';

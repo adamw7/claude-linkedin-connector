@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { ConfigError } from '../errors.js';
-import { escapeHtml, page } from '../html.js';
-import { decodeHtmlEntities } from '../linkedin/link-preview.js';
+import { ConfigError, sentence } from '../errors.js';
+import { decodeHtmlEntities, escapeHtml, page } from '../html.js';
 import { buildAuthorizationUrl, exchangeAuthorizationCode, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
 import { refusedScope, type RefusedScope } from '../linkedin/scopes.js';
 import { isLoopbackHostname } from '../net/loopback.js';
@@ -130,7 +129,7 @@ export class LoopbackLogin {
         // LinkedIn HTML-escapes quotes in descriptions: Scope &quot;w_member_social_feed&quot; is not authorized.
         const description = decodeHtmlEntities(url.searchParams.get('error_description') ?? error);
         const refused = refusedScope(error, description, this.options.app.scopes);
-        const message = refused ? `${description.replace(/\.?$/, '.')} ${refusedScopeHelp(refused)}` : description;
+        const message = refused ? `${sentence(description)} ${refusedScopeHelp(refused)}` : description;
         respond(res, 400, 'Sign-in cancelled', `<h1>LinkedIn sign-in was not completed</h1><p>${escapeHtml(message)}</p>`);
         finish(new Error(`LinkedIn sign-in was not completed: ${message}`));
         return;

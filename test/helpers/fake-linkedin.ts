@@ -22,7 +22,7 @@ export const MEMBER = {
 
 export const API_BASE = 'https://api.linkedin.test';
 export const OAUTH_BASE = 'https://www.linkedin.test';
-export const UPLOAD_BASE = 'https://upload.linkedin.test';
+const UPLOAD_BASE = 'https://upload.linkedin.test';
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });

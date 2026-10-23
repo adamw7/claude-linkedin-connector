@@ -1,5 +1,5 @@
 import type { LocalConfig } from '../config.js';
-import { ConfigError, NotAuthenticatedError } from '../errors.js';
+import { ConfigError, NotAuthenticatedError, sentence } from '../errors.js';
 import { LinkedInClient } from '../linkedin/client.js';
 import { refreshAccessToken, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
 import { personUrn } from '../linkedin/urn.js';
@@ -100,7 +100,7 @@ export class LocalAuth implements LinkedInAuth {
   /** Why the last browser sign-in failed, which only the browser showed: otherwise Claude just hands out another link. */
   private lastFailure(): string {
     const error = this.loopback?.lastError;
-    return error ? ` ${LAST_FAILURE} ${error.message.replace(/\.?$/, '.')}` : '';
+    return error ? ` ${LAST_FAILURE} ${sentence(error.message)}` : '';
   }
 
   private async tryRefresh(token: StoredToken): Promise<StoredToken | undefined> {

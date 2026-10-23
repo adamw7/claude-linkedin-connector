@@ -98,7 +98,7 @@ export interface SafeFetchResult {
   url: string;
 }
 
-export function parseHttpUrl(input: string): URL {
+function parseHttpUrl(input: string): URL {
   const url = URL.parse(input);
   if (!url) throw new FetchError(`"${input}" is not a valid URL.`);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {

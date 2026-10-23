@@ -1,4 +1,4 @@
-import { LinkedInOAuthError } from '../errors.js';
+import { LinkedInOAuthError, sentence } from '../errors.js';
 import { USER_AGENT } from '../version.js';
 
 export const LINKEDIN_OAUTH_BASE = 'https://www.linkedin.com';
@@ -72,7 +72,7 @@ async function requestToken(app: LinkedInOAuthApp, params: Record<string, string
       error,
       // Usually a mistyped or regenerated Client Secret; LinkedIn's own description doesn't say which setting is wrong.
       error === 'invalid_client'
-        ? `${(description ?? 'Client authentication failed').replace(/\.?$/, '.')} Check that the Client ID and Client Secret you configured are the ones on the Auth tab of your LinkedIn app.`
+        ? `${sentence(description ?? 'Client authentication failed')} Check that the Client ID and Client Secret you configured are the ones on the Auth tab of your LinkedIn app.`
         : description,
     );
   }

@@ -1,13 +1,14 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UserInputError } from '../errors.js';
 import { safeFetch } from '../net/safe-fetch.js';
+import { expandHome, isInside } from '../paths.js';
 
 export type MediaKind = 'image' | 'document';
 
-export const MAX_BYTES: Record<MediaKind, number> = {
+const MAX_BYTES: Record<MediaKind, number> = {
   image: 20 * 1024 * 1024,
   document: 100 * 1024 * 1024,
 };
@@ -74,16 +75,6 @@ function fileUrlPath(url: string): string {
   } catch (error) {
     throw new UserInputError(`"${url}" is not a local file URL (${(error as Error).message}). Pass the file's path instead.`);
   }
-}
-
-export function expandHome(path: string): string {
-  return path === '~' || path.startsWith('~/') || path.startsWith('~\\') ? homedir() + path.slice(1) : path;
-}
-
-/** Whether `path` is `dir` or lies somewhere below it. */
-export function isInside(dir: string, path: string): boolean {
-  const rel = relative(dir, path);
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 /** Whether `path` (already resolved) lies in one of `dirs`, comparing real paths so symlinks can't lead outside. */

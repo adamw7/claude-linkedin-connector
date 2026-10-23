@@ -2,6 +2,37 @@ export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
+/** The named entities pages use in titles and descriptions: typography, symbols and letters without an accent. */
+const NAMED_ENTITIES = new Map(
+  Object.entries({
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', shy: '',
+    ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', sbquo: '‚', ldquo: '“', rdquo: '”', bdquo: '„', hellip: '…',
+    laquo: '«', raquo: '»', lsaquo: '‹', rsaquo: '›', bull: '•', middot: '·', iexcl: '¡', iquest: '¿', sect: '§', para: '¶',
+    copy: '©', reg: '®', trade: '™', deg: '°', euro: '€', pound: '£', yen: '¥', cent: '¢', times: '×', divide: '÷',
+    szlig: 'ß', aelig: 'æ', AElig: 'Æ', oelig: 'œ', OElig: 'Œ', oslash: 'ø', Oslash: 'Ø', eth: 'ð', ETH: 'Ð', thorn: 'þ', THORN: 'Þ',
+  }),
+);
+
+/** Accented letters are named after the letter and the accent (&eacute;, &Uuml;): the letter takes the accent's combining mark. */
+const ACCENTS = new Map(
+  Object.entries({ acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', ring: '\u030a', cedil: '\u0327', caron: '\u030c' }),
+);
+
+/** Decodes the character references in text taken from HTML, keeping any it does not know as written. */
+export function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
+    if (entity[0] === '#') {
+      const code = entity[1] === 'x' || entity[1] === 'X' ? Number.parseInt(entity.slice(2), 16) : Number.parseInt(entity.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }
+    const named = NAMED_ENTITIES.get(entity) ?? NAMED_ENTITIES.get(entity.toLowerCase());
+    if (named !== undefined) return named;
+    const accented = /^([a-z])([a-z]+)$/i.exec(entity);
+    const mark = accented && ACCENTS.get(accented[2]!);
+    return mark ? `${accented[1]}${mark}`.normalize('NFC') : match;
+  });
+}
+
 /** A minimal standalone page for OAuth screens; `body` must already be escaped. */
 export function page(title: string, body: string): string {
   return `<!doctype html>

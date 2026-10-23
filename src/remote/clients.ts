@@ -33,7 +33,7 @@ function clientName(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 100) : undefined;
 }
 
-export function isLoopbackUrl(url: URL): boolean {
+function isLoopbackUrl(url: URL): boolean {
   return url.protocol === 'http:' && isLoopbackHostname(url.hostname);
 }
 

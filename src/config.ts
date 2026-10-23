@@ -5,15 +5,15 @@ import { dirname, join, resolve } from 'node:path';
 import { defaultTokenFile } from './auth/token-store.js';
 import { ConfigError } from './errors.js';
 import { LINKEDIN_API_BASE } from './linkedin/client.js';
-import { expandHome, isInside } from './linkedin/media.js';
 import { LINKEDIN_OAUTH_BASE, parseScopes } from './linkedin/oauth.js';
 import { FEATURES } from './linkedin/scopes.js';
 import { isValidApiVersion } from './linkedin/versions.js';
 import { isLoopbackHostname } from './net/loopback.js';
+import { expandHome, isInside } from './paths.js';
 
 /** Scopes granted by the self-serve "Sign In with LinkedIn using OpenID Connect" and "Share on LinkedIn" products. */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email', 'w_member_social'];
-export const DEFAULT_LOCAL_REDIRECT_URI = 'http://localhost:8723/callback';
+const DEFAULT_LOCAL_REDIRECT_URI = 'http://localhost:8723/callback';
 /** Where Claude (web, desktop and mobile) receives OAuth redirects for remote connectors. */
 export const CLAUDE_REDIRECT_URIS = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback'];
 

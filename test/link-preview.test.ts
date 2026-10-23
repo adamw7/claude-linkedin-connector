@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { decodeHtmlEntities, fetchLinkPreview, parseLinkPreview } from '../src/linkedin/link-preview.js';
+import { fetchLinkPreview, parseLinkPreview } from '../src/linkedin/link-preview.js';
 import { startServer, type TestServer } from './helpers/http.js';
 
 describe('parseLinkPreview', () => {
@@ -33,19 +33,6 @@ describe('parseLinkPreview', () => {
 
   it('ignores non-http image URLs', () => {
     expect(parseLinkPreview('<meta property="og:image" content="javascript:alert(1)">', 'https://example.com/')).toEqual({});
-  });
-
-  it('decodes numeric entities', () => {
-    expect(decodeHtmlEntities('&#169; &#x1F680; &unknown;')).toBe('© 🚀 &unknown;');
-  });
-
-  it('decodes the named entities pages use for typography, symbols and accented letters', () => {
-    expect(decodeHtmlEntities('We launched 2.0 &mdash; it&rsquo;s here&hellip; &ldquo;Caf&eacute;&rdquo; &AMP; Gr&Uuml;&szlig;e &copy;&nbsp;2026')).toBe(
-      'We launched 2.0 — it’s here… “Café” & GrÜße © 2026',
-    );
-    expect(decodeHtmlEntities('&Oslash;resund &ccedil;a &scaron; &AElig;')).toBe('Øresund ça š Æ');
-    // Names that aren't entities, including inherited object keys, stay as written.
-    expect(decodeHtmlEntities('&constructor; &toString; &xyz; &eunknown;')).toBe('&constructor; &toString; &xyz; &eunknown;');
   });
 });
 

@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { REAUTH_HINT } from '../src/auth/local-auth.js';
-import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, UserInputError } from '../src/errors.js';
+import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UserInputError } from '../src/errors.js';
 import { describeError, errorKind, errorResult } from '../src/mcp/errors.js';
 import { FetchError } from '../src/net/safe-fetch.js';
+
+describe('sentence', () => {
+  it('ends text with exactly one full stop', () => {
+    expect(sentence('Scope not authorized')).toBe('Scope not authorized.');
+    expect(sentence('Scope not authorized.')).toBe('Scope not authorized.');
+    expect(sentence('')).toBe('.');
+  });
+});
 
 describe('describeError', () => {
   it('passes through messages written for the user', () => {
