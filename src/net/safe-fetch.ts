@@ -94,6 +94,8 @@ export interface SafeFetchOptions {
 export interface SafeFetchResult {
   data: Buffer;
   contentType: string | undefined;
+  /** The Content-Disposition header, which can name the file a download link serves. */
+  contentDisposition: string | undefined;
   /** Final URL after redirects. */
   url: string;
 }
@@ -115,7 +117,7 @@ export async function safeFetch(input: string, options: SafeFetchOptions): Promi
   for (let redirects = 0; ; redirects++) {
     const result = await requestOnce(url, options, deadline);
     if (result.redirect === undefined) {
-      return { data: result.data, contentType: result.contentType, url: url.toString() };
+      return { data: result.data, contentType: result.contentType, contentDisposition: result.contentDisposition, url: url.toString() };
     }
     if (redirects >= (options.maxRedirects ?? 5)) throw new FetchError(`Too many redirects fetching ${input}.`);
     const next = URL.parse(result.redirect, url.href);
@@ -128,6 +130,7 @@ interface SingleResponse {
   redirect?: string;
   data: Buffer;
   contentType?: string;
+  contentDisposition?: string;
 }
 
 /**
@@ -189,7 +192,11 @@ function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Pro
         const finish = () => {
           if (settled) return;
           settled = true;
-          resolve({ data: Buffer.concat(chunks), contentType: response.headers['content-type'] });
+          resolve({
+            data: Buffer.concat(chunks),
+            contentType: response.headers['content-type'],
+            contentDisposition: response.headers['content-disposition'],
+          });
         };
         response.on('data', (chunk: Buffer) => {
           if (settled) return;

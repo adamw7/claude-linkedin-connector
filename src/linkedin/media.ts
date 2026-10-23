@@ -16,7 +16,7 @@ const MAX_BYTES: Record<MediaKind, number> = {
 export interface LoadedMedia {
   data: Buffer;
   mimeType: string;
-  /** File name from the path or URL, when there is one. */
+  /** File name from the path, or from the download (its Content-Disposition, else its URL), when there is one. */
   filename?: string;
 }
 
@@ -66,6 +66,24 @@ function decodeFilename(name: string): string {
   } catch {
     return name;
   }
+}
+
+/**
+ * The file name a Content-Disposition header gives (RFC 6266), preferring `filename*` (RFC 8187). Download links of
+ * cloud drives end in a path such as /download (Google Drive) or /file (Dropbox) instead, so only this names the file.
+ */
+function dispositionFilename(header = ''): string | undefined {
+  const extended = /\bfilename\*\s*=\s*utf-8'[^']*'([^\s;]+)/i.exec(header)?.[1];
+  const plain = /\bfilename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s;]+))/i.exec(header);
+  let name: string | undefined;
+  try {
+    name = extended && decodeURIComponent(extended);
+  } catch {
+    // Not valid UTF-8 after all; the plain filename may do.
+  }
+  name ||= plain?.[1]?.replace(/\\(.)/g, '$1') ?? plain?.[2];
+  // A name, never a path.
+  return (name && basename(name.replaceAll('\\', '/'))) || undefined;
 }
 
 /** The local path a file: URL names; one with a host (a network share) or an encoded slash names none. */
@@ -132,7 +150,7 @@ export async function readSource(
   if (/^https?:\/\//i.test(trimmed)) {
     const result = await safeFetch(trimmed, { maxBytes, timeoutMs: 60_000, allowPrivateNetwork: options.allowPrivateNetwork });
     const name = basename(new URL(result.url).pathname);
-    return { data: result.data, filename: name ? decodeFilename(name) : undefined };
+    return { data: result.data, filename: dispositionFilename(result.contentDisposition) ?? (name ? decodeFilename(name) : undefined) };
   }
 
   const dirs = options.localFileDirs;

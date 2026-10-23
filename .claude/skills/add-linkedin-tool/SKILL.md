@@ -28,6 +28,9 @@ Work through these steps in order. Read the neighbouring tool closest to the new
 - Set `annotations` honestly: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`.
 - Anything that publishes, edits or deletes says in its `description` that the user must approve the exact
   content first. Update `instructions()` if the tool adds a new kind of action.
+- Tools that publish or edit take a strict input (`z.strictObject`, or `withOrganization`), so a mistyped argument
+  fails instead of being dropped. A request that publishes something new goes through `publishing(...)`: after a
+  timeout, a broken connection or a 500/502/504 it says where to look, not to try again, which could publish twice.
 - **Scope gating:** a tool that needs a scope beyond the defaults (`openid profile email w_member_social`) is
   registered only inside an `if (scopes.has(...))` block, like the engagement tools. Acting as a Page uses
   `withOrganization(...)` and `w_organization_social`.

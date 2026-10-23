@@ -55,7 +55,11 @@ describe('loadMedia', () => {
     await writeFile(join(dir, 'notes.txt'), 'not an image');
     server = await startServer((req, res) => {
       if (req.url === '/deck.pdf' || req.url === '/100%.pdf') res.end(PDF);
-      else res.writeHead(404).end();
+      else if (req.url?.startsWith('/get?')) {
+        const disposition = new URL(req.url, server.url).searchParams.get('disposition');
+        if (disposition) res.setHeader('Content-Disposition', disposition);
+        res.end(PDF);
+      } else res.writeHead(404).end();
     });
   });
   afterAll(() => server.close());
@@ -260,6 +264,24 @@ describe('loadMedia', () => {
   it('downloads URLs', async () => {
     const media = await loadMedia(`${server.url}/deck.pdf`, 'document', { allowPrivateNetwork: true });
     expect(media).toMatchObject({ mimeType: 'application/pdf', filename: 'deck.pdf' });
+  });
+
+  it.each([
+    ['attachment; filename="Q3 results.pdf"', 'Q3 results.pdf'],
+    ['attachment; filename=deck.pdf', 'deck.pdf'],
+    ['attachment; filename="say \\"hi\\".pdf"', 'say "hi".pdf'],
+    [`attachment; filename="Lodz.pdf"; filename*=UTF-8''%C5%81%C3%B3d%C5%BA.pdf`, 'Łódź.pdf'],
+    [`attachment; filename*=utf-8'en'Q3%20results.pdf`, 'Q3 results.pdf'],
+    [`attachment; filename* = UTF-8''spaced%20out.pdf; filename="fallback.pdf"`, 'spaced out.pdf'],
+    [`attachment; filename*=UTF-8''%E9.pdf; filename="fallback.pdf"`, 'fallback.pdf'],
+    [`attachment; filename*=ISO-8859-1''na%EFve.pdf; filename="naive.pdf"`, 'naive.pdf'],
+    ['attachment; filename="../../etc/passwd.pdf"', 'passwd.pdf'],
+    ['attachment; filename="C:\\\\Users\\\\ada\\\\deck.pdf"', 'deck.pdf'],
+    ['attachment; filename=""', 'get'],
+    ['attachment', 'get'],
+  ])('names a download by its Content-Disposition, %s', async (disposition, filename) => {
+    const media = await loadMedia(`${server.url}/get?disposition=${encodeURIComponent(disposition)}`, 'document', { allowPrivateNetwork: true });
+    expect(media.filename).toBe(filename);
   });
 
   it('keeps file names that are not valid percent-encoding', async () => {
