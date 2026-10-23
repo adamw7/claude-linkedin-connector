@@ -11,8 +11,12 @@ import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo 
 /** Treat tokens this close to expiry as expired. */
 const EXPIRY_MARGIN_MS = 60_000;
 
-export const SIGN_IN_HINT =
-  'Ask Claude to run the linkedin_login tool to get a sign-in link, or run "claude-linkedin-connector login" in a terminal.';
+/**
+ * Claude reads this (linkedin_auth_status), so it names no terminal command: most installs (the Claude Desktop
+ * extension, a clone set up with `npm run setup`) have no `claude-linkedin-connector` on the PATH, nor the app
+ * credentials in the shell.
+ */
+export const SIGN_IN_HINT = "Ask Claude to run the linkedin_login tool, which opens LinkedIn's sign-in page in your browser.";
 
 /** LinkedIn signs in whoever is signed in to linkedin.com in the browser, so signing in again alone doesn't switch accounts. */
 export const SWITCH_ACCOUNT_HINT =
@@ -31,7 +35,7 @@ export function signInPageHint(redirectUri: string): string {
 
 /** For a stored token LinkedIn rejects: linkedin_login alone would report "already signed in". */
 export const REAUTH_HINT =
-  'To sign in again, run the linkedin_login tool with force: true, or run "claude-linkedin-connector login" in a terminal. ' +
+  'To sign in again, run the linkedin_login tool with force: true. ' +
   'If LINKEDIN_ACCESS_TOKEN is set, replace it with a fresh token instead.';
 
 /** LINKEDIN_ACCESS_TOKEN outranks the token a sign-in stores, so signing in again changes nothing while it is set. */

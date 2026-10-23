@@ -18,6 +18,17 @@ All notable changes to this project are documented here. The format follows
   remove it to sign in through the browser, and `linkedin_login` says the same instead of signing in.
 - After a sign-in failed, for example because the LinkedIn app lacks the product a setting needs, the next tool
   call gave the reason twice.
+- `npm run setup` signed in with the `LINKEDIN_REDIRECT_URI` and `LINKEDIN_FILE_DIRS` set in your terminal, but
+  didn't register them with Claude Code. Signing in again from Claude Code then used port 8723 after all, and the
+  folders you had allowed weren't. Setup now registers both, also takes them as `--redirect-uri` and `--file-dirs`,
+  and refuses a redirect URL the connector can't listen on before registering anything.
+- When you weren't signed in, Claude could suggest running `claude-linkedin-connector login` in a terminal. The
+  Claude Desktop extension and `npm run setup` don't install that command, and it needs your LinkedIn app
+  credentials in the terminal too. Claude now offers to sign you in itself, and `claude-linkedin-connector status`
+  says how to sign in from the terminal, whichever way you started it.
+- Someone a remote server turns away because they aren't in `LINKEDIN_ALLOWED_MEMBERS` is now told their LinkedIn
+  member ID, which linkedin.com shows nowhere, so whoever runs the server can add it. The README and deployment
+  guide now say that a listed email only matches an account's primary email, once LinkedIn has verified it.
 
 ## [0.4.0] - 2026-10-22
 

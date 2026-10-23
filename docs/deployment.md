@@ -199,7 +199,9 @@ connector, and delegates the actual sign-in to LinkedIn:
   `/mcp` resource and expire with the LinkedIn token (at most 60 days), after which Claude asks you to reconnect.
 - By default only Claude's callback URLs and localhost redirects may register, and only the LinkedIn accounts
   in `LINKEDIN_ALLOWED_MEMBERS` can finish connecting. The list is checked on every request too, so removing
-  someone (and restarting) cuts off the tokens they already have.
+  someone (and restarting) cuts off the tokens they already have. An email there matches only an account's primary
+  email, once LinkedIn has verified it. Anyone refused is told their member ID, which linkedin.com shows nowhere,
+  and the `member_not_allowed` log entry has it too: add that ID to let them in.
 
 The server keeps no database, so it can be restarted or scaled freely as long as `SERVER_SECRET` stays the
 same. Changing the secret disconnects everyone, unless the old one stays in `SERVER_SECRET_PREVIOUS` for a while.
@@ -225,7 +227,7 @@ The server writes one JSON object per line to stderr, with `time`, `level` (`inf
 | `listening` / `listen_failed` | info / error | Started, with the MCP URL and the LinkedIn redirect URL to register; or the port couldn't be opened |
 | `warning` | warn | Something to look at, e.g. LinkedIn retired the configured API version and the server switched to a newer one |
 | `http_request` | info, error for 5xx | One per request except health checks: method, path, status, duration, client IP, request ID |
-| `member_authorized` / `member_not_allowed` | info / warn | Someone finished connecting, or was refused by `LINKEDIN_ALLOWED_MEMBERS` |
+| `member_authorized` / `member_not_allowed` | info / warn | Someone finished connecting, or was refused by `LINKEDIN_ALLOWED_MEMBERS`; its `member` is the ID to add to let them in |
 | `tool_call` | info, warn if it failed | Audit trail: tool, member, client, duration, request ID, and for a failure its kind with LinkedIn's HTTP status and error code (e.g. `LinkedInApiError: HTTP 403 ACCESS_DENIED`); never the arguments, nor the error message, which can quote them |
 | `linkedin_token_exchange_failed` | warn | LinkedIn rejected a sign-in, often a wrong client secret or redirect URL |
 | `linkedin_scope_not_authorized` | warn | LinkedIn refused a scope the server asks for because the app lacks the product that grants it, e.g. `LINKEDIN_COMMENTS` without the Community Management API: add the product or turn the feature off |

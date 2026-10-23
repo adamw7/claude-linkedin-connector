@@ -86,6 +86,41 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
     });
   });
 
+  it('registers the redirect URL and folders the sign-in uses, so the server uses them too', () => {
+    const registered = (args: string[], env: Record<string, string> = {}) => {
+      rmSync(log, { force: true });
+      const add = setup(args, env).calls.find((call) => call.startsWith('mcp add-json'))!;
+      return JSON.parse(add.slice(add.indexOf('{'), add.lastIndexOf('}') + 1)).env;
+    };
+    expect(registered(['--redirect-uri', 'http://localhost:9000/cb', '--file-dirs', '~/Documents,~/Downloads'])).toEqual({
+      LINKEDIN_CLIENT_ID: 'id-123',
+      LINKEDIN_CLIENT_SECRET: 'secret-456',
+      LINKEDIN_SCOPES: 'openid profile email w_member_social',
+      LINKEDIN_REDIRECT_URI: 'http://localhost:9000/cb',
+      LINKEDIN_FILE_DIRS: '~/Documents,~/Downloads',
+    });
+    expect(registered([], { LINKEDIN_REDIRECT_URI: ' http://127.0.0.1:9001/callback ', LINKEDIN_FILE_DIRS: '/srv/media' })).toMatchObject({
+      LINKEDIN_REDIRECT_URI: 'http://127.0.0.1:9001/callback',
+      LINKEDIN_FILE_DIRS: '/srv/media',
+    });
+    expect(registered(['--redirect-uri', 'http://[::1]:9002/cb'], { LINKEDIN_REDIRECT_URI: 'http://localhost:9001/callback' })).toMatchObject({
+      LINKEDIN_REDIRECT_URI: 'http://[::1]:9002/cb',
+    });
+  });
+
+  it('refuses a redirect URL the connector cannot listen on before registering anything', () => {
+    for (const uri of ['not a url', 'https://localhost:9000/cb', 'http://example.com:9000/cb', 'http://localhost/cb', 'http://localhost:0/cb']) {
+      rmSync(log, { force: true });
+      const { status, stderr, calls } = setup(['--redirect-uri', uri]);
+      expect(status).toBe(1);
+      expect(stderr).toContain(`--redirect-uri must look like http://localhost:<port>/<path> (got "${uri}").`);
+      expect(calls.some((call) => call.startsWith('mcp add-json'))).toBe(false);
+    }
+    expect(setup([], { LINKEDIN_REDIRECT_URI: 'localhost:8723/callback' }).stderr).toContain(
+      'LINKEDIN_REDIRECT_URI must look like http://localhost:<port>/<path> (got "localhost:8723/callback").',
+    );
+  });
+
   it('adds the scopes for --comments and --pages', () => {
     const scopes = (args: string[]) => {
       rmSync(log, { force: true });
@@ -144,10 +179,10 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
   });
 
   it('says what to do when signing in fails after registering', () => {
-    const { status, stderr, calls } = setup([], { LINKEDIN_REDIRECT_URI: 'not a url' }, { login: true });
+    const { status, stderr, calls } = setup([], { LINKEDIN_API_VERSION: 'soon' }, { login: true });
     expect(status).toBe(1);
     expect(calls.some((call) => call.startsWith('mcp add-json'))).toBe(true);
-    expect(stderr).toContain('"Redirect URL" (LINKEDIN_REDIRECT_URI) "not a url" is not a valid URL.');
+    expect(stderr).toContain('LINKEDIN_API_VERSION must look like YYYYMM (e.g. 202609), got "soon".');
     expect(stderr).toContain('Signing in to LinkedIn failed (see above). "linkedin" is registered with Claude Code');
   });
 });

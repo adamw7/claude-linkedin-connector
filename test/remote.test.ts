@@ -723,6 +723,10 @@ describe('authorization endpoint', () => {
     const remote = await startRemote({ allowedMembers: ['someone@example.com'] });
     const { landing } = await obtainCode(remote);
     expect(landing.searchParams.get('error')).toBe('access_denied');
+    // The ID to add, which the member can pass on: linkedin.com doesn't show it.
+    expect(landing.searchParams.get('error_description')).toBe(
+      'This LinkedIn account is not allowed to use this connector. Ask whoever runs it to add your LinkedIn member ID, abc123, to LINKEDIN_ALLOWED_MEMBERS.',
+    );
     expect(remote.logs).toContainEqual(expect.objectContaining({ level: 'warn', event: 'member_not_allowed', member: 'abc123' }));
     const allowed = await startRemote({ allowedMembers: ['ADA@example.com'.toLowerCase()] });
     expect((await obtainCode(allowed)).landing.searchParams.get('code')).toBeTruthy();
@@ -733,7 +737,17 @@ describe('authorization endpoint', () => {
     remote.linkedin.override(({ url }) =>
       url.pathname === '/v2/userinfo' ? Response.json({ ...MEMBER, email_verified: false }) : undefined,
     );
-    expect((await obtainCode(remote)).landing.searchParams.get('error')).toBe('access_denied');
+    const { landing } = await obtainCode(remote);
+    expect(landing.searchParams.get('error')).toBe('access_denied');
+    expect(landing.searchParams.get('error_description')).toContain('add your LinkedIn member ID, abc123, to LINKEDIN_ALLOWED_MEMBERS');
+  });
+
+  it('refuses without naming an ID when LinkedIn says nothing about the member', async () => {
+    const remote = await startRemote({ allowedMembers: ['ada@example.com'] });
+    remote.linkedin.override(({ url }) => (url.pathname === '/v2/userinfo' ? Response.json({ message: 'Not enough permissions' }, { status: 403 }) : undefined));
+    const { landing } = await obtainCode(remote);
+    expect(landing.searchParams.get('error')).toBe('access_denied');
+    expect(landing.searchParams.get('error_description')).toBe('This LinkedIn account is not allowed to use this connector.');
   });
 
   it('cuts off issued tokens when a member is removed from the allowlist', async () => {

@@ -89,20 +89,26 @@ describe('command line', () => {
   });
 
   it('reports the sign-in status', () => {
+    const terminalSignIn = 'To sign in from this terminal, run the same command with "login" in place of "status".\n';
     const signedOut = cli(['status']);
     expect(signedOut.status).toBe(1);
-    expect(signedOut.stdout).toContain('You are not signed in to LinkedIn');
+    expect(signedOut.stdout).toBe(
+      "You are not signed in to LinkedIn. Ask Claude to run the linkedin_login tool, which opens LinkedIn's sign-in page in your browser.\n" +
+        terminalSignIn,
+    );
 
     storeToken();
     const signedIn = cli(['status']);
     expect(signedIn.status).toBe(0);
     expect(signedIn.stdout).toContain('Signed in as Ada Lovelace');
     expect(signedIn.stdout).toContain('Scopes: openid profile email w_member_social');
+    expect(signedIn.stdout).not.toContain(terminalSignIn);
 
     // Scopes added after signing in (e.g. for comments) need a new sign-in, which `npm run setup` keys off the exit code.
     const predates = cli(['status'], { LINKEDIN_SCOPES: 'openid profile email w_member_social w_member_social_feed' });
     expect(predates.status).toBe(1);
     expect(predates.stdout).toContain('That sign-in predates the w_member_social_feed permission now configured: sign in again to grant it.');
+    expect(predates.stdout.endsWith(terminalSignIn)).toBe(true);
 
     expect(cli(['status'], { LINKEDIN_ACCESS_TOKEN: 'env-token' })).toMatchObject({ status: 0, stdout: expect.stringContaining('LINKEDIN_ACCESS_TOKEN') });
   });
@@ -232,7 +238,12 @@ describe('stdio command', () => {
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['linkedin_create_post', 'linkedin_login', 'linkedin_logout']));
       const status = await client.callTool({ name: 'linkedin_auth_status', arguments: {} });
-      expect(status.structuredContent).toMatchObject({ authenticated: false, source: 'none' });
+      // No terminal command: this install's command and app credentials are Claude's, not the user's shell's.
+      expect(status.structuredContent).toMatchObject({
+        authenticated: false,
+        source: 'none',
+        message: "You are not signed in to LinkedIn. Ask Claude to run the linkedin_login tool, which opens LinkedIn's sign-in page in your browser.",
+      });
     } finally {
       await client.close();
     }

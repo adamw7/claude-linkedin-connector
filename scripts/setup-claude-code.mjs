@@ -12,6 +12,7 @@ import { parseArgs } from 'node:util';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ENTRY = join(ROOT, 'dist', 'index.js');
 const DEFAULT_SCOPES = 'openid profile email w_member_social';
+const DEFAULT_REDIRECT_URI = 'http://localhost:8723/callback';
 /** The scopes --comments and --pages add, as LINKEDIN_COMMENTS and LINKEDIN_PAGES do (src/linkedin/scopes.ts). */
 const FEATURE_SCOPES = { comments: 'w_member_social_feed', pages: 'w_organization_social' };
 const IS_WINDOWS = process.platform === 'win32';
@@ -31,6 +32,11 @@ Options:
   --comments               Let Claude comment on and react to posts (needs the Community Management API)
   --pages                  Let Claude act as LinkedIn Pages you administer (needs the Community Management API)
   --scopes <scopes>        LinkedIn permissions (default: $LINKEDIN_SCOPES, else "${DEFAULT_SCOPES}")
+  --redirect-uri <url>     Sign-in callback, if not ${DEFAULT_REDIRECT_URI} (default: $LINKEDIN_REDIRECT_URI);
+                           add it to your LinkedIn app's redirect URLs too
+  --file-dirs <folders>    Comma-separated folders Claude may read images, documents and Connections.csv from
+                           (default: $LINKEDIN_FILE_DIRS). They replace the defaults, Downloads, Desktop, Pictures
+                           and the project Claude Code runs in, so list the ones you want to keep
   --scope <user|local>     Claude Code config scope: user = every project (default), local = this clone only
   --name <name>            MCP server name (default: linkedin)
   --yes, -y                Replace an existing server with the same name without asking
@@ -38,7 +44,8 @@ Options:
   --no-login               Don't sign in to LinkedIn now
   --help, -h               Show this help
 
-Before running it, create a LinkedIn app with http://localhost:8723/callback as a redirect URL; see the README.`;
+Before running it, create a LinkedIn app with ${DEFAULT_REDIRECT_URI} as a redirect URL; see the README.
+Run it again with --yes to change these settings.`;
 
 class SetupError extends Error {}
 
@@ -148,6 +155,8 @@ const NPM_CONFIG_OPTIONS = {
   client_id: '--client-id',
   client_secret: '--client-secret',
   scopes: '--scopes',
+  redirect_uri: '--redirect-uri',
+  file_dirs: '--file-dirs',
   comments: '--comments',
   pages: '--pages',
   scope: '--scope',
@@ -178,6 +187,8 @@ function parseOptions() {
         'client-id': { type: 'string' },
         'client-secret': { type: 'string' },
         scopes: { type: 'string' },
+        'redirect-uri': { type: 'string' },
+        'file-dirs': { type: 'string' },
         comments: { type: 'boolean', default: false },
         pages: { type: 'boolean', default: false },
         scope: { type: 'string', default: 'user' },
@@ -191,6 +202,14 @@ function parseOptions() {
   } catch (error) {
     // The first sentence names the problem; the rest is about positional arguments starting with "-".
     throw new SetupError(`${error.message.split('. ')[0]}. Run "${SETUP} --help" to see the options.`);
+  }
+}
+
+/** A sign-in callback the connector can listen on, as it checks it (src/auth/loopback-login.ts), before it is registered. */
+function checkRedirectUri(uri, source) {
+  const url = URL.parse(uri);
+  if (url?.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !url.port || url.port === '0') {
+    throw new SetupError(`${source} must look like http://localhost:<port>/<path> (got "${uri}").`);
   }
 }
 
@@ -212,6 +231,12 @@ async function main() {
     throw new SetupError('`claude --version` failed. Is Claude Code installed?');
   }
 
+  // Registered with the server, not only used to sign in now: its own sign-ins would otherwise listen on the default
+  // port, and it wouldn't read files from the folders given here. Checked before asking for anything.
+  const redirectUri = (options['redirect-uri'] ?? process.env.LINKEDIN_REDIRECT_URI)?.trim();
+  if (redirectUri) checkRedirectUri(redirectUri, options['redirect-uri'] === undefined ? 'LINKEDIN_REDIRECT_URI' : '--redirect-uri');
+  const fileDirs = (options['file-dirs'] ?? process.env.LINKEDIN_FILE_DIRS)?.trim();
+
   const interactive = Boolean(process.stdin.isTTY);
   const value = async (option, envName, question, secret) => {
     const given = options[option] ?? process.env[envName];
@@ -228,7 +253,13 @@ async function main() {
   for (const [feature, scope] of Object.entries(FEATURE_SCOPES)) {
     if (options[feature] && !scopes[0].split(/[\s,]+/).includes(scope)) scopes.push(scope);
   }
-  const env = { LINKEDIN_CLIENT_ID: clientId, LINKEDIN_CLIENT_SECRET: clientSecret, LINKEDIN_SCOPES: scopes.join(' ') };
+  const env = {
+    LINKEDIN_CLIENT_ID: clientId,
+    LINKEDIN_CLIENT_SECRET: clientSecret,
+    LINKEDIN_SCOPES: scopes.join(' '),
+    ...(redirectUri ? { LINKEDIN_REDIRECT_URI: redirectUri } : {}),
+    ...(fileDirs ? { LINKEDIN_FILE_DIRS: fileDirs } : {}),
+  };
 
   if (options['skip-build']) {
     if (!existsSync(ENTRY)) throw new SetupError(`${ENTRY} doesn't exist; run without --skip-build.`);
