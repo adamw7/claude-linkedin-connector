@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { gzipSync } from 'node:zlib';
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -518,6 +519,25 @@ describe('remote connector discovery', () => {
     const malformed = await post('/register', '{bad');
     expect(malformed.status).toBe(400);
     expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The request body is not valid JSON.' });
+  });
+
+  it('refuses compressed bodies on the endpoints anyone can call before signing in', async () => {
+    const remote = await startRemote();
+    const post = (path: string, type: string, body: string) =>
+      fetch(`${remote.base}${path}`, { method: 'POST', headers: { 'Content-Type': type, 'Content-Encoding': 'gzip' }, body: gzipSync(body) });
+    const refused = {
+      error: 'invalid_request',
+      error_description: 'This Content-Encoding is not supported here. Send the request body uncompressed.',
+    };
+
+    const registration = await post('/register', 'application/json', JSON.stringify({ redirect_uris: [REDIRECT] }));
+    expect(registration.status).toBe(415);
+    expect(await registration.json()).toEqual(refused);
+    for (const path of ['/token', '/authorize']) {
+      const form = await post(path, 'application/x-www-form-urlencoded', 'grant_type=authorization_code');
+      expect(form.status).toBe(415);
+      expect(await form.json()).toEqual(refused);
+    }
   });
 });
 

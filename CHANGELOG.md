@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
+### Changed
+
+- The README is shorter and starts with a three-step quick start for Claude Desktop, Claude Code and Claude on
+  the web. Details moved to the guides: what the connector does with files and connections to the
+  [usage guide](docs/usage.md), how remote sign-in and rate limits work to the
+  [deployment guide](docs/deployment.md), and development and releasing to [docs/development.md](docs/development.md).
+- To post, comment or react as a Page, you can give Claude the address of the Page's admin view
+  (`linkedin.com/company/<ID>/admin/`). A Page given by name now gets an explanation of where to find its ID.
+- Messages about a setting name it as the Claude Desktop extension's settings show it, as well as by its
+  environment variable, e.g. "Post as LinkedIn Pages" (`LINKEDIN_PAGES`).
+- Searching your connections matches the start of words: "ING" finds ING Bank but no longer Boeing or Digital
+  Marketing Agency, "EY" no longer finds Disney, and "Ann" finds Ann and Annette but not Joanna.
+- A post or comment that is too long now says how long it is and how many characters to cut, e.g. "The post text is
+  3214 characters long; LinkedIn allows 3000. Shorten it by at least 214 characters." Before, it only said the
+  text was too long, and Claude, which can't count characters reliably, had to guess how much to shorten it.
+- Checking a post warns when its text has a link but the post has no link preview: LinkedIn shows no preview card
+  for a link in the text of a post published by an app, so Claude can offer to add one before you approve.
+- Commenting on and reacting to a post give back the post's address on linkedin.com, so Claude can link you to it.
+
 ### Fixed
 
 - A link preview's title and description showed most named HTML entities as written: a page whose title tag reads
@@ -43,30 +64,6 @@ All notable changes to this project are documented here. The format follows
   of the link ("download", "file") on LinkedIn. It is now titled after the file name the download gives.
 - `linkedin_edit_post` ignored arguments it doesn't take, such as a visibility, and reported the post as updated.
   It now refuses them, as the tools that publish do: LinkedIn only lets apps change a post's text.
-
-## [0.4.0] - 2026-10-22
-
-### Changed
-
-- The README is shorter and starts with a three-step quick start for Claude Desktop, Claude Code and Claude on
-  the web. Details moved to the guides: what the connector does with files and connections to the
-  [usage guide](docs/usage.md), how remote sign-in and rate limits work to the
-  [deployment guide](docs/deployment.md), and development and releasing to [docs/development.md](docs/development.md).
-- To post, comment or react as a Page, you can give Claude the address of the Page's admin view
-  (`linkedin.com/company/<ID>/admin/`). A Page given by name now gets an explanation of where to find its ID.
-- Messages about a setting name it as the Claude Desktop extension's settings show it, as well as by its
-  environment variable, e.g. "Post as LinkedIn Pages" (`LINKEDIN_PAGES`).
-- Searching your connections matches the start of words: "ING" finds ING Bank but no longer Boeing or Digital
-  Marketing Agency, "EY" no longer finds Disney, and "Ann" finds Ann and Annette but not Joanna.
-- A post or comment that is too long now says how long it is and how many characters to cut, e.g. "The post text is
-  3214 characters long; LinkedIn allows 3000. Shorten it by at least 214 characters." Before, it only said the
-  text was too long, and Claude, which can't count characters reliably, had to guess how much to shorten it.
-- Checking a post warns when its text has a link but the post has no link preview: LinkedIn shows no preview card
-  for a link in the text of a post published by an app, so Claude can offer to add one before you approve.
-- Commenting on and reacting to a post give back the post's address on linkedin.com, so Claude can link you to it.
-
-### Fixed
-
 - When LinkedIn shows an error page instead of asking you to approve access, as it does for a redirect URL your
   LinkedIn app doesn't list or a Client ID it doesn't know, it never sends the browser back to the connector, so
   Claude only said the sign-in page was open. A sign-in that is still waiting now says to add the exact redirect URL
@@ -130,6 +127,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- Anyone could stop a remote server, without signing in, by sending its sign-in endpoints a crafted compressed
+  request body: body-parser 2.3.0, which reads request bodies, could fail on one with an uncaught exception
+  ([GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828)). The server now uses body-parser 2.4.0,
+  and its sign-in endpoints refuse compressed bodies, which browsers and OAuth clients don't send.
 - A remote server's `tool_call` log entries no longer include the error message, which could quote what was passed
   to the tool, such as an image URL whose query string holds a signature. They now name the kind of error, with
   LinkedIn's HTTP status and error code when LinkedIn refused the call.

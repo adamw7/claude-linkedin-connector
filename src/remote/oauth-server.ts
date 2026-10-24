@@ -188,6 +188,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     client !== undefined && client.redirectUris.some((registered) => redirectUriMatches(registered, redirectUri));
 
   const router = express.Router();
+  // Browsers and OAuth clients don't compress these forms; see the JSON parser in app.ts.
+  const formBody = express.urlencoded({ extended: false, limit: '64kb', inflate: false });
 
   router.get('/authorize', async (req, res) => {
     const query = req.query as Record<string, unknown>;
@@ -230,7 +232,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     });
   });
 
-  router.post('/authorize', express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
+  router.post('/authorize', formBody, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const csrf = str(body.csrf);
     const cookieCsrf = readCookie(req, cookieName('csrf'));
@@ -314,7 +316,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     back({ code: sealer.seal('code', codePayload) });
   });
 
-  router.post('/token', cors, express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
+  router.post('/token', cors, formBody, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const fail = (error: string, description: string, status = 400) => oauthError(res, status, error, description);
     if (body.grant_type !== 'authorization_code') return fail('unsupported_grant_type', 'Only the authorization_code grant is supported.');
