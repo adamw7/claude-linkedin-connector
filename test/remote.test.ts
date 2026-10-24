@@ -427,6 +427,20 @@ describe('remote connector discovery', () => {
     expect(response.headers.get('access-control-expose-headers')).toContain('WWW-Authenticate');
   });
 
+  it('answers CORS preflights to the token and registration endpoints', async () => {
+    const remote = await startRemote();
+    for (const path of ['/token', '/register']) {
+      const response = await fetch(`${remote.base}${path}`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://inspector.example', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization, content-type' },
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(response.headers.get('access-control-allow-methods')).toBe('POST, OPTIONS');
+      expect(response.headers.get('access-control-allow-headers')).toBe('Authorization, Content-Type, MCP-Protocol-Version');
+    }
+  });
+
   it('rejects forged tokens', async () => {
     const remote = await startRemote();
     const response = await fetch(remote.mcpUrl, {

@@ -31,7 +31,9 @@ function clean(value: string | undefined, maxLength: number): string | undefined
   if (!value) return undefined;
   const text = decodeHtmlEntities(value).replace(/\s+/g, ' ').trim();
   if (!text) return undefined;
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  // Cut whole characters: slicing UTF-16 units can split an emoji, leaving half of it to show as � on the card.
+  const characters = [...text];
+  return characters.length > maxLength ? `${characters.slice(0, maxLength - 1).join('')}…` : text;
 }
 
 /** Extracts Open Graph / Twitter card metadata, as LinkedIn's Posts API does not generate link previews itself. */

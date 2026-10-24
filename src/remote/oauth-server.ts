@@ -316,6 +316,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     back({ code: sealer.seal('code', codePayload) });
   });
 
+  // A client authenticating with client_secret_basic sends an Authorization header, which takes a preflight.
+  router.options('/token', cors);
   router.post('/token', cors, formBody, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const fail = (error: string, description: string, status = 400) => oauthError(res, status, error, description);
