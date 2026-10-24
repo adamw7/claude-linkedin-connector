@@ -29,6 +29,14 @@ export class LinkedInOAuthError extends Error {
   }
 }
 
+/**
+ * LinkedIn may have published something although the request for it failed, e.g. it didn't answer in time; the
+ * message says where to look before trying again, so it isn't published twice. `cause` is the failure.
+ */
+export class UnconfirmedError extends Error {
+  override readonly name = 'UnconfirmedError';
+}
+
 /** There is no usable LinkedIn token; the message tells the user how to get one. */
 export class NotAuthenticatedError extends Error {
   override readonly name = 'NotAuthenticatedError';

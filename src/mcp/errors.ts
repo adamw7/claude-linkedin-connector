@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { REAUTH_HINT } from '../auth/local-auth.js';
-import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UserInputError } from '../errors.js';
+import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UnconfirmedError, UserInputError } from '../errors.js';
 import { FetchError } from '../net/safe-fetch.js';
 
 export type Mode = 'local' | 'remote';
@@ -17,7 +17,8 @@ export function describeError(error: unknown, mode: Mode): string {
     error instanceof NotAuthenticatedError ||
     error instanceof UserInputError ||
     error instanceof ConfigError ||
-    error instanceof FetchError
+    error instanceof FetchError ||
+    error instanceof UnconfirmedError
   ) {
     return error.message;
   }
@@ -72,6 +73,7 @@ export function errorKind(error: unknown): string {
     return `${error.name}: HTTP ${error.status}${code ? ` ${code}` : ''}${serviceErrorCode === undefined ? '' : ` (service error ${serviceErrorCode})`}`;
   }
   if (error instanceof LinkedInOAuthError) return `${error.name}: ${error.error}`;
+  if (error instanceof UnconfirmedError) return `${error.name}: ${errorKind(error.cause)}`;
   if (error instanceof TypeError && error.message === 'fetch failed') {
     const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
     return `${error.name}: fetch failed${code ? ` (${code})` : ''}`;

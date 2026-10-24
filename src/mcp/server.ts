@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
 import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
-import { LinkedInApiError, NotAuthenticatedError, sentence, UserInputError } from '../errors.js';
+import { LinkedInApiError, NotAuthenticatedError, sentence, UnconfirmedError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
 import {
   countCompanies,
@@ -82,6 +82,12 @@ const ATTACHMENTS = ['none', 'article', 'image', 'images', 'document'] as const;
 const MAX_POST_CHARACTERS = 3000;
 const MAX_COMMENT_CHARACTERS = 1250;
 
+/** Optional text as given, or undefined when it is blank: Claude sometimes passes "" for an argument it leaves out. */
+const given = (text: string | undefined) => (text?.trim() ? text : undefined);
+
+/** How many characters `text` has, counted as zod's `max` and JSON Schema's `maxLength` count them: an emoji is one. */
+const characters = (text: string) => [...text].length;
+
 /** Text of up to `max` characters. Text that is too long says by how much, which Claude can't count for itself. */
 function limitedText(max: number, noun: string) {
   return z
@@ -89,11 +95,43 @@ function limitedText(max: number, noun: string) {
     .min(1)
     .max(max, {
       error: (issue) => {
-        const { length } = issue.input as string;
+        const length = characters(issue.input as string);
         const over = length - max;
         return `The ${noun} is ${length} characters long; LinkedIn allows ${max}. Shorten it by at least ${over} character${over === 1 ? '' : 's'}.`;
       },
     });
+}
+
+/** Network errors from connecting to LinkedIn: the request never reached it. */
+const NOT_SENT = new Set<string | undefined>(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
+
+/**
+ * Why LinkedIn may have published something although the request failed: it didn't answer in time, the connection
+ * broke once the request may have reached it, or LinkedIn failed in a way that doesn't say whether it published (500,
+ * 502, 504; a 503 or 429 turns the request away). Undefined when the failure shows that nothing was published.
+ */
+function unconfirmedReason(error: unknown): string | undefined {
+  if (error instanceof LinkedInApiError) {
+    return [500, 502, 504].includes(error.status) ? `LinkedIn had an internal problem (HTTP ${error.status}): ${sentence(error.message)}` : undefined;
+  }
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return 'LinkedIn did not answer in time.';
+  if (!(error instanceof TypeError) || error.message !== 'fetch failed') return undefined;
+  const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
+  if (NOT_SENT.has(code)) return undefined;
+  return `The connection to LinkedIn broke${code ? ` (${code})` : ''}.`;
+}
+
+/**
+ * Runs a request that publishes something. A failure that doesn't show that nothing was published says so, and
+ * where to look (`unconfirmed`), rather than to try again, which could publish it twice.
+ */
+async function publishing<T>(operation: () => Promise<T>, unconfirmed: (reason: string) => string): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const reason = unconfirmedReason(error);
+    throw reason === undefined ? error : new UnconfirmedError(unconfirmed(reason), { cause: error });
+  }
 }
 
 /** A post's attachments, loaded and checked, ready to upload. */
@@ -568,14 +606,14 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     const warnings = textWarnings(args.text);
     if (args.images) {
       const images = await Promise.all(
-        args.images.map(async ({ source, altText }) => ({ media: await load(source, 'image'), altText: altText || undefined })),
+        args.images.map(async ({ source, altText }) => ({ media: await load(source, 'image'), altText: given(altText) })),
       );
       return { attachment: images.length === 1 ? 'image' : 'images', images, warnings };
     }
     if (args.document) {
       const media = await load(args.document.source, 'document');
       // LinkedIn shows the title above the carousel: "Q3 results", not "Q3 results.pdf".
-      const title = args.document.title ?? (media.filename?.replace(/\.(pdf|docx?|pptx?)$/i, '') || 'Document');
+      const title = given(args.document.title) ?? (media.filename?.replace(/\.(pdf|docx?|pptx?)$/i, '') || 'Document');
       return { attachment: 'document', document: { media, title }, warnings };
     }
     if (!args.article) {
@@ -586,7 +624,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       return { attachment: 'none', warnings };
     }
 
-    const { url, title, description, thumbnail } = args.article;
+    const { url } = args.article;
+    const [title, description, thumbnail] = [args.article.title, args.article.description, args.article.thumbnail].map(given);
     const hostname = new URL(url).hostname;
     // Undefined when the page can't be read.
     const page: LinkPreview | undefined =
@@ -653,7 +692,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     async (args) => {
       const { attachment, images, document, article, warnings } = await preparePost(args);
       return {
-        characters: args.text.length,
+        characters: characters(args.text),
         visibility: args.visibility,
         attachment,
         images: images?.length,
@@ -715,7 +754,11 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           content = { article: { source: url, title, description, thumbnail: thumbnailUrn } };
           preview = { title, description, thumbnail: thumbnailUrn !== undefined };
         }
-        const urn = await client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content });
+        const where = author.startsWith('urn:li:organization:') ? "the Page's posts" : 'your recent activity';
+        const urn = await publishing(
+          () => client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content }),
+          (reason) => `${reason} The post may have been published anyway: look for it among ${where} on LinkedIn before trying again, so it is not published twice.`,
+        );
         return { postUrn: urn, linkPreview: preview };
       });
       const url = postUrl(postUrn);
@@ -767,7 +810,8 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     {
       title: 'Edit a LinkedIn post',
       description: `Replaces the text of a post the signed-in member (or their Page) authored; attachments stay as they are. ${findPost} Only call this after the user has approved the new text.`,
-      inputSchema: z.object({
+      // Strict, like the tools that publish: a visibility or attachment passed here would be dropped silently.
+      inputSchema: z.strictObject({
         post: ownPostField,
         text: limitedText(MAX_POST_CHARACTERS, 'post text').describe(`The complete new post text, max ${MAX_POST_CHARACTERS} characters. Plain text only.`),
       }),
@@ -878,7 +922,12 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       },
       async (args, connect) => {
         const { client, target, actor, act } = await engage(connect, args, 'comment on');
-        const commentId = await act(() => client.createComment(target, actor, escapeLittleText(args.text)));
+        const commentId = await act(() =>
+          publishing(
+            () => client.createComment(target, actor, escapeLittleText(args.text)),
+            (reason) => `${reason} The comment may have been posted anyway: look for it on ${postUrl(target)} before trying again, so it is not posted twice.`,
+          ),
+        );
         return { postUrn: target, url: postUrl(target), actor, commentId };
       },
     );

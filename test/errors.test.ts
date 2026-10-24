@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { REAUTH_HINT } from '../src/auth/local-auth.js';
-import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UserInputError } from '../src/errors.js';
+import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UnconfirmedError, UserInputError } from '../src/errors.js';
 import { describeError, errorKind, errorResult } from '../src/mcp/errors.js';
 import { FetchError } from '../src/net/safe-fetch.js';
 
@@ -19,6 +19,7 @@ describe('describeError', () => {
       new UserInputError('Text is too long.'),
       new ConfigError('Missing LINKEDIN_CLIENT_ID.'),
       new FetchError('The image URL points to a private address.'),
+      new UnconfirmedError('LinkedIn did not answer in time. The post may have been published anyway.'),
     ]) {
       expect(describeError(error, 'local')).toBe(error.message);
     }
@@ -97,6 +98,14 @@ describe('errorKind', () => {
     expect(errorKind(offline)).toBe('TypeError: fetch failed (ENOTFOUND)');
     expect(errorKind(new TypeError('fetch failed'))).toBe('TypeError: fetch failed');
   });
+
+  it('names what LinkedIn answered when it may have published something anyway', () => {
+    const gateway = new LinkedInApiError(504, 'Gateway Timeout', { code: 'GATEWAY_TIMEOUT' });
+    expect(errorKind(new UnconfirmedError('The post "Our Q3 results" may have been published.', { cause: gateway }))).toBe(
+      'UnconfirmedError: LinkedInApiError: HTTP 504 GATEWAY_TIMEOUT',
+    );
+    expect(errorKind(new UnconfirmedError('x', { cause: new DOMException('timed out', 'TimeoutError') }))).toBe('UnconfirmedError: TimeoutError');
+  });
 });
 
 describe('errorResult', () => {
@@ -118,5 +127,7 @@ describe('error classes', () => {
     expect(new NotAuthenticatedError('x').name).toBe('NotAuthenticatedError');
     expect(new UserInputError('x').name).toBe('UserInputError');
     expect(new ConfigError('x').name).toBe('ConfigError');
+    const cause = new Error('timed out');
+    expect(new UnconfirmedError('x', { cause })).toMatchObject({ name: 'UnconfirmedError', cause });
   });
 });

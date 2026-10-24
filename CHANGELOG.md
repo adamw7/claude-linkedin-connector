@@ -29,6 +29,20 @@ All notable changes to this project are documented here. The format follows
 - Someone a remote server turns away because they aren't in `LINKEDIN_ALLOWED_MEMBERS` is now told their LinkedIn
   member ID, which linkedin.com shows nowhere, so whoever runs the server can add it. The README and deployment
   guide now say that a listed email only matches an account's primary email, once LinkedIn has verified it.
+- When LinkedIn didn't answer a request to publish a post or a comment in time, the connection to it broke, or it
+  failed with HTTP 500, 502 or 504, the connector said to try again, although LinkedIn may have published it, and
+  `linkedin_list_posts` didn't list it: trying again could publish it twice. It now says that the post or comment may
+  have been published, and where to look for it before trying again.
+- A post with emoji got contradictory lengths: the 3,000-character limit counted an emoji as one character, but the
+  message saying how long a post was and how much to cut, and the character count of `linkedin_preview_post`,
+  counted it as two. All of them now count an emoji as one character.
+- An empty link preview title or description, or an empty document title, was published as is, while checking the
+  post said the card would be titled with the site's name. A blank title, description, preview image or alt text now
+  counts as not given, so the page's own title or the file's name is used.
+- A document linked from a cloud drive, such as a Google Drive or Dropbox download link, was titled after the end
+  of the link ("download", "file") on LinkedIn. It is now titled after the file name the download gives.
+- `linkedin_edit_post` ignored arguments it doesn't take, such as a visibility, and reported the post as updated.
+  It now refuses them, as the tools that publish do: LinkedIn only lets apps change a post's text.
 
 ## [0.4.0] - 2026-10-22
 

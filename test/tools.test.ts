@@ -154,7 +154,15 @@ beforeAll(async () => {
     } else if (req.url === '/card.webp') res.end(Buffer.from('RIFF\x24\0\0\0WEBPVP8 '));
     else if (req.url === '/card.png') res.end(PNG);
     else if (req.url === '/talk.pdf') res.end(PDF);
-    else if (req.url === '/Connections.csv') res.end(CONNECTIONS_CSV);
+    else if (req.url?.startsWith('/download?') || req.url === '/file' || req.url === '/path-in-name') {
+      // As cloud drives' download links name the file, which their URLs don't.
+      const disposition = {
+        '/file': 'attachment; filename="Board deck.pdf"',
+        '/path-in-name': 'attachment; filename="..\\\\..\\\\Windows\\\\deck.pdf"',
+      }[req.url];
+      res.setHeader('Content-Disposition', disposition ?? `attachment; filename="Q3 results.pdf"; filename*=UTF-8''Q3%20results%20%E2%80%93%20final.pdf`);
+      res.end(PDF);
+    } else if (req.url === '/Connections.csv') res.end(CONNECTIONS_CSV);
     else res.writeHead(404).end();
   });
 });
@@ -658,6 +666,67 @@ describe('linkedin_create_post', () => {
     });
   });
 
+  it('says a post may have been published when LinkedIn failed without saying, rather than to try again', async () => {
+    const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
+    let failure: () => Response = () => Response.json({ message: 'Gateway Timeout' }, { status: 504 });
+    h.linkedin.override((r) => (r.method === 'POST' && r.url.pathname === '/rest/posts' ? failure() : undefined));
+    const check = 'The post may have been published anyway: look for it among your recent activity on LinkedIn before trying again, so it is not published twice.';
+    expect(await call(h, 'linkedin_create_post', { text: 'My news' })).toEqual({
+      isError: true,
+      data: undefined,
+      text: `LinkedIn had an internal problem (HTTP 504): Gateway Timeout. ${check}`,
+    });
+    failure = () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    };
+    expect((await call(h, 'linkedin_create_post', { text: 'My news' })).text).toBe(`LinkedIn did not answer in time. ${check}`);
+    failure = () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) });
+    };
+    expect((await call(h, 'linkedin_create_post', { text: 'My news' })).text).toBe(`The connection to LinkedIn broke (UND_ERR_SOCKET). ${check}`);
+    expect((await call(h, 'linkedin_create_post', { text: 'Company news', organization: '2414183' })).text).toBe(
+      "The connection to LinkedIn broke (UND_ERR_SOCKET). The post may have been published anyway: look for it among the Page's posts on LinkedIn before trying again, so it is not published twice.",
+    );
+    // A request that never reached LinkedIn, or that it turned away, can be sent again.
+    failure = () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.linkedin.com'), { code: 'ENOTFOUND' }) });
+    };
+    expect((await call(h, 'linkedin_create_post', { text: 'My news' })).text).toBe(
+      'Could not reach LinkedIn (ENOTFOUND). Check the internet connection and try again.',
+    );
+    failure = () => Response.json({ message: 'Unavailable' }, { status: 503 });
+    expect((await call(h, 'linkedin_create_post', { text: 'My news' })).text).toBe('LinkedIn had an internal problem (HTTP 503): Unavailable. Try again in a moment.');
+    // Nothing is published before the post itself.
+    h.linkedin.override((r) => {
+      if (r.method === 'POST' && r.url.pathname === '/rest/images') throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    expect((await call(h, 'linkedin_create_post', { text: 'Pic', images: [{ source: join(files, 'photo.png') }] })).text).toBe(
+      'LinkedIn did not respond in time. Try again.',
+    );
+  });
+
+  const unconfirmed = 'The post may have been published anyway: look for it among your recent activity on LinkedIn before trying again, so it is not published twice.';
+  const network = (code?: string) => new TypeError('fetch failed', code ? { cause: Object.assign(new Error(code), { code }) } : undefined);
+  it.each<[string, () => Response, string]>([
+    ['a 502', () => Response.json({ message: 'Bad Gateway' }, { status: 502 }), `LinkedIn had an internal problem (HTTP 502): Bad Gateway. ${unconfirmed}`],
+    ['an abort', () => { throw new DOMException('aborted', 'AbortError'); }, `LinkedIn did not answer in time. ${unconfirmed}`],
+    ['a network failure without a code', () => { throw network(); }, `The connection to LinkedIn broke. ${unconfirmed}`],
+    ['ECONNRESET', () => { throw network('ECONNRESET'); }, `The connection to LinkedIn broke (ECONNRESET). ${unconfirmed}`],
+    ['EAI_AGAIN', () => { throw network('EAI_AGAIN'); }, 'Could not reach LinkedIn (EAI_AGAIN). Check the internet connection and try again.'],
+    ['ECONNREFUSED', () => { throw network('ECONNREFUSED'); }, 'Could not reach LinkedIn (ECONNREFUSED). Check the internet connection and try again.'],
+    ['EHOSTUNREACH', () => { throw network('EHOSTUNREACH'); }, 'Could not reach LinkedIn (EHOSTUNREACH). Check the internet connection and try again.'],
+    ['ENETUNREACH', () => { throw network('ENETUNREACH'); }, 'Could not reach LinkedIn (ENETUNREACH). Check the internet connection and try again.'],
+    ['UND_ERR_CONNECT_TIMEOUT', () => { throw network('UND_ERR_CONNECT_TIMEOUT'); }, 'Could not reach LinkedIn (UND_ERR_CONNECT_TIMEOUT). Check the internet connection and try again.'],
+    ['a 429', () => Response.json({ message: 'Slow down' }, { status: 429 }), "LinkedIn's rate limit was reached. Try again later."],
+    ['a 422', () => Response.json({ message: 'Bad field' }, { status: 422 }), 'LinkedIn rejected the request (HTTP 422): Bad field.'],
+    ['a bug', () => { throw new TypeError("Cannot read properties of undefined (reading 'id')"); }, "Unexpected error: Cannot read properties of undefined (reading 'id')"],
+    ['an unknown error', () => { throw new Error('boom'); }, 'Unexpected error: boom'],
+  ])('after %s, says whether the post may have been published', async (_name, failure, text) => {
+    const h = await harness();
+    h.linkedin.override((r) => (r.method === 'POST' && r.url.pathname === '/rest/posts' ? failure() : undefined));
+    expect(await call(h, 'linkedin_create_post', { text: 'My news' })).toEqual({ isError: true, data: undefined, text });
+  });
+
   it("explains that only a Page's admins can post as it, since signing in again won't help", async () => {
     const h = await harness({ scopes: [...DEFAULT_SCOPES, 'w_organization_social'] });
     h.linkedin.override((r) =>
@@ -839,6 +908,28 @@ describe('linkedin_preview_post', () => {
     expect((await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:1', text: 'x'.repeat(1250) })).isError).toBe(false);
   });
 
+  it('counts an emoji as one character, as the limit does', async () => {
+    const h = await harness();
+    // 3001 characters, but 3011 UTF-16 units: an emoji is two of those.
+    const text = `${'x'.repeat(2990)}${'🚀'.repeat(11)}`;
+    expect((await call(h, 'linkedin_create_post', { text })).text).toBe(
+      'Input validation error: Invalid arguments for tool linkedin_create_post: text: The post text is 3001 characters long; LinkedIn allows 3000. Shorten it by at least 1 character.',
+    );
+    expect((await call(h, 'linkedin_preview_post', { text: '🚀'.repeat(3000) })).data).toMatchObject({ characters: 3000 });
+    expect((await call(h, 'linkedin_preview_post', { text: 'Launch 🚀' })).data).toMatchObject({ characters: 8 });
+  });
+
+  it('treats a blank title, description, thumbnail or alt text as not given', async () => {
+    const h = await harness();
+    const article = await call(h, 'linkedin_preview_post', { text: 'Read', article: { url: `${web.url}/article`, title: '', description: ' ', thumbnail: '' } });
+    expect(article.data).toMatchObject({ linkPreview: { title: 'Engines & Ideas', description: 'A note.', thumbnail: true }, warnings: [] });
+    await call(h, 'linkedin_create_post', { text: 'Slides', document: { source: `${web.url}/talk.pdf`, title: '' } });
+    await call(h, 'linkedin_create_post', { text: 'Pic', images: [{ source: join(files, 'photo.png'), altText: '  ' }] });
+    const [slides, pic] = h.linkedin.find('POST', '/rest/posts').map((r) => r.json as { content: { media: Record<string, unknown> } });
+    expect(slides!.content.media.title).toBe('talk');
+    expect(pic!.content.media).not.toHaveProperty('altText');
+  });
+
   it('checks images and documents, and reports problems before anything is approved', async () => {
     const h = await harness();
     const images = await call(h, 'linkedin_preview_post', {
@@ -893,6 +984,16 @@ describe('linkedin_preview_post', () => {
   ])('titles a document named %s "%s"', async (name, title) => {
     const h = await harness();
     const { data } = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `${web.url}/docs/${name}` } });
+    expect(data!.document).toEqual({ title });
+  });
+
+  it.each([
+    ['/download?id=7', 'Q3 results – final'],
+    ['/file', 'Board deck'],
+    ['/path-in-name', 'deck'],
+  ])('titles a document from %s by the file name its server gives, "%s"', async (path, title) => {
+    const h = await harness();
+    const { data } = await call(h, 'linkedin_preview_post', { text: 'Deck', document: { source: `${web.url}${path}` } });
     expect(data!.document).toEqual({ title });
   });
 
@@ -1076,6 +1177,18 @@ describe('linkedin_edit_post', () => {
     expect(result.data).toEqual({ updated: true, postUrn: 'urn:li:share:42', url: 'https://www.linkedin.com/feed/update/urn:li:share:42/' });
     expect(h.linkedin.find('POST', '/rest/posts/')[0]!.json).toEqual({ patch: { $set: { commentary: 'Now with \\(fixed\\) typos' } } });
   });
+
+  it('refuses arguments it does not know, rather than report a change it dropped', async () => {
+    const h = await harness();
+    const edit = (await h.client.listTools()).tools.find((t) => t.name === 'linkedin_edit_post')!;
+    expect(edit.inputSchema.additionalProperties).toBe(false);
+    expect(await call(h, 'linkedin_edit_post', { post: 'urn:li:share:42', text: 'For my network only', visibility: 'CONNECTIONS' })).toEqual({
+      isError: true,
+      data: undefined,
+      text: 'Input validation error: Invalid arguments for tool linkedin_edit_post: Unrecognized key: "visibility"',
+    });
+    expect(h.linkedin.requests).toHaveLength(0);
+  });
 });
 
 describe('editing and deleting errors', () => {
@@ -1156,6 +1269,22 @@ describe('engagement tools', () => {
       commentId: 'urn:li:comment:(urn:li:activity:1,1)',
     });
     expect(h.linkedin.find('POST', '/rest/socialActions/')[0]!.json).toMatchObject({ message: { text: 'Congrats \\(well deserved\\)' } });
+  });
+
+  it('says a comment may have been posted when LinkedIn failed without saying, rather than to try again', async () => {
+    const h = await harness({ scopes });
+    h.linkedin.override((r) => (r.method === 'POST' ? Response.json({ message: 'Internal error' }, { status: 500 }) : undefined));
+    expect(await call(h, 'linkedin_comment_on_post', { post: 'urn:li:share:9', text: 'Congrats' })).toEqual({
+      isError: true,
+      data: undefined,
+      text:
+        'LinkedIn had an internal problem (HTTP 500): Internal error. The comment may have been posted anyway: ' +
+        'look for it on https://www.linkedin.com/feed/update/urn:li:share:9/ before trying again, so it is not posted twice.',
+    });
+    // A reaction can be added again.
+    expect((await call(h, 'linkedin_react_to_post', { post: 'urn:li:share:9' })).text).toBe(
+      'LinkedIn had an internal problem (HTTP 500): Internal error. Try again in a moment.',
+    );
   });
 
   it('maps friendly reaction names to API values', async () => {

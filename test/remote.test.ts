@@ -341,6 +341,11 @@ describe('remote connector end to end', () => {
       arguments: { text: 'Hello with a picture', images: [{ source: 'http://127.0.0.1:1/photo.png?X-Amz-Signature=signed-url-secret' }] },
     });
     expect(failed.isError).toBe(true);
+    // A post LinkedIn may have published anyway is logged with what LinkedIn answered.
+    remote.linkedin.override((r) =>
+      r.method === 'POST' && r.url.pathname === '/rest/posts' ? Response.json({ message: 'Gateway Timeout' }, { status: 504 }) : undefined,
+    );
+    expect((await client.callTool({ name: 'linkedin_create_post', arguments: { text: 'Hello once more' } })).isError).toBe(true);
     await client.close();
 
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'member_authorized', member: 'abc123' }));
@@ -350,6 +355,9 @@ describe('remote connector end to end', () => {
     expect(remote.logs).toContainEqual(
       expect.objectContaining({ level: 'warn', event: 'tool_call', tool: 'linkedin_create_post', ok: false, member: 'abc123', error: 'FetchError' }),
     );
+    expect(remote.logs).toContainEqual(
+      expect.objectContaining({ event: 'tool_call', tool: 'linkedin_create_post', ok: false, error: 'UnconfirmedError: LinkedInApiError: HTTP 504' }),
+    );
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'GET', path: '/oauth/callback', status: 302 }));
     // Each tool call can be matched with the request that carried it.
     const call = remote.logs.find((entry) => entry.event === 'tool_call' && entry.tool === 'linkedin_create_post')!;
@@ -357,7 +365,7 @@ describe('remote connector end to end', () => {
     expect(remote.logs).toContainEqual(expect.objectContaining({ event: 'http_request', method: 'POST', path: '/mcp', requestId: call.requestId }));
     // Neither tokens, codes nor post text reach the logs.
     const logged = JSON.stringify(remote.logs);
-    for (const secret of ['li-token', 'li-code', provider.saved!.access_token, 'Hello from Claude', 'Hello with a picture', 'signed-url-secret']) {
+    for (const secret of ['li-token', 'li-code', provider.saved!.access_token, 'Hello from Claude', 'Hello with a picture', 'Hello once more', 'signed-url-secret']) {
       expect(logged).not.toContain(secret);
     }
   });
