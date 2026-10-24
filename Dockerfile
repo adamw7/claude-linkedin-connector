@@ -1,5 +1,5 @@
 # Remote (HTTP) connector for claude.ai custom connectors. See docs/deployment.md.
-# The base image is pinned by digest for reproducible builds; Renovate keeps it current.
+# The base image is pinned by digest for reproducible builds; Dependabot keeps it current.
 
 # The output is plain JavaScript (no native modules), so it is built once on the build machine's own platform,
 # also when the image is for another architecture.

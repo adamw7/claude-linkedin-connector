@@ -1,0 +1,27 @@
+name: Audit
+
+# Fails when a dependency that ships (in the npm package, the .mcpb or the Docker image) has a known high or critical
+# vulnerability. Development tools are left out (--omit=dev): none of them ships. It also runs every day, so an
+# advisory published after the last push turns it red without anyone pushing. npm audit reads package-lock.json,
+# so nothing is installed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm audit --omit=dev --audit-level=high

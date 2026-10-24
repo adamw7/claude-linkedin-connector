@@ -75,7 +75,8 @@ Behind a proxy, set `NODE_USE_ENV_PROXY=1`: Node doesn't use `HTTPS_PROXY` other
 2. Move the `Unreleased` notes in [`CHANGELOG.md`](../CHANGELOG.md) under a `## [<version>] - <date>` heading.
 3. Merge to `main`, then tag and push: `git tag v<version> && git push origin v<version>`.
 
-The `Release` workflow checks the tag against the version, runs the tests, builds the `.mcpb` and publishes
+The `Release` workflow checks the tag against the version, checks the dependencies that ship for known
+vulnerabilities (as the `Audit` workflow does, below), runs the tests, builds the `.mcpb` and publishes
 a GitHub release with it attached and the changelog entry as notes. It then smoke tests the Docker image
 (`scripts/smoke-test-image.sh`, which CI also runs) and pushes it for amd64 and arm64 to
 `ghcr.io/adamw7/claude-linkedin-connector` as `<version>`, `<major.minor>` and `latest`. After the first push,
@@ -92,5 +93,18 @@ the version it published from the registry, checks that `--version` and `--help`
 (and `npm deprecate claude-linkedin-connector@<version> "<reason>"` the broken one) rather than re-running the
 job.
 
-Renovate proposes dependency, GitHub Actions and base image updates weekly. Report vulnerabilities as described
-in [`SECURITY.md`](../SECURITY.md).
+## Dependencies
+
+Dependabot proposes npm and base image updates weekly, and Renovate GitHub Actions updates. Renovate is meant to
+propose all three, but so far detects only GitHub Actions
+([#43](https://github.com/adamw7/claude-linkedin-connector/issues/43)); once it detects the rest, delete
+`.github/dependabot.yml`.
+
+The `Audit` workflow runs `npm audit --omit=dev --audit-level=high`, which fails when a dependency that ships in the
+npm package, the `.mcpb` or the Docker image has a known high or critical vulnerability. It runs on every push to
+`main` and pull request, and every day, so an advisory published since the last push shows up without one. A failure
+usually needs only a lockfile update (`npm audit fix`); then release a new version so the npm package and
+the image carry the fix. Development tools are left out: none of them ships, and their advisories wait for their
+own releases.
+
+Report vulnerabilities as described in [`SECURITY.md`](../SECURITY.md).
