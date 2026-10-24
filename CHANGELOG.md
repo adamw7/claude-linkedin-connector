@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A remote server turned away browser-based MCP clients, such as the MCP Inspector, when they signed in with a
+  client secret: the browser checks first whether it may send the secret to `/token`, and the server didn't answer
+  that check, so the browser never sent the request and connecting failed after LinkedIn's sign-in.
+- A link preview title longer than 200 characters, or description longer than 300, could be cut in the middle of
+  an emoji, which then showed as � at the end of the card on LinkedIn. It is now shortened by whole characters.
+
 ## [0.4.0] - 2026-10-24
 
 ### Changed

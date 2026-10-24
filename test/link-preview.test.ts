@@ -22,6 +22,14 @@ describe('parseLinkPreview', () => {
     expect(parseLinkPreview(html, 'https://example.com/')).toEqual({ title: 'Plain page', description: 'About us' });
   });
 
+  it('shortens long titles and descriptions by whole characters, so an emoji is never cut in half', () => {
+    const html = `<title>${'a'.repeat(198)}🚀🚀 launch</title><meta name="description" content="${'🚀'.repeat(300)}">`;
+    expect(parseLinkPreview(html, 'https://example.com/')).toEqual({ title: `${'a'.repeat(198)}🚀…`, description: '🚀'.repeat(300) });
+    expect(parseLinkPreview(`<meta name="description" content="${'🚀'.repeat(301)}">`, 'https://example.com/')).toEqual({
+      description: `${'🚀'.repeat(299)}…`,
+    });
+  });
+
   it('parses hostile pages in linear time', () => {
     const megabyte = 1024 * 1024;
     const start = performance.now();
