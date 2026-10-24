@@ -17,6 +17,7 @@ npm run test:mutation  # Stryker; slow, CI runs it incrementally
 npm run pack:mcpb    # bundle the Claude Desktop extension
 docker build -t connector . && scripts/smoke-test-image.sh connector  # the remote image; CI runs both
 node scripts/smoke-test-package.mjs  # packs, installs and runs the npm package; CI runs it
+npm audit --omit=dev --audit-level=high  # known vulnerabilities in what ships; the Audit workflow runs it daily, Release before publishing
 node scripts/live-test.mjs  # dist/ against the real LinkedIn API; read-only without options, as CI runs it weekly; options by hand (see docs/development.md)
 ```
 

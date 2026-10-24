@@ -1,0 +1,26 @@
+# Weekly npm and base image updates. Renovate (.github/renovate.json) only detects GitHub Actions so far (#43), so it
+# keeps proposing those and Dependabot the rest. Once Renovate detects package.json and the Dockerfile too, delete
+# this file, or the two open the same PRs.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Types follow the Node.js version in engines, not the newest Node.js.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+
+  # Keeps the digest-pinned base image in the Dockerfile current with security fixes.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Move to the next Node.js LTS on purpose, together with engines and CI.
+      - dependency-name: node
+        update-types: [version-update:semver-major]

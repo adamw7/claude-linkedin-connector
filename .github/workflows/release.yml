@@ -24,6 +24,8 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
             exit 1
           fi
+      # As the Audit workflow does, so no release ships a dependency with a known high or critical vulnerability.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run check
         timeout-minutes: 10
       - name: Build the Claude Desktop extension

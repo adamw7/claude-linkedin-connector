@@ -79,9 +79,11 @@ const jsonErrors = (logger: Logger): ErrorRequestHandler => (error: { status?: n
         : 'The request body is too large.'
       : error.type === 'entity.parse.failed'
         ? 'The request body is not valid JSON.'
-        : status < 500
-          ? 'The request could not be processed.'
-          : 'Internal server error.';
+        : error.type === 'encoding.unsupported'
+          ? 'This Content-Encoding is not supported here. Send the request body uncompressed.'
+          : status < 500
+            ? 'The request could not be processed.'
+            : 'Internal server error.';
   sendJsonError(req, res, status, message);
 };
 
@@ -138,7 +140,9 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   app.use(
     OAUTH_PATHS,
     rateLimit({ limit: config.oauthRateLimit, key: (req) => (req.method === 'OPTIONS' ? undefined : req.ip), reject: tooMany }),
-    express.json({ limit: MAX_OAUTH_BODY }),
+    // OAuth clients don't compress these small bodies. Refusing compressed ones keeps decompression, and its bugs
+    // (such as GHSA-27r3-jxmh-p828), out of reach of anyone who hasn't signed in.
+    express.json({ limit: MAX_OAUTH_BODY, inflate: false }),
   );
   app.use(oauth.router);
 
