@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format follows
 - A link preview title longer than 200 characters, or description longer than 300, could be cut in the middle of
   an emoji, which then showed as � at the end of the card on LinkedIn. It is now shortened by whole characters.
 
+### Security
+
+- The Docker image now runs Node.js 24.22.1, a security release with fixes to TLS certificate checks, HTTP, DNS and
+  brotli decompression, and newer OpenSSL and root certificates. The image had Node.js 24.22.0.
+
 ## [0.4.0] - 2026-10-24
 
 ### Changed
