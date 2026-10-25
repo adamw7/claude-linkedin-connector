@@ -121,17 +121,13 @@ export function parseConnections(data: Buffer | string): Connection[] {
   }
   const header = rows[headerIndex]!.map(normalize);
   const column = (names: string[]) => header.findIndex((cell) => names.includes(cell));
-  const indexes = Object.fromEntries(Object.entries(COLUMNS).map(([key, names]) => [key, column(names)])) as Record<
-    keyof typeof COLUMNS,
-    number
-  >;
+  type Column = keyof typeof COLUMNS;
+  const indexes = Object.fromEntries(Object.entries(COLUMNS).map(([key, names]) => [key, column(names)])) as Record<Column, number>;
 
   const connections: Connection[] = [];
   for (const row of rows.slice(headerIndex + 1)) {
-    const get = (key: keyof typeof COLUMNS) => {
-      const value = indexes[key] >= 0 ? row[indexes[key]]?.trim() : undefined;
-      return value || undefined;
-    };
+    // A missing column's index is -1, which no row has.
+    const get = (key: Column) => row[indexes[key]]?.trim() || undefined;
     const firstName = get('firstName') ?? '';
     const lastName = get('lastName') ?? '';
     const profileUrl = get('profileUrl');

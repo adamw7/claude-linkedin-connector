@@ -1,4 +1,5 @@
 import { LinkedInApiError } from '../errors.js';
+import { parseJson } from '../json.js';
 import { USER_AGENT } from '../version.js';
 import type { ApiVersion } from './versions.js';
 
@@ -176,12 +177,8 @@ export class LinkedInClient {
   private async check(response: Response): Promise<Response> {
     if (response.ok) return response;
     const text = await response.text().catch(() => '');
-    let parsed: { message?: unknown; code?: unknown; serviceErrorCode?: unknown } = {};
-    try {
-      parsed = JSON.parse(text) as typeof parsed;
-    } catch {
-      // Non-JSON error body; fall back to the raw text.
-    }
+    // A non-JSON error body falls back to the raw text.
+    const parsed = (parseJson(text) ?? {}) as { message?: unknown; code?: unknown; serviceErrorCode?: unknown };
     const message =
       (typeof parsed.message === 'string' && parsed.message) ||
       text.slice(0, 500) ||

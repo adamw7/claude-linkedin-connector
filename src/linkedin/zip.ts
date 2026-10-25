@@ -3,7 +3,7 @@ import { UserInputError } from '../errors.js';
 
 const LOCAL_HEADER = 0x04034b50;
 const CENTRAL_HEADER = 0x02014b50;
-const END_OF_CENTRAL_DIRECTORY = 0x06054b50;
+const END_OF_CENTRAL_DIRECTORY = Buffer.from('PK\x05\x06');
 /** Sizes and offsets this large mean the real value is in a ZIP64 record, which LinkedIn's small exports never need. */
 const ZIP64_MARKER = 0xffffffff;
 
@@ -19,14 +19,8 @@ export function isZip(data: Buffer): boolean {
 export function extractZipEntry(data: Buffer, matches: (path: string) => boolean, maxBytes: number): Buffer | undefined {
   const corrupt = () => new UserInputError('This zip archive is damaged or incomplete. Download it from LinkedIn again.');
   // The end-of-central-directory record is the last 22 bytes, followed by a comment of up to 65535 bytes.
-  let end = -1;
-  for (let at = data.length - 22; at >= Math.max(0, data.length - 22 - 0xffff); at -= 1) {
-    if (data.readUInt32LE(at) === END_OF_CENTRAL_DIRECTORY) {
-      end = at;
-      break;
-    }
-  }
-  if (end < 0) throw corrupt();
+  const end = data.length < 22 ? -1 : data.lastIndexOf(END_OF_CENTRAL_DIRECTORY, data.length - 22);
+  if (end < Math.max(0, data.length - 22 - 0xffff)) throw corrupt();
   const entries = data.readUInt16LE(end + 10);
   let at = data.readUInt32LE(end + 16);
 

@@ -67,10 +67,7 @@ function sendJsonError(req: Request, res: Response, status: number, message: str
 const jsonErrors = (logger: Logger): ErrorRequestHandler => (error: { status?: number; type?: string }, req, res, next) => {
   const status = typeof error.status === 'number' && error.status >= 400 && error.status < 600 ? error.status : 500;
   if (status >= 500) logger('error', 'unhandled_error', { method: req.method, path: pathOf(req), requestId: req.get('x-request-id'), error });
-  if (res.headersSent) {
-    next(error);
-    return;
-  }
+  if (res.headersSent) return next(error);
   const message =
     error.type === 'entity.too.large'
       ? pathOf(req) === '/mcp'

@@ -127,21 +127,17 @@ export class LocalAuth implements LinkedInAuth {
   }
 
   async status(): Promise<AuthStatus> {
-    if (this.config.accessToken) {
-      return {
-        authenticated: true,
-        source: 'environment',
-        scopes: this.config.scopes,
-        ...statusMember(this.envMember),
-        message: 'Using the access token from LINKEDIN_ACCESS_TOKEN.',
-      };
-    }
     let session: LinkedInSession;
     try {
       session = await this.getSession();
     } catch (error) {
       if (!(error instanceof NotAuthenticatedError)) throw error;
       return { authenticated: false, source: 'none', scopes: [], message: error.message };
+    }
+    const member = session.memberId ? { memberUrn: personUrn(session.memberId), name: session.name, email: session.email } : {};
+    if (this.config.accessToken) {
+      const message = 'Using the access token from LINKEDIN_ACCESS_TOKEN.';
+      return { authenticated: true, source: 'environment', scopes: session.scopes, ...member, message };
     }
     const expires = session.expiresAt === undefined ? '' : ` until ${new Date(session.expiresAt).toISOString().slice(0, 10)}`;
     // Scopes added to LINKEDIN_SCOPES after signing in (e.g. for comments) need a new sign-in to take effect.
@@ -156,7 +152,7 @@ export class LocalAuth implements LinkedInAuth {
       scopes: session.scopes,
       ...(missingScopes.length > 0 ? { missingScopes } : {}),
       expiresAt: session.expiresAt === undefined ? undefined : new Date(session.expiresAt).toISOString(),
-      ...statusMember(session.memberId ? { id: session.memberId, name: session.name, email: session.email } : undefined),
+      ...member,
       message: `Signed in${session.name ? ` as ${session.name}` : ''}${expires} (token stored in ${this.store.path}).${missing}`,
     };
   }
@@ -229,12 +225,7 @@ export class LocalAuth implements LinkedInAuth {
   }
 }
 
-function toStoredToken(
-  tokens: LinkedInTokens,
-  member?: MemberInfo,
-  previousRefreshToken?: string,
-  previousRefreshExpiry?: number,
-): StoredToken {
+function toStoredToken(tokens: LinkedInTokens, member?: MemberInfo, previousRefreshToken?: string, previousRefreshExpiry?: number): StoredToken {
   return {
     version: 1,
     accessToken: tokens.accessToken,
@@ -248,8 +239,4 @@ function toStoredToken(
 
 function memberFields(member: MemberInfo | undefined): Partial<LinkedInSession> {
   return member ? { memberId: member.id, name: member.name, email: member.email } : {};
-}
-
-function statusMember(member: MemberInfo | undefined): Partial<AuthStatus> {
-  return member ? { memberUrn: personUrn(member.id), name: member.name, email: member.email } : {};
 }

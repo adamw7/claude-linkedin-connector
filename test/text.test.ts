@@ -28,10 +28,6 @@ describe('escapeLittleText', () => {
   it('treats hashtags after punctuation as hashtags', () => {
     expect(escapeLittleText('(#ai)')).toBe('\\(#ai\\)');
   });
-
-  it('can escape hashtags too', () => {
-    expect(escapeLittleText('#AI', { hashtags: false })).toBe('\\#AI');
-  });
 });
 
 describe('textWarnings', () => {

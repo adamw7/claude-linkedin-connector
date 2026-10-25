@@ -1,4 +1,5 @@
 import { LinkedInOAuthError, sentence } from '../errors.js';
+import { parseJson } from '../json.js';
 import { USER_AGENT } from '../version.js';
 
 export const LINKEDIN_OAUTH_BASE = 'https://www.linkedin.com';
@@ -62,12 +63,7 @@ async function requestToken(app: LinkedInOAuthApp, params: Record<string, string
     signal: AbortSignal.timeout(30_000),
   });
   const text = await response.text();
-  let json: Record<string, unknown> = {};
-  try {
-    json = JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    // Handled below.
-  }
+  const json = (parseJson(text) ?? {}) as Record<string, unknown>;
   if (!response.ok || typeof json.access_token !== 'string') {
     const error = typeof json.error === 'string' ? json.error : `http_${response.status}`;
     const description = typeof json.error_description === 'string' ? json.error_description : text.slice(0, 300) || undefined;

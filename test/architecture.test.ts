@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 // Architecture rules for src/, checked with ArchUnitTS. The intended layering, bottom to top:
 //
-//   errors, version, html, paths — leaf modules, no project imports
+//   errors, version, html, paths, json — leaf modules, no project imports
 //   net                          — outbound HTTP, no LinkedIn or MCP knowledge
 //   linkedin                     — LinkedIn API and OAuth client
 //   auth, config                 — local sign-in and token storage, configuration
@@ -32,7 +32,7 @@ describe('architecture', () => {
     await expect(projectFiles().inFolder('src/**').should().haveNoCycles()).toPassAsync();
   }, 60_000);
 
-  it.each(['errors.ts', 'version.ts', 'html.ts', 'paths.ts'])('keeps src/%s free of project imports', async (leaf) => {
+  it.each(['errors.ts', 'version.ts', 'html.ts', 'paths.ts', 'json.ts'])('keeps src/%s free of project imports', async (leaf) => {
     await expect(projectFiles().inPath(`src/${leaf}`).shouldNot().dependOnFiles().inPath(srcExcept(leaf))).toPassAsync();
   });
 

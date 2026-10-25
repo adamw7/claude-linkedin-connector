@@ -35,24 +35,21 @@ const DOCUMENT_TYPES = 'PDF, DOC, DOCX, PPT or PPTX';
 
 /** Identifies the image formats LinkedIn accepts from their magic bytes. */
 export function sniffImage(data: Uint8Array): string | undefined {
-  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
-  if (data.length >= 8 && Buffer.from(data.subarray(0, 8)).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return 'image/png';
-  }
-  const head = Buffer.from(data.subarray(0, 6)).toString('latin1');
-  if (head === 'GIF87a' || head === 'GIF89a') return 'image/gif';
+  const head = Buffer.from(data.subarray(0, 8)).toString('latin1');
+  if (head.startsWith('\xff\xd8\xff')) return 'image/jpeg';
+  if (head === '\x89PNG\r\n\x1a\n') return 'image/png';
+  if (head.startsWith('GIF87a') || head.startsWith('GIF89a')) return 'image/gif';
   return undefined;
 }
 
 /** Identifies the document formats LinkedIn accepts from their content. */
 export function sniffDocument(data: Uint8Array): string | undefined {
   const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
-  if (buffer.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) {
-    // Legacy binary Office (DOC/PPT); LinkedIn determines which on its side.
-    return 'application/x-ole-storage';
-  }
-  if (buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) && buffer.includes('[Content_Types].xml')) {
+  const head = buffer.subarray(0, 8).toString('latin1');
+  if (head.startsWith('%PDF-')) return 'application/pdf';
+  // Legacy binary Office (DOC/PPT); LinkedIn determines which on its side.
+  if (head === '\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1') return 'application/x-ole-storage';
+  if (head.startsWith('PK\x03\x04') && buffer.includes('[Content_Types].xml')) {
     if (buffer.includes('word/')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     if (buffer.includes('ppt/')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   }
