@@ -68,6 +68,19 @@ the `openid profile email w_member_social` scopes), or sign in with `--login`, w
 
 Behind a proxy, set `NODE_USE_ENV_PROXY=1`: Node doesn't use `HTTPS_PROXY` otherwise.
 
+## Merging
+
+The `Automerge` workflow (`.github/workflows/automerge.yml`) squash-merges a pull request once the latest run of
+`CI` and `Audit` on its head has passed, and of `Setup script` and `Live test` too when their paths changed. It wakes
+whenever one of them finishes and checks them all, so whichever finishes last merges; a push after those runs is never
+merged unchecked. Pull requests from forks, drafts and pull requests labelled `no-automerge` are left to a person.
+
+It merges with the `AUTOMERGE_TOKEN` repository secret when set (a token allowed to merge pull requests and change
+workflows), otherwise with `GITHUB_TOKEN`. That token cannot merge a change to `.github/workflows/`, such as
+Renovate's GitHub Actions updates, so without the secret those wait for a person. A merge made with `GITHUB_TOKEN`
+starts no workflow either, so `Automerge` then dispatches `CI` on `main` itself. The workflow runs `main`'s copy of
+itself, so a change to it applies from the pull request after the one that makes it.
+
 ## Releasing
 
 1. Set the new version in `package.json` (`npm version --no-git-tag-version <version>` also updates
@@ -98,7 +111,7 @@ job.
 Dependabot proposes npm and base image updates weekly, and Renovate GitHub Actions updates. Renovate is meant to
 propose all three, but so far detects only GitHub Actions
 ([#43](https://github.com/adamw7/claude-linkedin-connector/issues/43)); once it detects the rest, delete
-`.github/dependabot.yml`.
+`.github/dependabot.yml`. Their pull requests merge on green like any other (see [Merging](#merging)).
 
 The `Audit` workflow runs `npm audit --omit=dev --audit-level=high`, which fails when a dependency that ships in the
 npm package, the `.mcpb` or the Docker image has a known high or critical vulnerability. It runs on every push to

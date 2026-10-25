@@ -50,6 +50,9 @@ Each layer imports only from layers below it; `test/architecture.test.ts` enforc
 - Tests run against `test/helpers/fake-linkedin.ts` (an in-memory LinkedIn used as `fetch`), never the real API.
   Assert exact request bodies and messages so mutation testing passes.
 - ESM with `.js` import suffixes, `strict` + `noUncheckedIndexedAccess`, `verbatimModuleSyntax` (use `import type`).
+- A non-draft pull request from this repository squash-merges itself once its head is green
+  (`.github/workflows/automerge.yml`, `docs/development.md`); open it as a draft or label it `no-automerge` to keep it
+  open.
 - Every user-visible change gets a `CHANGELOG.md` entry under `## [Unreleased]`, written for users.
   The version lives in `package.json`, `package-lock.json`, `src/version.ts` and `mcpb/manifest.json`; `test/release.test.ts`
   keeps them in sync.

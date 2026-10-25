@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Automerge dispatches it on main after a merge made with GITHUB_TOKEN, which starts no push run.
+  workflow_dispatch:
 
 permissions:
   contents: read
