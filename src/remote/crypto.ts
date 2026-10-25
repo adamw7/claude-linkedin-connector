@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { parseJson } from '../json.js';
 
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -25,14 +26,6 @@ function decrypt(key: Buffer, purpose: string, raw: Buffer): string | undefined 
     decipher.setAAD(Buffer.from(purpose));
     decipher.setAuthTag(raw.subarray(raw.length - TAG_BYTES));
     return Buffer.concat([decipher.update(raw.subarray(IV_BYTES, raw.length - TAG_BYTES)), decipher.final()]).toString('utf8');
-  } catch {
-    return undefined;
-  }
-}
-
-function parse<T>(json: string): T | undefined {
-  try {
-    return JSON.parse(json) as T;
   } catch {
     return undefined;
   }
@@ -67,7 +60,7 @@ export class Sealer {
     if (raw.length <= IV_BYTES + TAG_BYTES) return undefined;
     for (const { encryption } of this.keys) {
       const plaintext = decrypt(encryption, purpose, raw);
-      if (plaintext !== undefined) return parse<T>(plaintext);
+      if (plaintext !== undefined) return parseJson(plaintext) as T | undefined;
     }
     return undefined;
   }
@@ -83,7 +76,7 @@ export class Sealer {
     if (dot <= 0) return undefined;
     const body = token.slice(0, dot);
     if (!this.macMatches(purpose, body, token.slice(dot + 1))) return undefined;
-    return parse<T>(Buffer.from(body, 'base64url').toString('utf8'));
+    return parseJson(Buffer.from(body, 'base64url').toString('utf8')) as T | undefined;
   }
 
   /** The MAC of `value` under the current secret. */

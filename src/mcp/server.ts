@@ -494,10 +494,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         }
         // The newest export that has the connections: one requested for other data, such as messages, lacks them.
         for (const path of exports) {
-          all = await read(path).catch((error: unknown) => {
-            if (error instanceof NoConnectionsCsvError) return undefined;
-            throw error;
-          });
+          all = await read(path).catch((error: unknown) => (error instanceof NoConnectionsCsvError ? undefined : Promise.reject(error)));
           if (all) {
             found = path;
             break;
@@ -981,8 +978,6 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
   );
 
   if (signIn && auth.logout) {
-    const logout = auth.logout.bind(auth);
-
     tool(
       'linkedin_login',
       {
@@ -1030,7 +1025,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       },
       async () => {
-        const removed = await logout();
+        const removed = await auth.logout!();
         return {
           removed,
           message: removed

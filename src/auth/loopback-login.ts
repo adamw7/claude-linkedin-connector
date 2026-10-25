@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { ConfigError, sentence } from '../errors.js';
 import { decodeHtmlEntities, escapeHtml, page } from '../html.js';
@@ -47,16 +48,6 @@ function refusedScopeHelp({ scope, product, feature }: RefusedScope): string {
   return product
     ? `Your LinkedIn app doesn't have the ${product} product: add it at ${APPS}, then sign in again.`
     : `Your LinkedIn app doesn't have the product that grants ${scope}: add that product at ${APPS}, or remove ${scope} from LINKEDIN_SCOPES; then sign in again.`;
-}
-
-function listen(server: Server, port: number, host: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
 }
 
 function respond(res: ServerResponse, status: number, title: string, body: string): void {
@@ -116,13 +107,9 @@ export class LoopbackLogin {
     const onRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // Not `new URL`: Node accepts request targets such as `//[` that don't parse, and a throw here would crash the server.
       const url = URL.parse(req.url ?? '/', redirect.href);
-      if (!url || url.pathname !== redirect.pathname) {
-        res.writeHead(404, { Connection: 'close' }).end();
-        return;
-      }
+      if (!url || url.pathname !== redirect.pathname) return void res.writeHead(404, { Connection: 'close' }).end();
       if (finished || url.searchParams.get('state') !== state) {
-        respond(res, 400, 'Sign-in link expired', '<h1>This sign-in link has expired</h1><p>Start the LinkedIn sign-in again from Claude.</p>');
-        return;
+        return respond(res, 400, 'Sign-in link expired', '<h1>This sign-in link has expired</h1><p>Start the LinkedIn sign-in again from Claude.</p>');
       }
       const error = url.searchParams.get('error');
       if (error) {
@@ -131,14 +118,10 @@ export class LoopbackLogin {
         const refused = refusedScope(error, description, this.options.app.scopes);
         const message = refused ? `${sentence(description)} ${refusedScopeHelp(refused)}` : description;
         respond(res, 400, 'Sign-in cancelled', `<h1>LinkedIn sign-in was not completed</h1><p>${escapeHtml(message)}</p>`);
-        finish(new Error(`LinkedIn sign-in was not completed: ${message}`));
-        return;
+        return finish(new Error(`LinkedIn sign-in was not completed: ${message}`));
       }
       const code = url.searchParams.get('code');
-      if (!code) {
-        respond(res, 400, 'Missing code', '<h1>LinkedIn did not return an authorization code</h1>');
-        return;
-      }
+      if (!code) return respond(res, 400, 'Missing code', '<h1>LinkedIn did not return an authorization code</h1>');
       try {
         const tokens = await exchangeAuthorizationCode(this.options.app, code, this.options.redirectUri);
         const name = await this.options.onTokens(tokens);
@@ -157,7 +140,8 @@ export class LoopbackLogin {
     for (const [index, host] of hosts.entries()) {
       const server = createServer((req, res) => void onRequest(req, res));
       try {
-        await listen(server, port, host);
+        // Rejects with the 'error' the server emits instead of listening, such as EADDRINUSE.
+        await once(server.listen(port, host), 'listening');
         servers.push(server);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;

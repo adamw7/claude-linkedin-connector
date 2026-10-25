@@ -1,3 +1,4 @@
+import { parseJson } from '../json.js';
 import { isLoopbackHostname } from '../net/loopback.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import type { Sealer } from './crypto.js';
@@ -99,10 +100,7 @@ export class ClientRegistry {
   }
 
   register(metadata: unknown): RegistrationResult {
-    const fail = (error: string, description: string): RegistrationResult => ({
-      status: 400,
-      body: { error, error_description: description },
-    });
+    const fail = (error: string, description: string): RegistrationResult => ({ status: 400, body: { error, error_description: description } });
     if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
       return fail('invalid_client_metadata', 'Expected a JSON object.');
     }
@@ -198,14 +196,9 @@ export class ClientRegistry {
         });
         return response.data.toString('utf8');
       });
-    let document: Record<string, unknown>;
-    try {
-      document = JSON.parse(await fetchDocument(clientId)) as Record<string, unknown>;
-    } catch {
-      return undefined;
-    }
-    if (typeof document !== 'object' || document === null || document.client_id !== clientId) return undefined;
-    if (!Array.isArray(document.redirect_uris)) return undefined;
+    // A document that can't be fetched or parsed, or isn't an object, has no matching client_id.
+    const document = parseJson(await fetchDocument(clientId).catch(() => '')) as Record<string, unknown> | null | undefined;
+    if (document?.client_id !== clientId || !Array.isArray(document.redirect_uris)) return undefined;
     const redirectUris = document.redirect_uris.filter(
       (uri): uri is string => typeof uri === 'string' && this.policy.allows(uri),
     );

@@ -1,21 +1,16 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { parseJson } from '../json.js';
 
 /** Parses a JSON file; undefined when it doesn't exist or isn't valid JSON. */
 export async function readJsonFile(path: string): Promise<unknown> {
-  let text: string;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+  const text = await readFile(path, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    // A missing file reads as empty, which isn't valid JSON either.
+    if (error.code === 'ENOENT') return '';
     throw error;
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
-  }
+  });
+  return parseJson(text);
 }
 
 /** Writes JSON readable only by the current user, through a temporary file so a crash never leaves half of it. */

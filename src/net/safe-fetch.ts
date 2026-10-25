@@ -65,15 +65,11 @@ type LookupCallback = (err: NodeJS.ErrnoException | null, address: string | Look
 /** DNS lookup that refuses hostnames resolving to non-public addresses (checked at connect time, so DNS rebinding can't bypass it). */
 function guardedLookup(hostname: string, options: LookupOptions, callback: LookupCallback): void {
   dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
-    if (err) {
-      callback(err, '');
-      return;
-    }
+    if (err) return callback(err, '');
     const list = addresses as LookupAddress[];
     const blocked = list.find((entry) => isBlockedAddress(entry.address));
     if (blocked || list.length === 0) {
-      callback(new FetchError(`Refusing to fetch from ${hostname}: it resolves to a private or reserved address.`), '');
-      return;
+      return callback(new FetchError(`Refusing to fetch from ${hostname}: it resolves to a private or reserved address.`), '');
     }
     if (options.all) callback(null, list);
     else callback(null, list[0]!.address, list[0]!.family);
@@ -171,20 +167,17 @@ function requestOnce(url: URL, options: SafeFetchOptions, deadline: number): Pro
         const status = response.statusCode ?? 0;
         if (status >= 300 && status < 400 && response.headers.location) {
           response.resume();
-          resolve({ redirect: response.headers.location, data: Buffer.alloc(0) });
-          return;
+          return resolve({ redirect: response.headers.location, data: Buffer.alloc(0) });
         }
         if (status < 200 || status >= 300) {
           response.resume();
-          reject(new FetchError(`Fetching ${url.toString()} failed with HTTP ${status}.`));
-          return;
+          return reject(new FetchError(`Fetching ${url.toString()} failed with HTTP ${status}.`));
         }
         const tooLarge = () => new FetchError(`${url.toString()} is larger than the ${options.maxBytes} byte limit.`);
         const declared = Number(response.headers['content-length']);
         if (!options.truncate && Number.isFinite(declared) && declared > options.maxBytes) {
           response.destroy();
-          reject(tooLarge());
-          return;
+          return reject(tooLarge());
         }
         const chunks: Buffer[] = [];
         let size = 0;

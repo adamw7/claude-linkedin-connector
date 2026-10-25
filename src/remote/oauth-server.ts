@@ -172,13 +172,12 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   const clearCookie = (res: Response, name: string) =>
     res.clearCookie(cookieName(name), { httpOnly: true, secure: secureCookies, path: '/' });
 
-  const capabilities = (() => {
-    const scopes = new Set(config.scopes);
-    const list = ['See your name, email address and profile photo', 'Publish posts on your behalf, and edit or delete them'];
-    if (scopes.has(COMMENTS.scope)) list.push('Comment on and react to posts on your behalf');
-    if (scopes.has(PAGES.scope)) list.push('Post, comment and react as LinkedIn Pages you administer');
-    return list;
-  })();
+  const capabilities = [
+    'See your name, email address and profile photo',
+    'Publish posts on your behalf, and edit or delete them',
+    ...(config.scopes.includes(COMMENTS.scope) ? ['Comment on and react to posts on your behalf'] : []),
+    ...(config.scopes.includes(PAGES.scope) ? ['Post, comment and react as LinkedIn Pages you administer'] : []),
+  ];
 
   /** Whether LINKEDIN_ALLOWED_MEMBERS admits this member (by member ID or verified email). */
   const memberAllowed = (grant: LinkedInGrant): boolean => {

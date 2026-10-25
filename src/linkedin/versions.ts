@@ -22,15 +22,11 @@ export function recentApiVersions(now: Date, count = 13): string[] {
 
 /** The LinkedIn-Version header value, shared by every client in the process. */
 export class ApiVersion {
-  private current: string;
-
   constructor(
-    initial: string = DEFAULT_API_VERSION,
+    private current: string = DEFAULT_API_VERSION,
     private readonly now: () => Date = () => new Date(),
     private readonly log: (message: string) => void = () => {},
-  ) {
-    this.current = initial;
-  }
+  ) {}
 
   get value(): string {
     return this.current;

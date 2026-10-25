@@ -27,10 +27,7 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
 
   return (req, res, next) => {
     const id = limit > 0 ? key(req) : undefined;
-    if (id === undefined) {
-      next();
-      return;
-    }
+    if (id === undefined) return next();
     const current = now();
     if (current >= nextSweep) {
       for (const [k, w] of windows) if (w.resetAt <= current) windows.delete(k);
@@ -42,11 +39,8 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
       windows.set(id, window);
     }
     window.count += 1;
-    if (window.count > limit) {
-      res.set('Retry-After', String(Math.ceil((window.resetAt - current) / 1000)));
-      reject(req, res);
-      return;
-    }
-    next();
+    if (window.count <= limit) return next();
+    res.set('Retry-After', String(Math.ceil((window.resetAt - current) / 1000)));
+    reject(req, res);
   };
 }
