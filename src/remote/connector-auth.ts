@@ -1,10 +1,10 @@
 import type { AuthInfo } from '@modelcontextprotocol/server';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, MemberInfo } from '../auth/types.js';
 import { NotAuthenticatedError } from '../errors.js';
+import { TOKEN_EXPIRY_MARGIN_MS } from '../linkedin/oauth.js';
 import { personUrn } from '../linkedin/urn.js';
+import { RECONNECT_HINT } from '../mcp/errors.js';
 import type { LinkedInGrant } from './oauth-server.js';
-
-const RECONNECT = "Disconnect and reconnect the LinkedIn connector in Claude's settings.";
 
 export function grantFromAuthInfo(authInfo: AuthInfo | undefined): LinkedInGrant | undefined {
   const grant = authInfo?.extra?.linkedin as LinkedInGrant | undefined;
@@ -20,9 +20,9 @@ export class ConnectorAuth implements LinkedInAuth {
 
   async getSession(): Promise<LinkedInSession> {
     const grant = this.grant;
-    if (!grant) throw new NotAuthenticatedError(`This request carries no LinkedIn authorization. ${RECONNECT}`);
-    if (grant.exp !== undefined && grant.exp - 60_000 <= this.now()) {
-      throw new NotAuthenticatedError(`The LinkedIn authorization has expired. ${RECONNECT}`);
+    if (!grant) throw new NotAuthenticatedError(`This request carries no LinkedIn authorization. ${RECONNECT_HINT}`);
+    if (grant.exp !== undefined && grant.exp - TOKEN_EXPIRY_MARGIN_MS <= this.now()) {
+      throw new NotAuthenticatedError(`The LinkedIn authorization has expired. ${RECONNECT_HINT}`);
     }
     return { accessToken: grant.at, scopes: grant.sc, expiresAt: grant.exp, memberId: grant.sub, name: grant.name, email: grant.email };
   }

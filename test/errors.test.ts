@@ -116,10 +116,10 @@ describe('errorResult', () => {
 
 describe('error classes', () => {
   it('carry their names and details', () => {
-    const api = new LinkedInApiError(400, 'Bad', { code: 'INVALID', method: 'POST', path: '/rest/posts' });
+    const api = new LinkedInApiError(400, 'Bad', { code: 'INVALID', serviceErrorCode: 100 });
     expect(api).toBeInstanceOf(Error);
     expect(api.name).toBe('LinkedInApiError');
-    expect(api.details).toEqual({ code: 'INVALID', method: 'POST', path: '/rest/posts' });
+    expect(api.details).toEqual({ code: 'INVALID', serviceErrorCode: 100 });
     expect(new LinkedInApiError(500, 'x').details).toEqual({});
 
     expect(new LinkedInOAuthError('access_denied').message).toBe('access_denied');

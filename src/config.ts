@@ -46,8 +46,6 @@ export interface RemoteConfig extends CommonConfig {
   port: number;
   /** Signs and encrypts OAuth artifacts. */
   secret: string;
-  /** True when `secret` was generated at startup (connections won't survive a restart). */
-  ephemeralSecret: boolean;
   /** The secret used before `secret`; still opens tokens and client IDs issued with it, during a rotation. */
   previousSecret: string | undefined;
   /** Entries: exact URIs, `https://host/prefix*`, `loopback`, or `*`. */
@@ -193,7 +191,6 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ConfigError(`PORT "${env.PORT}" is not a valid port.`);
 
   let secret = secretValue(env, 'SERVER_SECRET');
-  const ephemeralSecret = secret === undefined;
   if (secret === undefined) {
     // A random secret differs per restart and per replica, so a public server would keep disconnecting everyone.
     if (!loopback) throw new ConfigError(`SERVER_SECRET is required: set it to ${SECRET_HINT} and keep it across restarts.`);
@@ -221,7 +218,6 @@ export function loadRemoteConfig(env: Env = process.env, warn: (message: string)
     host: value(env, 'HOST') ?? '127.0.0.1',
     port,
     secret,
-    ephemeralSecret,
     previousSecret,
     allowedRedirectUris: list(env, 'OAUTH_ALLOWED_REDIRECT_URIS') ?? [...CLAUDE_REDIRECT_URIS, 'loopback'],
     allowedMembers: allowedMembers.map((member) => member.toLowerCase()),

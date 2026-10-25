@@ -13,7 +13,7 @@ import { freePort } from './helpers/http.js';
 const DAY = 24 * 60 * 60 * 1000;
 
 function token(overrides: Partial<StoredToken> = {}): StoredToken {
-  return { version: 1, accessToken: 'li-token', scopes: ['openid', 'w_member_social'], obtainedAt: Date.now(), expiresAt: Date.now() + 30 * DAY, ...overrides };
+  return { version: 1, accessToken: 'li-token', scopes: ['openid', 'w_member_social'], expiresAt: Date.now() + 30 * DAY, ...overrides };
 }
 
 describe('TokenStore', () => {
