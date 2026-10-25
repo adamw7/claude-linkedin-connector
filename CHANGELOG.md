@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The README and the guides are shorter, with each detail in one place. The README's troubleshooting table now
+  lists only the problems no error message can explain: the connector's messages say how to fix what they report.
+
 ### Fixed
 
 - A remote server turned away browser-based MCP clients, such as the MCP Inspector, when they signed in with a

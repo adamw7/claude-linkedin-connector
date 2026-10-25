@@ -1,9 +1,8 @@
 # Architecture
 
-C4 diagrams of the connector, from the outside in: system context, containers, and the components inside
-each container. They are written in [Mermaid's C4 syntax](https://mermaid.js.org/syntax/c4.html), which
-GitHub renders inline. The module layering they show is enforced by
-[`test/architecture.test.ts`](../test/architecture.test.ts).
+C4 diagrams of the connector, from the outside in, in [Mermaid's C4 syntax](https://mermaid.js.org/syntax/c4.html)
+(GitHub renders them inline), then the module layering, which
+[`test/architecture.test.ts`](../test/architecture.test.ts) enforces.
 
 ## Level 1: System context
 
@@ -158,14 +157,14 @@ C4Component
 
 ## Module layering
 
-Bottom to top; each layer may import only from layers below it.
+The code in `src/`, bottom to top; each layer may import only from layers below it.
 
 | Layer | Modules | Notes |
 |---|---|---|
 | Leaf | `errors.ts`, `version.ts`, `html.ts`, `paths.ts`, `json.ts` | No project imports |
-| Network | `net/` | Outbound HTTP, no LinkedIn or MCP knowledge |
-| LinkedIn | `linkedin/` | API and OAuth client; the only code allowed to call the global `fetch` |
-| Local auth, config | `auth/`, `config.ts` | Sign-in, token storage, environment |
-| MCP | `mcp/` | Tools; transport agnostic |
-| Remote | `remote/` | HTTP transport and connector OAuth server; the only code allowed to use Express; never uses local token storage |
-| Composition root | `index.ts` | Imported by nothing |
+| Network | `net/` | `safeFetch` refuses private and loopback addresses; no LinkedIn or MCP knowledge |
+| LinkedIn | `linkedin/` | REST client, OAuth, text escaping, media, link previews, API versions, `Connections.csv`; the only code allowed to call the global `fetch` |
+| Local auth, config | `auth/`, `config.ts` | Token storage, post history and browser sign-in; environment variables |
+| MCP | `mcp/` | Tools (`server.ts`); transport agnostic |
+| Remote | `remote/` | HTTP app, OAuth authorization server, client registration, logging, rate limits; the only code allowed to use Express; never uses local token storage |
+| Composition root | `index.ts` | CLI (`stdio`, `http`, `login`, `logout`, `status`); imported by nothing |
