@@ -12,12 +12,13 @@ import { escapeHtml } from '../html.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { errorKind } from '../mcp/errors.js';
 import { createConnectorServer } from '../mcp/server.js';
+import { LOOPBACK_HOSTNAMES } from '../net/loopback.js';
 import { HOMEPAGE } from '../version.js';
 import { ClientRegistry, RedirectPolicy } from './clients.js';
 import { ConnectorAuth, grantFromAuthInfo } from './connector-auth.js';
 import { Sealer } from './crypto.js';
 import { pathOf, requestId, requestLogger, silentLogger, type Logger } from './logger.js';
-import { createOAuthServer } from './oauth-server.js';
+import { createOAuthServer, MAX_OAUTH_BODY } from './oauth-server.js';
 import { sendPage } from './pages.js';
 import { rateLimit } from './rate-limit.js';
 
@@ -45,8 +46,6 @@ const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1']);
 
 /** MCP request bodies above this are rejected; base64 inflates media by a third, so data: URIs top out around 20 MB. */
 const MAX_BODY = '30mb';
-/** For the OAuth endpoints, which anyone can call before signing in. */
-const MAX_OAUTH_BODY = '64kb';
 
 /** Endpoints a browser or OAuth client calls before it has a token; limited per client IP. */
 const OAUTH_PATHS = ['/authorize', '/oauth/callback', '/token', '/register'];
@@ -124,7 +123,7 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   // A loopback bind is usually reached through a tunnel, so accept the public hostname too.
   const allowedHosts =
     config.allowedHosts ??
-    (LOOPBACK_BINDS.has(config.host) ? [config.publicUrl.hostname, 'localhost', '127.0.0.1', '[::1]'] : undefined);
+    (LOOPBACK_BINDS.has(config.host) ? [config.publicUrl.hostname, ...LOOPBACK_HOSTNAMES] : undefined);
   if (allowedHosts) app.use(hostHeaderValidation(allowedHosts));
 
   const metadataOptions = {

@@ -4,7 +4,7 @@ import type { RemoteConfig } from '../config.js';
 import { decodeHtmlEntities } from '../html.js';
 import { LinkedInClient } from '../linkedin/client.js';
 import { buildAuthorizationUrl, exchangeAuthorizationCode, type LinkedInOAuthApp } from '../linkedin/oauth.js';
-import { refusedScope } from '../linkedin/scopes.js';
+import { COMMENTS, PAGES, refusedScope } from '../linkedin/scopes.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { HOMEPAGE } from '../version.js';
 import { redirectUriMatches, type ClientRegistry, type OAuthClient } from './clients.js';
@@ -45,6 +45,9 @@ interface AccessTokenPayload {
   iat: number;
   exp: number;
 }
+
+/** Request bodies above this are rejected on the OAuth endpoints, which anyone can call before signing in. */
+export const MAX_OAUTH_BODY = '64kb';
 
 const CONSENT_TTL_S = 10 * 60;
 const CODE_TTL_S = 5 * 60;
@@ -172,8 +175,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   const capabilities = (() => {
     const scopes = new Set(config.scopes);
     const list = ['See your name, email address and profile photo', 'Publish posts on your behalf, and edit or delete them'];
-    if (scopes.has('w_member_social_feed')) list.push('Comment on and react to posts on your behalf');
-    if (scopes.has('w_organization_social')) list.push('Post, comment and react as LinkedIn Pages you administer');
+    if (scopes.has(COMMENTS.scope)) list.push('Comment on and react to posts on your behalf');
+    if (scopes.has(PAGES.scope)) list.push('Post, comment and react as LinkedIn Pages you administer');
     return list;
   })();
 
@@ -189,7 +192,7 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
 
   const router = express.Router();
   // Browsers and OAuth clients don't compress these forms; see the JSON parser in app.ts.
-  const formBody = express.urlencoded({ extended: false, limit: '64kb', inflate: false });
+  const formBody = express.urlencoded({ extended: false, limit: MAX_OAUTH_BODY, inflate: false });
 
   router.get('/authorize', async (req, res) => {
     const query = req.query as Record<string, unknown>;

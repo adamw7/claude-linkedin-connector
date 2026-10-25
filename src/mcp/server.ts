@@ -20,10 +20,10 @@ import { fetchLinkPreview, type LinkPreview } from '../linkedin/link-preview.js'
 import { loadMedia, readSource, type LoadedMedia, type MediaKind } from '../linkedin/media.js';
 import { COMMENTS, PAGES, type Feature } from '../linkedin/scopes.js';
 import { escapeLittleText, textWarnings } from '../linkedin/text.js';
-import { organizationUrn, parsePostReference, personUrn, postUrl } from '../linkedin/urn.js';
+import { isOrganizationUrn, organizationUrn, parsePostReference, personUrn, postUrl } from '../linkedin/urn.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { NAME, VERSION } from '../version.js';
-import { describeError, errorResult, type Mode } from './errors.js';
+import { describeError, errorResult, isFetchFailure, isTimeout, RECONNECT_HINT, type Mode } from './errors.js';
 
 export interface ConnectorOptions {
   mode: Mode;
@@ -53,14 +53,15 @@ export interface ToolCallEvent {
   error?: unknown;
 }
 
-const REACTIONS: Record<string, ReactionType> = {
+/** The reactions as LinkedIn's UI names them, which the tool takes, and as its API does. */
+const REACTIONS = {
   like: 'LIKE',
   celebrate: 'PRAISE',
   support: 'APPRECIATION',
   love: 'EMPATHY',
   insightful: 'INTEREST',
   funny: 'ENTERTAINMENT',
-};
+} as const satisfies Record<string, ReactionType>;
 
 /** The longest wait for LinkedIn to process one image, so a slow one leaves time for the rest. */
 const IMAGE_WAIT_MS = 15_000;
@@ -114,8 +115,8 @@ function unconfirmedReason(error: unknown): string | undefined {
   if (error instanceof LinkedInApiError) {
     return [500, 502, 504].includes(error.status) ? `LinkedIn had an internal problem (HTTP ${error.status}): ${sentence(error.message)}` : undefined;
   }
-  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return 'LinkedIn did not answer in time.';
-  if (!(error instanceof TypeError) || error.message !== 'fetch failed') return undefined;
+  if (isTimeout(error)) return 'LinkedIn did not answer in time.';
+  if (!isFetchFailure(error)) return undefined;
   const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
   if (NOT_SENT.has(code)) return undefined;
   return `The connection to LinkedIn broke${code ? ` (${code})` : ''}.`;
@@ -176,8 +177,8 @@ function instructions(mode: Mode, engagement: boolean, history: boolean, folders
 export function createConnectorServer(options: ConnectorOptions): McpServer {
   const { mode, auth, history } = options;
   const scopes = new Set(options.scopes);
-  const organizations = scopes.has('w_organization_social');
-  const memberEngagement = scopes.has('w_member_social_feed');
+  const organizations = scopes.has(PAGES.scope);
+  const memberEngagement = scopes.has(COMMENTS.scope);
   const engagement = memberEngagement || organizations;
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
@@ -279,7 +280,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       throw new NotAuthenticatedError(
         mode === 'local'
           ? `Your LinkedIn sign-in predates turning on ${settingName(feature)}, so LinkedIn doesn't allow this yet. ${SIGN_IN_HINT}`
-          : `Your LinkedIn connection predates ${feature.variable} being turned on for this connector, so LinkedIn doesn't allow this yet. Disconnect and reconnect the LinkedIn connector in Claude's settings.`,
+          : `Your LinkedIn connection predates ${feature.variable} being turned on for this connector, so LinkedIn doesn't allow this yet. ${RECONNECT_HINT}`,
       );
     }
     const { version, apiBaseUrl, fetch } = options;
@@ -316,7 +317,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     } catch (error) {
       if (!(error instanceof LinkedInApiError) || error.status !== 403) throw error;
       const detail = sentence(error.message);
-      if (actor.startsWith('urn:li:organization:')) {
+      if (isOrganizationUrn(actor)) {
         throw new UserInputError(
           `LinkedIn didn't let you act as the Page ${actor}: ${detail} ` +
             "Only a Page's super admins and content admins can post, comment and react as it: check your role on the Page, and that it is the right Page.",
@@ -754,7 +755,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           content = { article: { source: url, title, description, thumbnail: thumbnailUrn } };
           preview = { title, description, thumbnail: thumbnailUrn !== undefined };
         }
-        const where = author.startsWith('urn:li:organization:') ? "the Page's posts" : 'your recent activity';
+        const where = isOrganizationUrn(author) ? "the Page's posts" : 'your recent activity';
         const urn = await publishing(
           () => client.createPost({ author, commentary: escapeLittleText(args.text), visibility: args.visibility, content }),
           (reason) => `${reason} The post may have been published anyway: look for it among ${where} on LinkedIn before trying again, so it is not published twice.`,
@@ -940,7 +941,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         inputSchema: withOrganization({
           post: z.string().describe('Post URN or URL.'),
           reaction: z
-            .enum(['like', 'celebrate', 'support', 'love', 'insightful', 'funny'])
+            .enum(Object.keys(REACTIONS) as Array<keyof typeof REACTIONS>)
             .default('like')
             .describe('Reaction type.'),
         }),
@@ -949,7 +950,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       },
       async (args, connect) => {
         const { client, target, actor, act } = await engage(connect, args, 'react to');
-        await act(() => client.createReaction(target, actor, REACTIONS[args.reaction]!));
+        await act(() => client.createReaction(target, actor, REACTIONS[args.reaction]));
         return { postUrn: target, url: postUrl(target), reaction: args.reaction, actor };
       },
     );

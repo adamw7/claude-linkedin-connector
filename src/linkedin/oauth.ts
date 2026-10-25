@@ -3,6 +3,9 @@ import { USER_AGENT } from '../version.js';
 
 export const LINKEDIN_OAUTH_BASE = 'https://www.linkedin.com';
 
+/** Treat LinkedIn tokens this close to expiry as expired. */
+export const TOKEN_EXPIRY_MARGIN_MS = 60_000;
+
 export interface LinkedInOAuthApp {
   clientId: string;
   clientSecret: string;

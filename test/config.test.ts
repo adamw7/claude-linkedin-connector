@@ -76,7 +76,7 @@ describe('configuration', () => {
     expect(config).toMatchObject({
       port: 3000,
       host: '127.0.0.1',
-      ephemeralSecret: false,
+      secret: 'a'.repeat(32),
       allowedMembers: ['*'],
       allowedHosts: undefined,
       trustProxy: false,
@@ -129,7 +129,6 @@ describe('configuration', () => {
     const warnings: string[] = [];
     const env = { ...remoteEnv, PUBLIC_URL: 'http://localhost:3000', SERVER_SECRET: undefined, LINKEDIN_ALLOWED_MEMBERS: 'Ada@Example.com, abc123' };
     const config = loadRemoteConfig(env, (m) => warnings.push(m));
-    expect(config.ephemeralSecret).toBe(true);
     expect(config.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(warnings).toEqual(['SERVER_SECRET is not set; using a random one. Connections will stop working when the server restarts.']);
     expect(config.allowedMembers).toEqual(['ada@example.com', 'abc123']);
@@ -171,7 +170,7 @@ describe('secrets from files', () => {
       SERVER_SECRET_FILE: secretFile('server', `${'c'.repeat(32)}\n`),
       SERVER_SECRET_PREVIOUS_FILE: secretFile('previous', 'd'.repeat(32)),
     });
-    expect(config).toMatchObject({ clientSecret: 'file-secret', secret: 'c'.repeat(32), previousSecret: 'd'.repeat(32), ephemeralSecret: false });
+    expect(config).toMatchObject({ clientSecret: 'file-secret', secret: 'c'.repeat(32), previousSecret: 'd'.repeat(32) });
     expect(loadLocalConfig({ LINKEDIN_CLIENT_SECRET_FILE: secretFile('local', 'local-secret') }).clientSecret).toBe('local-secret');
   });
 

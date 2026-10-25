@@ -5,10 +5,23 @@ import { FetchError } from '../net/safe-fetch.js';
 
 export type Mode = 'local' | 'remote';
 
-const RECONNECT_HINT = "Disconnect and reconnect the LinkedIn connector in Claude's settings to sign in again.";
+const RECONNECT = "Disconnect and reconnect the LinkedIn connector in Claude's settings";
+
+/** Remote mode: the one way to replace the LinkedIn authorization a connection carries. */
+export const RECONNECT_HINT = `${RECONNECT}.`;
 
 function reauthHint(mode: Mode): string {
-  return mode === 'local' ? REAUTH_HINT : RECONNECT_HINT;
+  return mode === 'local' ? REAUTH_HINT : `${RECONNECT} to sign in again.`;
+}
+
+/** Whether a request was given up on for taking too long (`AbortSignal.timeout`) or aborted. */
+export function isTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+}
+
+/** Whether this is undici's report of a network failure: a bare "fetch failed" with the reason in `cause`. */
+export function isFetchFailure(error: unknown): error is TypeError {
+  return error instanceof TypeError && error.message === 'fetch failed';
 }
 
 /** Turns any failure into a message that tells the user (via Claude) what went wrong and what to do. */
@@ -51,11 +64,8 @@ export function describeError(error: unknown, mode: Mode): string {
     }
   }
   if (error instanceof LinkedInOAuthError) return `LinkedIn sign-in failed: ${error.message}`;
-  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-    return 'LinkedIn did not respond in time. Try again.';
-  }
-  // undici reports network failures as a bare "fetch failed" with the reason in `cause`.
-  if (error instanceof TypeError && error.message === 'fetch failed') {
+  if (isTimeout(error)) return 'LinkedIn did not respond in time. Try again.';
+  if (isFetchFailure(error)) {
     const cause = error.cause instanceof Error ? error.cause : undefined;
     const reason = (cause as NodeJS.ErrnoException | undefined)?.code ?? cause?.message;
     return `Could not reach LinkedIn${reason ? ` (${reason})` : ''}. Check the internet connection and try again.`;
@@ -74,7 +84,7 @@ export function errorKind(error: unknown): string {
   }
   if (error instanceof LinkedInOAuthError) return `${error.name}: ${error.error}`;
   if (error instanceof UnconfirmedError) return `${error.name}: ${errorKind(error.cause)}`;
-  if (error instanceof TypeError && error.message === 'fetch failed') {
+  if (isFetchFailure(error)) {
     const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
     return `${error.name}: fetch failed${code ? ` (${code})` : ''}`;
   }

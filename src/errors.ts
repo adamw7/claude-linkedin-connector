@@ -8,8 +8,6 @@ export class LinkedInApiError extends Error {
     readonly details: {
       code?: string;
       serviceErrorCode?: number;
-      method?: string;
-      path?: string;
       retryAfter?: string;
     } = {},
   ) {

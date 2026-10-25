@@ -1,15 +1,12 @@
 import type { LocalConfig } from '../config.js';
 import { ConfigError, NotAuthenticatedError, sentence } from '../errors.js';
 import { LinkedInClient } from '../linkedin/client.js';
-import { refreshAccessToken, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
+import { refreshAccessToken, TOKEN_EXPIRY_MARGIN_MS, type LinkedInOAuthApp, type LinkedInTokens } from '../linkedin/oauth.js';
 import { personUrn } from '../linkedin/urn.js';
 import type { ApiVersion } from '../linkedin/versions.js';
 import { LoopbackLogin } from './loopback-login.js';
 import { TokenStore, type StoredToken } from './token-store.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from './types.js';
-
-/** Treat tokens this close to expiry as expired. */
-const EXPIRY_MARGIN_MS = 60_000;
 
 /**
  * Claude reads this (linkedin_auth_status), so it names no terminal command: most installs (the Claude Desktop
@@ -85,7 +82,7 @@ export class LocalAuth implements LinkedInAuth {
   }
 
   private isExpired(expiresAt: number | undefined): boolean {
-    return expiresAt !== undefined && expiresAt - EXPIRY_MARGIN_MS <= this.now();
+    return expiresAt !== undefined && expiresAt - TOKEN_EXPIRY_MARGIN_MS <= this.now();
   }
 
   async getSession(): Promise<LinkedInSession> {
@@ -112,7 +109,7 @@ export class LocalAuth implements LinkedInAuth {
     if (!this.config.clientId || !this.config.clientSecret) return undefined;
     try {
       const refreshed = await refreshAccessToken(this.oauthApp(), token.refreshToken);
-      const next = toStoredToken(refreshed, this.now(), token.member, token.refreshToken, token.refreshTokenExpiresAt);
+      const next = toStoredToken(refreshed, token.member, token.refreshToken, token.refreshTokenExpiresAt);
       await this.store.write(next);
       return next;
     } catch {
@@ -227,14 +224,13 @@ export class LocalAuth implements LinkedInAuth {
     } catch {
       // Without the openid/profile scopes there is no userinfo; posting will report the problem.
     }
-    await this.store.write(toStoredToken(tokens, this.now(), member));
+    await this.store.write(toStoredToken(tokens, member));
     return member?.name;
   }
 }
 
 function toStoredToken(
   tokens: LinkedInTokens,
-  now: number,
   member?: MemberInfo,
   previousRefreshToken?: string,
   previousRefreshExpiry?: number,
@@ -243,7 +239,6 @@ function toStoredToken(
     version: 1,
     accessToken: tokens.accessToken,
     scopes: tokens.scopes,
-    obtainedAt: now,
     expiresAt: tokens.expiresAt,
     refreshToken: tokens.refreshToken ?? previousRefreshToken,
     refreshTokenExpiresAt: tokens.refreshTokenExpiresAt ?? (tokens.refreshToken ? undefined : previousRefreshExpiry),

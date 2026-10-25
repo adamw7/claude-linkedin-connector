@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { UserInputError } from '../src/errors.js';
-import { organizationUrn, parsePostReference, personUrn, postUrl } from '../src/linkedin/urn.js';
+import { isOrganizationUrn, organizationUrn, parsePostReference, personUrn, postUrl } from '../src/linkedin/urn.js';
 
 describe('parsePostReference', () => {
   it.each([
@@ -32,6 +32,14 @@ describe('URN helpers', () => {
     expect(organizationUrn('2414183')).toBe('urn:li:organization:2414183');
     expect(organizationUrn('urn:li:organization:2414183')).toBe('urn:li:organization:2414183');
     expect(() => organizationUrn('acme')).toThrow(UserInputError);
+  });
+
+  it('tells Pages from members', () => {
+    expect(isOrganizationUrn('urn:li:organization:2414183')).toBe(true);
+    expect(isOrganizationUrn('urn:li:person:abc123')).toBe(false);
+    // Only a URN: an ID or an address is not one yet.
+    expect(isOrganizationUrn('2414183')).toBe(false);
+    expect(isOrganizationUrn('see urn:li:organization:2414183')).toBe(false);
   });
 
   it("finds a Page's organization ID in the address of its admin view, and says where to look for it", () => {

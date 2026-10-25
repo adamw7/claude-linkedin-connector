@@ -118,7 +118,7 @@ export class LinkedInClient {
       body: data,
       signal: AbortSignal.timeout(Math.max(this.timeoutMs, 300_000)),
     });
-    await this.check(response, 'PUT', 'upload');
+    await this.check(response);
     await response.body?.cancel();
   }
 
@@ -160,7 +160,7 @@ export class LinkedInClient {
       if (options.restliMethod) headers['X-RestLi-Method'] = options.restliMethod;
       return this.fetchImpl(this.apiBase + path, { method, headers, body, signal: AbortSignal.timeout(this.timeoutMs) });
     };
-    if (options.versioned === false) return this.check(await send(undefined), method, path);
+    if (options.versioned === false) return this.check(await send(undefined));
     const version = this.options.version.value;
     let response = await send(version);
     if (response.status === 426) {
@@ -170,10 +170,10 @@ export class LinkedInClient {
         response = recovered;
       }
     }
-    return this.check(response, method, path);
+    return this.check(response);
   }
 
-  private async check(response: Response, method: string, path: string): Promise<Response> {
+  private async check(response: Response): Promise<Response> {
     if (response.ok) return response;
     const text = await response.text().catch(() => '');
     let parsed: { message?: unknown; code?: unknown; serviceErrorCode?: unknown } = {};
@@ -191,8 +191,6 @@ export class LinkedInClient {
       code: typeof parsed.code === 'string' ? parsed.code : undefined,
       serviceErrorCode: typeof parsed.serviceErrorCode === 'number' ? parsed.serviceErrorCode : undefined,
       retryAfter: response.headers.get('retry-after') || undefined,
-      method,
-      path,
     });
   }
 }

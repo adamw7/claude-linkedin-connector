@@ -15,8 +15,6 @@ export interface StoredToken {
   refreshTokenExpiresAt?: number;
   scopes: string[];
   member?: MemberInfo;
-  /** Epoch milliseconds. */
-  obtainedAt: number;
 }
 
 export function defaultTokenFile(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {

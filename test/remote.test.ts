@@ -51,7 +51,6 @@ async function startRemote(
     host: '127.0.0.1',
     port,
     secret: 'test-secret-that-is-at-least-32-characters-long',
-    ephemeralSecret: false,
     previousSecret: undefined,
     allowedRedirectUris: [...CLAUDE_REDIRECT_URIS, 'loopback'],
     allowedMembers: ['*'],

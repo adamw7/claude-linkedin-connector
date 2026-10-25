@@ -9,6 +9,11 @@ export function personUrn(memberId: string): string {
   return memberId.startsWith('urn:li:person:') ? memberId : `urn:li:person:${memberId}`;
 }
 
+/** Whether `urn` names a LinkedIn Page (an organization) rather than a member. */
+export function isOrganizationUrn(urn: string): boolean {
+  return urn.startsWith('urn:li:organization:');
+}
+
 export function organizationUrn(idOrUrn: string): string {
   const trimmed = idOrUrn.trim();
   const id = COMPANY_URL.exec(trimmed)?.[1] ?? trimmed.replace(/^urn:li:organization:/, '');
