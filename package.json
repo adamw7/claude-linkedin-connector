@@ -42,7 +42,7 @@
     "setup": "node scripts/setup-claude-code.mjs",
     "bundle": "node scripts/bundle.mjs",
     "pack:mcpb": "npm run bundle && mcpb pack mcpb claude-linkedin-connector.mcpb",
-    "test:mutation": "node scripts/patch-stryker-vitest.mjs && stryker run"
+    "test:mutation": "stryker run"
   },
   "dependencies": {
     "@modelcontextprotocol/express": "^2.0.2",
