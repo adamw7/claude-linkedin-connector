@@ -10,10 +10,11 @@ production). Contributors: `docs/development.md` (tests, releasing). Design: `do
 
 ```bash
 npm run check        # typecheck + tests: run before every push (there is no separate linter)
-npm run typecheck    # tsc over src and test
+npm run typecheck    # tsc over src, test and bench
 npm test             # vitest; one file: npx vitest run test/text.test.ts
 npm run build        # tsc -p tsconfig.build.json -> dist/
 npm run test:mutation  # Stryker; slow, CI runs it incrementally
+npm run bench        # benchmarks in bench/ against the fake LinkedIn, about a minute; CI runs them
 npm run pack:mcpb    # bundle the Claude Desktop extension
 docker build -t connector . && scripts/smoke-test-image.sh connector  # the remote image; CI runs both
 node scripts/smoke-test-package.mjs  # packs, installs and runs the npm package; CI runs it

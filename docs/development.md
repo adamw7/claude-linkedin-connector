@@ -5,6 +5,7 @@ npm ci
 npm run check          # typecheck + tests
 npm run test:coverage  # tests with a coverage report in coverage/
 npm run test:mutation  # Stryker mutation tests, report in reports/mutation/ (slow)
+npm run bench          # benchmarks, about a minute; see below
 npm run build          # dist/
 npm run bundle         # single-file build for the .mcpb
 node scripts/smoke-test-package.mjs  # packs, installs and runs the npm package
@@ -23,6 +24,24 @@ runs, packs it, installs the tarball with production dependencies only and runs 
 fake LinkedIn: signing in from the terminal, publishing a post with an image over stdio, and starting and stopping
 the remote server. It fails on a file left out of `files`, a runtime dependency listed under `devDependencies` or a
 broken `bin`. To test a release instead: `node scripts/smoke-test-package.mjs claude-linkedin-connector@<version>`.
+
+## Benchmarks
+
+`npm run bench` times the connector against the fake LinkedIn, so the numbers are what the connector adds to
+LinkedIn's own response times; `npx vitest bench --run --reporter=default bench/remote.bench.ts` runs one file.
+
+- `bench/tools.bench.ts` calls every tool in local mode through the MCP client SDK, with the connector composed as
+  `stdio` composes it (token and post history on disk), including posts with a 1 MB image, a 1 MB PDF and a link
+  preview.
+- `bench/remote.bench.ts` runs the remote server over loopback HTTP: connecting Claude (registration, consent, LinkedIn
+  sign-in and token) and tool calls, each authenticated and served by a connector server of its own.
+- `bench/connections.bench.ts` reads up to 30,000 connections, LinkedIn's limit, with each kind of filter and from an
+  export archive.
+
+Each is also a test: it first checks what the calls return and which LinkedIn requests they make, and fails if a call
+fails. `connections.bench.ts` also fails when parsing or searching ten times the connections takes more than 25 times
+as long, as a step that grows quadratically would. CI runs them on every push; to see whether a change makes the
+connector slower, compare their tables before and after it on the same machine.
 
 ## Testing against the real LinkedIn API
 
