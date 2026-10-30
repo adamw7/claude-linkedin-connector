@@ -39,6 +39,19 @@ describe('parseLinkPreview', () => {
     expect(performance.now() - start).toBeLessThan(2_000);
   });
 
+  it('reads unquoted attribute values, as HTML allows', () => {
+    expect(parseLinkPreview('<meta property=og:title content=Launch><meta name=description content=Notes>', 'https://example.com/')).toEqual({
+      title: 'Launch',
+      description: 'Notes',
+    });
+  });
+
+  it('keeps the first of repeated tags, and skips blank ones', () => {
+    const html = '<meta property="og:title" content=""><meta property="og:title" content="First"><meta property="og:title" content="Second"><title> \n </title>';
+    expect(parseLinkPreview(html, 'https://example.com/')).toEqual({ title: 'First' });
+    expect(parseLinkPreview('<title> &nbsp; </title>', 'https://example.com/')).toEqual({});
+  });
+
   it('ignores non-http image URLs', () => {
     expect(parseLinkPreview('<meta property="og:image" content="javascript:alert(1)">', 'https://example.com/')).toEqual({});
   });
@@ -68,5 +81,22 @@ describe('fetchLinkPreview', () => {
     expect(await title('/http-equiv')).toBe('Café');
     expect(await title('/utf8')).toBe('Łódź');
     expect(await title('/unknown')).toBe('Łódź');
+  });
+
+  it('gives no preview for a link to a file rather than a page', async () => {
+    const files = await startServer((req, res) => {
+      const type = { '/deck.pdf': 'application/pdf', '/photo.png': 'image/png', '/feed': 'application/rss+xml' }[req.url ?? ''];
+      res.writeHead(200, type ? { 'Content-Type': type } : {}).end('<title>Not a page</title>');
+    });
+    try {
+      const preview = (path: string) => fetchLinkPreview(files.url + path, { allowPrivateNetwork: true });
+      expect(await preview('/deck.pdf')).toEqual({});
+      expect(await preview('/photo.png')).toEqual({});
+      // XML may be a page; a missing Content-Type is read as one.
+      expect(await preview('/feed')).toEqual({ title: 'Not a page' });
+      expect(await preview('/untyped')).toEqual({ title: 'Not a page' });
+    } finally {
+      await files.close();
+    }
   });
 });

@@ -34,6 +34,15 @@ describe('parseConnectedOn', () => {
     expect(parseConnectedOn('31 Feb 2024')).toBeUndefined();
     expect(parseConnectedOn('yesterday')).toBeUndefined();
   });
+
+  it('reads month names however long, and refuses ones that are not months', () => {
+    expect(parseConnectedOn('5 September 2025')).toBe('2025-09-05');
+    expect(parseConnectedOn(' 5 Sept. 2025 ')).toBe('2025-09-05');
+    expect(parseConnectedOn('29 FEB 2024')).toBe('2024-02-29');
+    expect(parseConnectedOn('5 Foo 2025')).toBeUndefined();
+    expect(parseConnectedOn('5 Sep 202')).toBeUndefined();
+    expect(parseConnectedOn('2025-13-01')).toBeUndefined();
+  });
 });
 
 describe('parseConnections', () => {
@@ -150,5 +159,16 @@ describe('countCompanies', () => {
       { company: 'Acme', count: 2 },
       { company: 'Beta', count: 1 },
     ]);
+  });
+
+  it('shows a company under its most common spelling, whichever came first, and breaks ties by name', () => {
+    const counts = countCompanies([at('ACME'), at('Acme'), at('Acme'), at('Zeta'), at('Beta'), at('acme'), at('Acme')]);
+    expect(counts).toEqual([
+      { company: 'Acme', count: 5 },
+      { company: 'Beta', count: 1 },
+      { company: 'Zeta', count: 1 },
+    ]);
+    // Equally common spellings: the first one seen.
+    expect(countCompanies([at('Łódź Labs'), at('Lodz Labs')])).toEqual([{ company: 'Łódź Labs', count: 2 }]);
   });
 });

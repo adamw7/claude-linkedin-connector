@@ -41,6 +41,10 @@ describe('ConnectorAuth', () => {
     const auth = new ConnectorAuth({ at: 'x', sc: [] }, () => NOW);
     await auth.rememberMember({ id: 'm1', name: 'Grace' });
     expect(await auth.getSession()).toMatchObject({ memberId: 'm1', name: 'Grace' });
+    // LinkedIn may leave out the name; the one from connecting stays.
+    const named = new ConnectorAuth(grant, () => NOW);
+    await named.rememberMember({ id: 'abc123' });
+    expect(await named.getSession()).toMatchObject({ memberId: 'abc123', name: 'Ada' });
     const anonymous = new ConnectorAuth(undefined);
     await anonymous.rememberMember({ id: 'm1' });
     await expect(anonymous.getSession()).rejects.toThrow(NotAuthenticatedError);

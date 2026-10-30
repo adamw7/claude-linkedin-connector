@@ -13,6 +13,20 @@ const app = {
 };
 
 describe('LinkedIn OAuth helpers', () => {
+  it('signs in at the real LinkedIn unless told otherwise, without doubling slashes', async () => {
+    expect(buildAuthorizationUrl({ ...app, oauthBaseUrl: undefined }, 'http://localhost:8723/callback', 'xyz')).toMatch(
+      /^https:\/\/www\.linkedin\.com\/oauth\/v2\/authorization\?/,
+    );
+    const urls: string[] = [];
+    const fetch: typeof globalThis.fetch = async (input) => {
+      urls.push(String(input));
+      return Response.json({ access_token: 'li-token' });
+    };
+    await exchangeAuthorizationCode({ ...app, oauthBaseUrl: undefined, fetch }, 'li-code', 'http://localhost:8723/callback');
+    await exchangeAuthorizationCode({ ...app, oauthBaseUrl: `${OAUTH_BASE}//`, fetch }, 'li-code', 'http://localhost:8723/callback');
+    expect(urls).toEqual(['https://www.linkedin.com/oauth/v2/accessToken', `${OAUTH_BASE}/oauth/v2/accessToken`]);
+  });
+
   it('builds the authorization URL', () => {
     const url = new URL(buildAuthorizationUrl(app, 'http://localhost:8723/callback', 'xyz'));
     expect(url.origin + url.pathname).toBe(`${OAUTH_BASE}/oauth/v2/authorization`);
@@ -36,6 +50,10 @@ describe('LinkedIn OAuth helpers', () => {
     expect(tokens.accessToken).toBe('li-token');
     expect(tokens.scopes).toEqual(['email', 'openid', 'profile', 'w_member_social']);
     expect(tokens.expiresAt).toBeGreaterThanOrEqual(before + 5_184_000_000);
+    const { headers } = linkedin.requests.at(-1)!;
+    expect(headers.get('content-type')).toBe('application/x-www-form-urlencoded');
+    expect(headers.get('accept')).toBe('application/json');
+    expect(headers.get('user-agent')).toMatch(/^claude-linkedin-connector\//);
     const form = new URLSearchParams(String(linkedin.requests.at(-1)!.body));
     expect(Object.fromEntries(form)).toEqual({
       grant_type: 'authorization_code',
@@ -55,6 +73,31 @@ describe('LinkedIn OAuth helpers', () => {
     const error = await exchangeAuthorizationCode(app, 'bad-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(LinkedInOAuthError);
     expect(error).toMatchObject({ error: 'invalid_grant' });
+  });
+
+  it('falls back to the scopes it asked for when LinkedIn does not list the granted ones', async () => {
+    // Fields of other types than LinkedIn documents count as missing.
+    const fetch = async () => Response.json({ access_token: 'li-token', scope: ['email'], refresh_token: 7, expires_in: '60' });
+    const tokens = await exchangeAuthorizationCode({ ...app, fetch }, 'li-code', 'http://localhost:8723/callback');
+    expect(tokens).toEqual({ accessToken: 'li-token', scopes: ['openid', 'profile', 'w_member_social'], expiresAt: undefined, refreshToken: undefined, refreshTokenExpiresAt: undefined });
+  });
+
+  it.each<[string, () => Response, string, string | undefined]>([
+    ['a page from a proxy', () => new Response('<h1>502 Bad Gateway</h1>', { status: 502 }), 'http_502', '<h1>502 Bad Gateway</h1>'],
+    ['an empty answer', () => new Response('', { status: 503 }), 'http_503', undefined],
+    ['a success without a token', () => Response.json({ expires_in: 60 }), 'http_200', '{"expires_in":60}'],
+  ])('reports %s from the token endpoint', async (_, answer, code, description) => {
+    const error = await exchangeAuthorizationCode({ ...app, fetch: async () => answer() }, 'li-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LinkedInOAuthError);
+    expect(error).toMatchObject({ error: code, description, message: description ? `${code}: ${description}` : code });
+  });
+
+  it('cuts a long error page down to 300 characters', async () => {
+    const page = `<html>${'x'.repeat(1000)}</html>`;
+    const error = await exchangeAuthorizationCode({ ...app, fetch: async () => new Response(page, { status: 500 }) }, 'li-code', 'http://localhost:8723/callback').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({ error: 'http_500', description: page.slice(0, 300) });
   });
 
   it('says which settings to check when LinkedIn rejects the app credentials', async () => {

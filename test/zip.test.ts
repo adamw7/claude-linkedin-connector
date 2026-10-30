@@ -15,6 +15,23 @@ describe('extractZipEntry', () => {
     }
     expect(extractZipEntry(zipArchive({ 'Profile.csv': 'profile' }), isCsv, 1024)).toBeUndefined();
     expect(isZip(Buffer.from('First Name'))).toBe(false);
+    expect(isZip(Buffer.from('PK\x03\x04'))).toBe(true);
+    expect(isZip(Buffer.from('PK\x03'))).toBe(false);
+  });
+
+  it('steps over the extra fields and comments zip tools add to entries', () => {
+    const files = { 'Profile.csv': 'profile', 'Connections.csv': 'First Name,Last Name\nAda,Lovelace' };
+    for (const stored of [false, true]) {
+      const archive = zipArchive(files, { stored, extra: Buffer.from('UT\x05\x00\x01\x00\x00\x00\x00'), comment: 'note' });
+      expect(extractZipEntry(archive, isCsv, 1024)?.toString()).toBe('First Name,Last Name\nAda,Lovelace');
+    }
+  });
+
+  it('reads entries up to the limit, stored ones too', () => {
+    expect(extractZipEntry(zipArchive({ 'Connections.csv': 'x'.repeat(1024) }), isCsv, 1024)).toHaveLength(1024);
+    expect(() => extractZipEntry(zipArchive({ 'Connections.csv': 'x'.repeat(1025) }, { stored: true }), isCsv, 1024)).toThrow(
+      new UserInputError('Connections.csv in this zip archive is larger than 0.0009765625 MB.'),
+    );
   });
 
   it('refuses entries that would expand beyond the limit', () => {
@@ -31,6 +48,51 @@ describe('extractZipEntry', () => {
   ])('reports a %s archive', (_, damage, message) => {
     const archive = zipArchive({ 'Connections.csv': 'First Name,Last Name\nAda,Lovelace' }, { stored: true });
     expect(() => extractZipEntry(damage(archive), isCsv, 1024)).toThrow(new UserInputError(message));
+  });
+
+  describe('with offsets and sizes that point past the data', () => {
+    const name = 'Connections.csv';
+    const archive = () => zipArchive({ [name]: 'First Name,Last Name\nAda,Lovelace' }, { stored: true });
+    /** Where the one entry's central directory record starts, ahead of its name and the 22-byte end record. */
+    const central = (data: Buffer) => data.length - 22 - 46 - name.length;
+
+    it.each([
+      ['the directory offset leads elsewhere', (data: Buffer) => data.writeUInt32LE(0, data.length - 22 + 16)],
+      [
+        'the directory starts too close to the end to hold a record',
+        (data: Buffer) => {
+          data.writeUInt32LE(data.length - 30, data.length - 22 + 16);
+          // A record's signature, so only its length gives it away.
+          data.writeUInt32LE(0x02014b50, data.length - 30);
+        },
+      ],
+      ['the entry has lost its header', (data: Buffer) => data.writeUInt32LE(0, 0)],
+      ['the entry offset misses its header', (data: Buffer) => data.writeUInt32LE(1, central(data) + 42)],
+      ['the entry offset is past the end', (data: Buffer) => data.writeUInt32LE(data.length, central(data) + 42)],
+      ['the stored data runs past the end', (data: Buffer) => data.writeUInt32LE(data.length, central(data) + 20)],
+      ['the stated size is not the size of the data', (data: Buffer) => data.writeUInt32LE(3, central(data) + 24)],
+    ])('reports an archive where %s', (_, damage) => {
+      const data = archive();
+      damage(data);
+      expect(() => extractZipEntry(data, isCsv, 1024)).toThrow(new UserInputError('This zip archive is damaged or incomplete. Download it from LinkedIn again.'));
+    });
+
+    it('asks for the file itself from a ZIP64 archive, whose real sizes it does not read', () => {
+      for (const field of [20, 24, 42]) {
+        const data = archive();
+        data.writeUInt32LE(0xffffffff, central(data) + field);
+        expect(() => extractZipEntry(data, isCsv, 1024)).toThrow(
+          new UserInputError('This zip archive is too large to read here. Extract Connections.csv from it and pass that file instead.'),
+        );
+      }
+    });
+
+    it('reports deflated data that does not inflate', () => {
+      const data = zipArchive({ [name]: 'Ada' });
+      // A deflate block of the reserved type 3.
+      data[30 + name.length] = 0xff;
+      expect(() => extractZipEntry(data, isCsv, 1024)).toThrow(new UserInputError('This zip archive is damaged or incomplete. Download it from LinkedIn again.'));
+    });
   });
 
   it('finds the directory behind an archive comment of up to 65535 bytes', () => {

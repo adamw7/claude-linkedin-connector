@@ -18,6 +18,20 @@ describe('LinkedInClient', () => {
     const [request] = linkedin.requests;
     expect(request!.headers.get('authorization')).toBe('Bearer li-token');
     expect(request!.headers.get('linkedin-version')).toBeNull();
+    // Nothing is sent, so nothing is described.
+    expect(request!.headers.get('content-type')).toBeNull();
+    expect(request!.headers.get('x-restli-method')).toBeNull();
+  });
+
+  it('calls the real LinkedIn API unless told otherwise, without doubling slashes', async () => {
+    const urls: string[] = [];
+    const record: typeof globalThis.fetch = async (input) => {
+      urls.push(String(input));
+      return Response.json(MEMBER);
+    };
+    await new LinkedInClient({ accessToken: 'li-token', version: new ApiVersion(), fetch: record }).getUserInfo();
+    await new LinkedInClient({ accessToken: 'li-token', version: new ApiVersion(), fetch: record, apiBaseUrl: `${API_BASE}//` }).getUserInfo();
+    expect(urls).toEqual(['https://api.linkedin.com/v2/userinfo', `${API_BASE}/v2/userinfo`]);
   });
 
   it('creates a post with versioned Rest.li headers and returns its URN', async () => {
@@ -60,6 +74,7 @@ describe('LinkedInClient', () => {
     const put = linkedin.requests.at(-1)!;
     expect(put.method).toBe('PUT');
     expect(put.headers.get('authorization')).toBe('Bearer li-token');
+    expect(put.headers.get('content-type')).toBe('application/octet-stream');
     expect(await client.getAssetStatus('images', urn)).toBe('AVAILABLE');
   });
 
@@ -83,6 +98,65 @@ describe('LinkedInClient', () => {
     expect(error).toBeInstanceOf(LinkedInApiError);
     expect(error).toMatchObject({ status: 401, details: { code: 'REVOKED_ACCESS_TOKEN', serviceErrorCode: 65601 } });
     expect((error as Error).message).toContain('revoked');
+  });
+
+  it.each<[string, () => Response, string]>([
+    ['a text body', () => new Response('Upstream timed out', { status: 504, statusText: 'Gateway Timeout' }), 'Upstream timed out'],
+    ['JSON without a message', () => Response.json({ status: 500 }, { status: 500 }), '{"status":500}'],
+    ['an empty body', () => new Response(null, { status: 502, statusText: 'Bad Gateway' }), 'Bad Gateway'],
+    ['nothing at all', () => new Response(null, { status: 500 }), 'HTTP 500'],
+    [
+      'JSON whose fields are not what LinkedIn documents',
+      () => Response.json({ message: 42, code: 7, serviceErrorCode: '65601' }, { status: 500 }),
+      '{"message":42,"code":7,"serviceErrorCode":"65601"}',
+    ],
+    [
+      'a body that breaks off',
+      () => new Response(new ReadableStream({ start: (stream) => stream.error(new Error('socket hang up')) }), { status: 502, statusText: 'Bad Gateway' }),
+      'Bad Gateway',
+    ],
+  ])('says what went wrong when LinkedIn answers an error with %s', async (_, answer, message) => {
+    linkedin.override(answer);
+    const error = await client.getUserInfo().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LinkedInApiError);
+    expect(error).toMatchObject({ message, details: { code: undefined, serviceErrorCode: undefined, retryAfter: undefined } });
+  });
+
+  it('quotes at most 500 characters of an error body, and passes on Retry-After', async () => {
+    const body = 'x'.repeat(2000);
+    linkedin.override(() => new Response(body, { status: 429, headers: { 'Retry-After': '30' } }));
+    const error = await client.deletePost('urn:li:share:1').catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 429, message: body.slice(0, 500), details: { retryAfter: '30' } });
+  });
+
+  it('refuses an upload LinkedIn registered without saying where to send it', async () => {
+    let value: unknown;
+    linkedin.override(({ url }) => (url.pathname === '/rest/images' || url.pathname === '/rest/documents' ? Response.json({ value }) : undefined));
+    for (value of [{ image: 'urn:li:image:1' }, { uploadUrl: 'https://upload.linkedin.test/1' }, undefined]) {
+      const error = await client.initializeUpload('images', 'urn:li:person:abc123').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(LinkedInApiError);
+      expect(error).toMatchObject({ status: 200, message: 'LinkedIn returned an unexpected images upload response.' });
+    }
+    // A document's URN is under `document`, not `image`.
+    value = { uploadUrl: 'https://upload.linkedin.test/2', image: 'urn:li:image:2' };
+    await expect(client.initializeUpload('documents', 'urn:li:person:abc123')).rejects.toThrow('LinkedIn returned an unexpected documents upload response.');
+    expect(linkedin.find('POST', '/rest/')).toHaveLength(4);
+  });
+
+  it('returns no comment ID when LinkedIn sends none', async () => {
+    linkedin.override(({ url }) => (url.pathname.endsWith('/comments') ? new Response(null, { status: 201 }) : undefined));
+    expect(await client.createComment('urn:li:share:1', 'urn:li:person:abc123', 'Nice')).toBeUndefined();
+  });
+
+  it('reports the rejected version when LinkedIn accepts none of the recent ones', async () => {
+    linkedin.activeVersions = new Set();
+    const version = new ApiVersion('202409', () => new Date('2026-10-17T00:00:00Z'));
+    const stale = new LinkedInClient({ accessToken: 'li-token', version, apiBaseUrl: API_BASE, fetch: linkedin.fetch });
+    const error = await stale.deletePost('urn:li:share:1').catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 426, message: 'Requested version 20240901 is not active', details: { code: 'NONEXISTENT_VERSION' } });
+    // The configured version, then the 13 months back from now.
+    expect(linkedin.find('DELETE', '/rest/posts/')).toHaveLength(14);
+    expect(version.value).toBe('202409');
   });
 
   it('recovers from a sunset API version and remembers the live one', async () => {

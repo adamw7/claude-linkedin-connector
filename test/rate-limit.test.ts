@@ -47,6 +47,14 @@ describe('rateLimit', () => {
     expect([disabled.hit('a'), disabled.hit('a')]).toEqual([true, true]);
   });
 
+  it('keeps counting windows that are still open when it sweeps expired ones', () => {
+    const { clock, hit } = harness(1, 120_000);
+    hit('a');
+    // Past the minute between sweeps, but not the end of the window.
+    clock.t = 61_000;
+    expect(hit('a')).toBe(false);
+  });
+
   it('forgets expired windows', () => {
     const { clock, hit } = harness(1, 1000);
     hit('a');
