@@ -163,8 +163,8 @@ The code in `src/`, bottom to top; each layer may import only from layers below 
 |---|---|---|
 | Leaf | `errors.ts`, `version.ts`, `html.ts`, `paths.ts`, `json.ts` | No project imports |
 | Network | `net/` | `safeFetch` refuses private and loopback addresses; no LinkedIn or MCP knowledge |
-| LinkedIn | `linkedin/` | REST client, OAuth, text escaping, media, link previews, API versions, `Connections.csv`; the only code allowed to call the global `fetch` |
+| LinkedIn | `linkedin/` | REST client, OAuth, text escaping, media, link previews, API versions, `Connections.csv`; `client.ts` and `oauth.ts` are the only code allowed to call the global `fetch`, since the other modules fetch URLs the user gave through `safeFetch` |
 | Local auth, config | `auth/`, `config.ts` | Token storage, post history and browser sign-in; environment variables |
-| MCP | `mcp/` | Tools (`server.ts`); transport agnostic |
-| Remote | `remote/` | HTTP app, OAuth authorization server, client registration, logging, rate limits; the only code allowed to use Express; never uses local token storage |
+| MCP | `mcp/` | Tools (`server.ts`); transport agnostic, so of `auth/` it loads only the hints (`hints.ts`) and the interfaces (`types.ts`), never the sign-in or token storage, even indirectly |
+| Remote | `remote/` | HTTP app, OAuth authorization server, client registration, logging, rate limits; the only code allowed to use Express; never reaches local sign-in or token storage, even through `mcp/` |
 | Composition root | `index.ts` | CLI (`stdio`, `http`, `login`, `logout`, `status`); imported by nothing |

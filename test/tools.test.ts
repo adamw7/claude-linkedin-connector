@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../src/auth/local-auth.js';
+import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../src/auth/hints.js';
 import { PostHistory } from '../src/auth/post-history.js';
 import type { AuthStatus, LinkedInAuth, LinkedInSession, LoginStart, MemberInfo } from '../src/auth/types.js';
 import { ConfigError, NotAuthenticatedError } from '../src/errors.js';

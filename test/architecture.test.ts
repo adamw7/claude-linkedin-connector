@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { projectFiles, type FileInfo } from 'archunit';
+import { extractGraph, ImportKind, projectFiles, type FileInfo } from 'archunit';
 import { describe, expect, it } from 'vitest';
 
 // Architecture rules for src/, checked with ArchUnitTS. The intended layering, bottom to top:
@@ -25,6 +25,28 @@ const notImporting = (pattern: RegExp) => (file: FileInfo) => !pattern.test(file
 
 // ArchUnitTS reports every file as depending on itself, so a target pattern must leave out the source file.
 const srcExcept = (file: string) => new RegExp(`^src/(?!${file.replaceAll('.', '\\.')}$)`);
+
+/** Each file's imports that run: type-only ones are erased by the compiler and load nothing. */
+async function runtimeImports(): Promise<Map<string, string[]>> {
+  const imports = new Map<string, string[]>();
+  for (const { source, target, importKinds } of await extractGraph()) {
+    const typeOnly = importKinds.includes(ImportKind.TYPE) && !importKinds.includes(ImportKind.VALUE);
+    if (source !== target && !typeOnly) imports.set(source, [...(imports.get(source) ?? []), target]);
+  }
+  return imports;
+}
+
+/** Every file that loading `entries` loads, through any number of imports, the entries included. */
+function loadedBy(imports: Map<string, string[]>, entries: string[]): Set<string> {
+  const loaded = new Set<string>();
+  const pending = [...entries];
+  for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+    if (loaded.has(file)) continue;
+    loaded.add(file);
+    pending.push(...(imports.get(file) ?? []));
+  }
+  return loaded;
+}
 
 describe('architecture', () => {
   // Builds the import graph of all of src/, which takes 5 to 15 seconds on a busy 4-core machine.
@@ -62,11 +84,20 @@ describe('architecture', () => {
     await expect(projectFiles().inFolder('src/mcp/**').shouldNot().dependOnFiles().inPath(target)).toPassAsync();
   });
 
-  it.each(['local-auth.ts', 'token-store.ts', 'loopback-login.ts', 'post-history.ts', 'json-file.ts'])(
-    'keeps remote mode off local sign-in and storage (src/auth/%s)',
-    async (target) => {
-      await expect(projectFiles().inFolder('src/remote/**').shouldNot().dependOnFiles().inPath(`src/auth/${target}`)).toPassAsync();
+  // Remote mode keeps no token on disk and signs nobody in through a browser, and the MCP server is shared by both
+  // modes, so neither may reach the sign-in or the token storage, even through a module in between: a rule on direct
+  // imports alone let the MCP server load them for the hints it shows. Of src/auth they may load the hints and the
+  // interfaces. The CLI loads both modes, so the process still loads them; the code serving remote requests can't.
+  it.each(['src/mcp/', 'src/remote/'])(
+    'keeps %s off local sign-in and storage, directly or through other modules',
+    async (folder) => {
+      const imports = await runtimeImports();
+      const entries = [...imports.keys()].filter((file) => file.startsWith(folder));
+      expect(entries.length).toBeGreaterThan(0);
+      const loaded = [...loadedBy(imports, entries)].filter((file) => file.startsWith('src/auth/'));
+      expect(loaded.filter((file) => !['src/auth/hints.ts', 'src/auth/types.ts'].includes(file))).toEqual([]);
     },
+    60_000,
   );
 
   it('imports the composition root from nowhere', async () => {
@@ -123,13 +154,15 @@ describe('architecture', () => {
     await expect(rule).toPassAsync();
   });
 
+  // Only the REST and OAuth clients, whose URLs are LinkedIn's: link-preview.ts and media.ts sit beside them but fetch
+  // URLs the user gave, which must go through safeFetch's refusal of private and loopback addresses.
   it('calls the global fetch only from the LinkedIn clients; other outbound requests go through safeFetch', async () => {
     const rule = projectFiles()
       .inFolder('src/**')
       .should()
       .adhereTo(
-        (file) => file.path.includes('src/linkedin/') || notImporting(/(?<!typeof )globalThis\.fetch\b|(?<![\w.])fetch\(/)(file),
-        'only src/linkedin may call the global fetch',
+        (file) => /src\/linkedin\/(client|oauth)\.ts$/.test(file.path) || notImporting(/(?<!typeof )globalThis\.fetch\b|(?<![\w.])fetch\(/)(file),
+        'only src/linkedin/client.ts and src/linkedin/oauth.ts may call the global fetch',
       );
     await expect(rule).toPassAsync();
   });

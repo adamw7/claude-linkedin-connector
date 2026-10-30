@@ -30,10 +30,10 @@ Each layer imports only from layers below it; `test/architecture.test.ts` enforc
 |---|---|---|
 | Leaf | `src/errors.ts`, `src/version.ts`, `src/html.ts`, `src/paths.ts`, `src/json.ts` | No project imports |
 | Network | `src/net/` | `safeFetch` refuses private/loopback addresses; no LinkedIn or MCP knowledge |
-| LinkedIn | `src/linkedin/` | REST + OAuth clients; the only code that may call the global `fetch` |
+| LinkedIn | `src/linkedin/` | REST + OAuth clients (`client.ts`, `oauth.ts`: the only code that may call the global `fetch`) |
 | Auth, config | `src/auth/`, `src/config.ts` | Local sign-in, token storage, `LINKEDIN_*` env vars |
-| MCP | `src/mcp/` | Tools (`server.ts`), transport agnostic |
-| Remote | `src/remote/` | The only code that may use Express; never uses local token storage |
+| MCP | `src/mcp/` | Tools (`server.ts`), transport agnostic; of `src/auth/` loads only `hints.ts` and `types.ts` |
+| Remote | `src/remote/` | The only code that may use Express; never reaches local sign-in or token storage, even through `src/mcp/` |
 | Composition root | `src/index.ts` | CLI; imported by nothing |
 
 ## Conventions

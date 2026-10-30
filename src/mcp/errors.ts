@@ -1,5 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
-import { REAUTH_HINT } from '../auth/local-auth.js';
+import { REAUTH_HINT } from '../auth/hints.js';
 import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UnconfirmedError, UserInputError } from '../errors.js';
 import { FetchError } from '../net/safe-fetch.js';
 

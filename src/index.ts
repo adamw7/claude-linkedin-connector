@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { LocalAuth, signInPageHint, SWITCH_ACCOUNT_HINT } from './auth/local-auth.js';
+import { signInPageHint, SWITCH_ACCOUNT_HINT } from './auth/hints.js';
+import { LocalAuth } from './auth/local-auth.js';
 import { openBrowser } from './auth/open-browser.js';
 import { PostHistory } from './auth/post-history.js';
 import { loadLocalConfig, loadRemoteConfig } from './config.js';

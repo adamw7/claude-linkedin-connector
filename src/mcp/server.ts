@@ -1,7 +1,7 @@
 import { McpServer, type CallToolResult, type ToolAnnotations, type ToolCallback } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/local-auth.js';
-import { MAX_REMEMBERED_POSTS, type PostHistory } from '../auth/post-history.js';
+import { ACCESS_TOKEN_HINT, LAST_FAILURE, SIGN_IN_HINT, signInPageHint, SWITCH_ACCOUNT_HINT } from '../auth/hints.js';
+import type { PostHistory } from '../auth/post-history.js';
 import type { LinkedInAuth, LinkedInSession } from '../auth/types.js';
 import { LinkedInApiError, NotAuthenticatedError, sentence, UnconfirmedError, UserInputError } from '../errors.js';
 import { LinkedInClient, type AssetKind, type PostContent, type ReactionType } from '../linkedin/client.js';
@@ -851,7 +851,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           'Use it to find a post from an earlier conversation to edit or delete; to edit one, change the text it returns.',
         inputSchema: z.object({
           query: z.string().optional().describe('Only posts whose text contains this. Ignores case and accents.'),
-          limit: z.number().int().min(1).max(MAX_REMEMBERED_POSTS).default(10).describe('Maximum posts to return.'),
+          limit: z.number().int().min(1).max(history.capacity).default(10).describe('Maximum posts to return.'),
         }),
         outputSchema: z.object({
           posts: z.array(

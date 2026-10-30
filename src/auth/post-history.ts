@@ -29,6 +29,9 @@ function isPublishedPost(value: unknown): value is PublishedPost {
  * conversation could only be edited or deleted with a link the user kept.
  */
 export class PostHistory {
+  /** How many posts it remembers; the tools read it here, so they need no runtime import of this module. */
+  readonly capacity = MAX_REMEMBERED_POSTS;
+
   /** The update in progress; updates run one at a time so posts published at once are all remembered. */
   private updating: Promise<void> = Promise.resolve();
 

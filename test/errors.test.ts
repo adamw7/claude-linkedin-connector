@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REAUTH_HINT } from '../src/auth/local-auth.js';
+import { REAUTH_HINT } from '../src/auth/hints.js';
 import { ConfigError, LinkedInApiError, LinkedInOAuthError, NotAuthenticatedError, sentence, UnconfirmedError, UserInputError } from '../src/errors.js';
 import { describeError, errorKind, errorResult } from '../src/mcp/errors.js';
 import { FetchError } from '../src/net/safe-fetch.js';
