@@ -15,6 +15,23 @@ describe('extractZipEntry', () => {
     }
     expect(extractZipEntry(zipArchive({ 'Profile.csv': 'profile' }), isCsv, 1024)).toBeUndefined();
     expect(isZip(Buffer.from('First Name'))).toBe(false);
+    expect(isZip(Buffer.from('PK\x03\x04'))).toBe(true);
+    expect(isZip(Buffer.from('PK\x03'))).toBe(false);
+  });
+
+  it('steps over the extra fields and comments zip tools add to entries', () => {
+    const files = { 'Profile.csv': 'profile', 'Connections.csv': 'First Name,Last Name\nAda,Lovelace' };
+    for (const stored of [false, true]) {
+      const archive = zipArchive(files, { stored, extra: Buffer.from('UT\x05\x00\x01\x00\x00\x00\x00'), comment: 'note' });
+      expect(extractZipEntry(archive, isCsv, 1024)?.toString()).toBe('First Name,Last Name\nAda,Lovelace');
+    }
+  });
+
+  it('reads entries up to the limit, stored ones too', () => {
+    expect(extractZipEntry(zipArchive({ 'Connections.csv': 'x'.repeat(1024) }), isCsv, 1024)).toHaveLength(1024);
+    expect(() => extractZipEntry(zipArchive({ 'Connections.csv': 'x'.repeat(1025) }, { stored: true }), isCsv, 1024)).toThrow(
+      new UserInputError('Connections.csv in this zip archive is larger than 0.0009765625 MB.'),
+    );
   });
 
   it('refuses entries that would expand beyond the limit', () => {
@@ -41,10 +58,19 @@ describe('extractZipEntry', () => {
 
     it.each([
       ['the directory offset leads elsewhere', (data: Buffer) => data.writeUInt32LE(0, data.length - 22 + 16)],
-      ['the directory runs past the end', (data: Buffer) => data.writeUInt32LE(data.length - 30, data.length - 22 + 16)],
+      [
+        'the directory starts too close to the end to hold a record',
+        (data: Buffer) => {
+          data.writeUInt32LE(data.length - 30, data.length - 22 + 16);
+          // A record's signature, so only its length gives it away.
+          data.writeUInt32LE(0x02014b50, data.length - 30);
+        },
+      ],
+      ['the entry has lost its header', (data: Buffer) => data.writeUInt32LE(0, 0)],
       ['the entry offset misses its header', (data: Buffer) => data.writeUInt32LE(1, central(data) + 42)],
       ['the entry offset is past the end', (data: Buffer) => data.writeUInt32LE(data.length, central(data) + 42)],
       ['the stored data runs past the end', (data: Buffer) => data.writeUInt32LE(data.length, central(data) + 20)],
+      ['the stated size is not the size of the data', (data: Buffer) => data.writeUInt32LE(3, central(data) + 24)],
     ])('reports an archive where %s', (_, damage) => {
       const data = archive();
       damage(data);

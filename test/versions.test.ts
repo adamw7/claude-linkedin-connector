@@ -43,7 +43,15 @@ describe('LinkedIn API versions', () => {
 
   it('gives up when no recent version is accepted', async () => {
     const version = new ApiVersion('202609', () => new Date('2026-10-17T00:00:00Z'));
-    expect(await version.recover('202609', async () => rejected())).toBeUndefined();
+    const tried: string[] = [];
+    expect(
+      await version.recover('202609', async (candidate) => {
+        tried.push(candidate);
+        return rejected();
+      }),
+    ).toBeUndefined();
     expect(version.value).toBe('202609');
+    // The 13 months back from now, but not the version LinkedIn just rejected.
+    expect(tried).toEqual(['202610', '202608', '202607', '202606', '202605', '202604', '202603', '202602', '202601', '202512', '202511', '202510']);
   });
 });

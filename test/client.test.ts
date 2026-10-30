@@ -18,6 +18,20 @@ describe('LinkedInClient', () => {
     const [request] = linkedin.requests;
     expect(request!.headers.get('authorization')).toBe('Bearer li-token');
     expect(request!.headers.get('linkedin-version')).toBeNull();
+    // Nothing is sent, so nothing is described.
+    expect(request!.headers.get('content-type')).toBeNull();
+    expect(request!.headers.get('x-restli-method')).toBeNull();
+  });
+
+  it('calls the real LinkedIn API unless told otherwise, without doubling slashes', async () => {
+    const urls: string[] = [];
+    const record: typeof globalThis.fetch = async (input) => {
+      urls.push(String(input));
+      return Response.json(MEMBER);
+    };
+    await new LinkedInClient({ accessToken: 'li-token', version: new ApiVersion(), fetch: record }).getUserInfo();
+    await new LinkedInClient({ accessToken: 'li-token', version: new ApiVersion(), fetch: record, apiBaseUrl: `${API_BASE}//` }).getUserInfo();
+    expect(urls).toEqual(['https://api.linkedin.com/v2/userinfo', `${API_BASE}/v2/userinfo`]);
   });
 
   it('creates a post with versioned Rest.li headers and returns its URN', async () => {
@@ -60,6 +74,7 @@ describe('LinkedInClient', () => {
     const put = linkedin.requests.at(-1)!;
     expect(put.method).toBe('PUT');
     expect(put.headers.get('authorization')).toBe('Bearer li-token');
+    expect(put.headers.get('content-type')).toBe('application/octet-stream');
     expect(await client.getAssetStatus('images', urn)).toBe('AVAILABLE');
   });
 
@@ -90,6 +105,16 @@ describe('LinkedInClient', () => {
     ['JSON without a message', () => Response.json({ status: 500 }, { status: 500 }), '{"status":500}'],
     ['an empty body', () => new Response(null, { status: 502, statusText: 'Bad Gateway' }), 'Bad Gateway'],
     ['nothing at all', () => new Response(null, { status: 500 }), 'HTTP 500'],
+    [
+      'JSON whose fields are not what LinkedIn documents',
+      () => Response.json({ message: 42, code: 7, serviceErrorCode: '65601' }, { status: 500 }),
+      '{"message":42,"code":7,"serviceErrorCode":"65601"}',
+    ],
+    [
+      'a body that breaks off',
+      () => new Response(new ReadableStream({ start: (stream) => stream.error(new Error('socket hang up')) }), { status: 502, statusText: 'Bad Gateway' }),
+      'Bad Gateway',
+    ],
   ])('says what went wrong when LinkedIn answers an error with %s', async (_, answer, message) => {
     linkedin.override(answer);
     const error = await client.getUserInfo().catch((e: unknown) => e);
@@ -105,17 +130,17 @@ describe('LinkedInClient', () => {
   });
 
   it('refuses an upload LinkedIn registered without saying where to send it', async () => {
-    for (const value of [{ image: 'urn:li:image:1' }, { uploadUrl: 'https://upload.linkedin.test/1' }, undefined]) {
-      linkedin.override(({ url }) => (url.pathname === '/rest/images' ? Response.json({ value }) : undefined));
-      await expect(client.initializeUpload('images', 'urn:li:person:abc123')).rejects.toThrow(
-        new LinkedInApiError(200, 'LinkedIn returned an unexpected images upload response.'),
-      );
+    let value: unknown;
+    linkedin.override(({ url }) => (url.pathname === '/rest/images' || url.pathname === '/rest/documents' ? Response.json({ value }) : undefined));
+    for (value of [{ image: 'urn:li:image:1' }, { uploadUrl: 'https://upload.linkedin.test/1' }, undefined]) {
+      const error = await client.initializeUpload('images', 'urn:li:person:abc123').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(LinkedInApiError);
+      expect(error).toMatchObject({ status: 200, message: 'LinkedIn returned an unexpected images upload response.' });
     }
     // A document's URN is under `document`, not `image`.
-    linkedin.override(({ url }) =>
-      url.pathname === '/rest/documents' ? Response.json({ value: { uploadUrl: 'https://upload.linkedin.test/2', image: 'urn:li:image:2' } }) : undefined,
-    );
+    value = { uploadUrl: 'https://upload.linkedin.test/2', image: 'urn:li:image:2' };
     await expect(client.initializeUpload('documents', 'urn:li:person:abc123')).rejects.toThrow('LinkedIn returned an unexpected documents upload response.');
+    expect(linkedin.find('POST', '/rest/')).toHaveLength(4);
   });
 
   it('returns no comment ID when LinkedIn sends none', async () => {

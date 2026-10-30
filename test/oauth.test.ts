@@ -13,6 +13,20 @@ const app = {
 };
 
 describe('LinkedIn OAuth helpers', () => {
+  it('signs in at the real LinkedIn unless told otherwise, without doubling slashes', async () => {
+    expect(buildAuthorizationUrl({ ...app, oauthBaseUrl: undefined }, 'http://localhost:8723/callback', 'xyz')).toMatch(
+      /^https:\/\/www\.linkedin\.com\/oauth\/v2\/authorization\?/,
+    );
+    const urls: string[] = [];
+    const fetch: typeof globalThis.fetch = async (input) => {
+      urls.push(String(input));
+      return Response.json({ access_token: 'li-token' });
+    };
+    await exchangeAuthorizationCode({ ...app, oauthBaseUrl: undefined, fetch }, 'li-code', 'http://localhost:8723/callback');
+    await exchangeAuthorizationCode({ ...app, oauthBaseUrl: `${OAUTH_BASE}//`, fetch }, 'li-code', 'http://localhost:8723/callback');
+    expect(urls).toEqual(['https://www.linkedin.com/oauth/v2/accessToken', `${OAUTH_BASE}/oauth/v2/accessToken`]);
+  });
+
   it('builds the authorization URL', () => {
     const url = new URL(buildAuthorizationUrl(app, 'http://localhost:8723/callback', 'xyz'));
     expect(url.origin + url.pathname).toBe(`${OAUTH_BASE}/oauth/v2/authorization`);
@@ -36,6 +50,10 @@ describe('LinkedIn OAuth helpers', () => {
     expect(tokens.accessToken).toBe('li-token');
     expect(tokens.scopes).toEqual(['email', 'openid', 'profile', 'w_member_social']);
     expect(tokens.expiresAt).toBeGreaterThanOrEqual(before + 5_184_000_000);
+    const { headers } = linkedin.requests.at(-1)!;
+    expect(headers.get('content-type')).toBe('application/x-www-form-urlencoded');
+    expect(headers.get('accept')).toBe('application/json');
+    expect(headers.get('user-agent')).toMatch(/^claude-linkedin-connector\//);
     const form = new URLSearchParams(String(linkedin.requests.at(-1)!.body));
     expect(Object.fromEntries(form)).toEqual({
       grant_type: 'authorization_code',
@@ -58,7 +76,8 @@ describe('LinkedIn OAuth helpers', () => {
   });
 
   it('falls back to the scopes it asked for when LinkedIn does not list the granted ones', async () => {
-    const fetch = async () => Response.json({ access_token: 'li-token' });
+    // Fields of other types than LinkedIn documents count as missing.
+    const fetch = async () => Response.json({ access_token: 'li-token', scope: ['email'], refresh_token: 7, expires_in: '60' });
     const tokens = await exchangeAuthorizationCode({ ...app, fetch }, 'li-code', 'http://localhost:8723/callback');
     expect(tokens).toEqual({ accessToken: 'li-token', scopes: ['openid', 'profile', 'w_member_social'], expiresAt: undefined, refreshToken: undefined, refreshTokenExpiresAt: undefined });
   });
