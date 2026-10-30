@@ -57,6 +57,30 @@ describe('LinkedIn OAuth helpers', () => {
     expect(error).toMatchObject({ error: 'invalid_grant' });
   });
 
+  it('falls back to the scopes it asked for when LinkedIn does not list the granted ones', async () => {
+    const fetch = async () => Response.json({ access_token: 'li-token' });
+    const tokens = await exchangeAuthorizationCode({ ...app, fetch }, 'li-code', 'http://localhost:8723/callback');
+    expect(tokens).toEqual({ accessToken: 'li-token', scopes: ['openid', 'profile', 'w_member_social'], expiresAt: undefined, refreshToken: undefined, refreshTokenExpiresAt: undefined });
+  });
+
+  it.each<[string, () => Response, string, string | undefined]>([
+    ['a page from a proxy', () => new Response('<h1>502 Bad Gateway</h1>', { status: 502 }), 'http_502', '<h1>502 Bad Gateway</h1>'],
+    ['an empty answer', () => new Response('', { status: 503 }), 'http_503', undefined],
+    ['a success without a token', () => Response.json({ expires_in: 60 }), 'http_200', '{"expires_in":60}'],
+  ])('reports %s from the token endpoint', async (_, answer, code, description) => {
+    const error = await exchangeAuthorizationCode({ ...app, fetch: async () => answer() }, 'li-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LinkedInOAuthError);
+    expect(error).toMatchObject({ error: code, description, message: description ? `${code}: ${description}` : code });
+  });
+
+  it('cuts a long error page down to 300 characters', async () => {
+    const page = `<html>${'x'.repeat(1000)}</html>`;
+    const error = await exchangeAuthorizationCode({ ...app, fetch: async () => new Response(page, { status: 500 }) }, 'li-code', 'http://localhost:8723/callback').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({ error: 'http_500', description: page.slice(0, 300) });
+  });
+
   it('says which settings to check when LinkedIn rejects the app credentials', async () => {
     const error = await exchangeAuthorizationCode({ ...app, clientSecret: 'mistyped' }, 'li-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
     expect(error).toMatchObject({

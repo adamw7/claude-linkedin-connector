@@ -534,6 +534,25 @@ describe('remote connector discovery', () => {
     expect(await malformed.json()).toEqual({ error: 'invalid_request', error_description: 'The request body is not valid JSON.' });
   });
 
+  it('answers other unreadable bodies with a generic JSON error', async () => {
+    const remote = await startRemote();
+    const response = await fetch(`${remote.base}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=latin1' }, body: '{}' });
+    expect(response.status).toBe(415);
+    expect(await response.json()).toEqual({ error: 'invalid_request', error_description: 'The request could not be processed.' });
+    expect(remote.logs.filter((entry) => entry.level === 'error')).toEqual([]);
+  });
+
+  it('logs malformed MCP requests', async () => {
+    const remote = await startRemote();
+    const response = await fetch(remote.mcpUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${await accessToken(remote)}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1 }),
+    });
+    expect(response.status).toBe(400);
+    expect(remote.logs).toContainEqual({ level: 'warn', event: 'mcp_error', error: expect.objectContaining({ message: expect.stringContaining('not a valid JSON-RPC message') }) });
+  });
+
   it('refuses compressed bodies on the endpoints anyone can call before signing in', async () => {
     const remote = await startRemote();
     const post = (path: string, type: string, body: string) =>
@@ -637,6 +656,56 @@ describe('authorization endpoint', () => {
     }
   });
 
+  it('shows an error page for a request without client_id or redirect_uri', async () => {
+    const remote = await startRemote();
+    const clientId = await client(remote);
+    for (const params of [{ redirect_uri: REDIRECT }, { client_id: clientId }, { client_id: '', redirect_uri: REDIRECT }]) {
+      const response = await fetch(authorizeUrl(remote, { response_type: 'code', ...params }), { redirect: 'manual' });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain('The authorization request is missing client_id or redirect_uri.');
+    }
+  });
+
+  it('lists what connecting allows, including comments and Pages when they are turned on', async () => {
+    const consent = async (scopes: string[]) => {
+      const remote = await startRemote({ scopes });
+      const params = { response_type: 'code', client_id: await client(remote), redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256' };
+      const html = await (await fetch(authorizeUrl(remote, params))).text();
+      return [...html.matchAll(/<li>([^<]*)<\/li>/g)].map((match) => match[1]);
+    };
+    const basics = ['See your name, email address and profile photo', 'Publish posts on your behalf, and edit or delete them'];
+    expect(await consent(DEFAULT_SCOPES)).toEqual(basics);
+    expect(await consent([...DEFAULT_SCOPES, 'w_member_social_feed', 'w_organization_social'])).toEqual([
+      ...basics,
+      'Comment on and react to posts on your behalf',
+      'Post, comment and react as LinkedIn Pages you administer',
+    ]);
+  });
+
+  it('over https, uses __Host- cookies, which only this host can set, and marks them Secure', async () => {
+    const remote = await startRemote({ publicUrl: new URL('https://linkedin-mcp.example.com') });
+    const clientId = await client(remote);
+    const params = { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256', state: 'abc' };
+    const browser = new Browser();
+    const page = await browser.get(authorizeUrl(remote, params));
+    expect(page.headers.get('set-cookie')).toMatch(/^__Host-csrf=[^;]+; Max-Age=600; Path=\/; Expires=[^;]+; HttpOnly; Secure; SameSite=Strict$/);
+    const html = await page.text();
+    const form = { consent: hiddenField(html, 'consent'), csrf: hiddenField(html, 'csrf'), decision: 'approve' };
+
+    // The same value under the unprefixed name, as a sibling subdomain could set it, doesn't count.
+    const planted = new Browser();
+    planted.cookies.set('csrf', browser.cookies.get('__Host-csrf')!);
+    expect((await planted.post(`${remote.base}/authorize`, form)).status).toBe(400);
+
+    const decided = await browser.post(`${remote.base}/authorize`, form, 'https://linkedin-mcp.example.com');
+    expect(decided.status).toBe(302);
+    expect(decided.headers.getSetCookie()).toContainEqual(expect.stringMatching(/^__Host-auth=[^;]+; Max-Age=600; Path=\/; Expires=[^;]+; HttpOnly; Secure; SameSite=Lax$/));
+    const linkedInState = new URL(decided.headers.get('location')!).searchParams.get('state')!;
+    const back = await browser.get(`${remote.base}/oauth/callback?code=li-code&state=${linkedInState}`);
+    expect(back.status).toBe(302);
+    expect(new URL(back.headers.get('location')!).searchParams.get('code')).toBeTruthy();
+  });
+
   it('accepts any port for loopback redirect URIs', async () => {
     const remote = await startRemote();
     const clientId = await client(remote);
@@ -728,6 +797,19 @@ describe('authorization endpoint', () => {
     expect(described.searchParams.get('error_description')).toBe('The user "cancelled" LinkedIn login');
     const badCode = await approve(new Browser(), authorizeUrl(remote, params), { linkedInQuery: { code: 'wrong' } });
     expect(badCode.searchParams.get('error')).toBe('server_error');
+  });
+
+  it('tells the client when LinkedIn sends back neither a code nor an error', async () => {
+    const remote = await startRemote();
+    const clientId = await client(remote);
+    const params = { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256', state: 'abc' };
+    const back = await approve(new Browser(), authorizeUrl(remote, params), { linkedInQuery: {} });
+    expect(Object.fromEntries(back.searchParams)).toEqual({
+      error: 'server_error',
+      error_description: 'LinkedIn did not return an authorization code.',
+      state: 'abc',
+      iss: remote.base,
+    });
   });
 
   it('tells the client, and the operator, when the LinkedIn app lacks the product for a scope', async () => {
@@ -896,6 +978,40 @@ describe('token endpoint', () => {
     const { clientId, verifier, code } = await obtainCode(remote);
     const result = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
     expect(result.body).toMatchObject({ error: 'invalid_grant', error_description: expect.stringContaining('already expired') });
+  });
+
+  it('refuses a request without a code or a PKCE verifier', async () => {
+    const remote = await startRemote();
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const base = { grant_type: 'authorization_code', client_id: clientId };
+    expect((await token(remote, { ...base, code_verifier: verifier })).body).toEqual({
+      error: 'invalid_grant',
+      error_description: 'The authorization code is invalid, expired, or was issued to another client.',
+    });
+    expect((await token(remote, { ...base, code })).body).toEqual({ error: 'invalid_grant', error_description: 'PKCE verification failed.' });
+    // Neither attempt used up the code.
+    expect((await token(remote, { ...base, code, code_verifier: verifier })).status).toBe(200);
+  });
+
+  it('authenticates nobody with an Authorization header it cannot read', async () => {
+    const remote = await startRemote();
+    const { body: client } = await register(remote, { redirect_uris: [REDIRECT], token_endpoint_auth_method: 'client_secret_basic' });
+    const form = { grant_type: 'authorization_code', code: 'x', client_id: client.client_id };
+    for (const credentials of [`${client.client_id}${client.client_secret}`, `%E0:${client.client_secret}`]) {
+      const result = await token(remote, form, { Authorization: `Basic ${Buffer.from(credentials).toString('base64')}` });
+      expect(result).toEqual({ status: 401, body: { error: 'invalid_client', error_description: 'Client authentication failed.' } });
+    }
+    expect((await token(remote, { ...form, client_id: '' })).status).toBe(401);
+  });
+
+  it('lets a token last 60 days when LinkedIn does not say when its own expires', async () => {
+    const remote = await startRemote();
+    remote.linkedin.override(({ url }) =>
+      url.pathname === '/oauth/v2/accessToken' ? Response.json({ access_token: 'li-token', scope: remote.linkedin.grantedScope }) : undefined,
+    );
+    const { clientId, verifier, code } = await obtainCode(remote);
+    const result = await token(remote, { grant_type: 'authorization_code', code, client_id: clientId, code_verifier: verifier });
+    expect(result.body).toMatchObject({ token_type: 'Bearer', expires_in: 60 * 24 * 60 * 60 });
   });
 
   it('only supports the authorization_code grant', async () => {

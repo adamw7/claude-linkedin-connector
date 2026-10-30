@@ -30,6 +30,17 @@ describe('LinkedIn API versions', () => {
     expect(logs[0]).toContain('switched to 202609');
   });
 
+  it('switches once when several requests sent with the rejected version recover', async () => {
+    const logs: string[] = [];
+    const version = new ApiVersion('202409', () => new Date('2026-10-17T00:00:00Z'), (m) => logs.push(m));
+    const live = async (candidate: string) => (candidate === '202610' ? accepted() : rejected());
+    await version.recover('202409', live);
+    // A second request, sent before the first recovered, comes back rejected too.
+    expect((await version.recover('202409', live))?.status).toBe(200);
+    expect(version.value).toBe('202610');
+    expect(logs).toEqual(['LinkedIn API version 202409 is not active; switched to 202610.']);
+  });
+
   it('gives up when no recent version is accepted', async () => {
     const version = new ApiVersion('202609', () => new Date('2026-10-17T00:00:00Z'));
     expect(await version.recover('202609', async () => rejected())).toBeUndefined();

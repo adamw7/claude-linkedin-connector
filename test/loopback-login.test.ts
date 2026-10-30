@@ -120,6 +120,14 @@ describe('LoopbackLogin', () => {
     expect(next).not.toBe(flow);
   });
 
+  it('says it connected without naming anyone when the member has no name', async () => {
+    const { loopback } = await login({ onTokens: async () => undefined });
+    const flow = await loopback.start();
+    const response = await fetch(callback(flow, { code: 'li-code' }));
+    expect(await response.text()).toContain('<h1>Connected to LinkedIn</h1>');
+    expect(await flow.completion).toBeUndefined();
+  });
+
   it('rejects callbacks with the wrong state without ending the flow', async () => {
     const { loopback } = await login();
     const flow = await loopback.start();

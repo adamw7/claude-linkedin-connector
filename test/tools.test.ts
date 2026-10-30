@@ -264,6 +264,18 @@ describe('linkedin_get_profile', () => {
     });
     expect(h.auth.member).toEqual({ id: 'abc123', name: 'Ada Lovelace', email: 'ada@example.com' });
   });
+
+  it('passes on a locale LinkedIn writes as a string, and leaves out a missing one', async () => {
+    const profile = async (locale: unknown) => {
+      const h = await harness();
+      h.linkedin.override(({ url }) => (url.pathname === '/v2/userinfo' ? Response.json({ sub: 'abc123', locale }) : undefined));
+      return (await call(h, 'linkedin_get_profile')).data!;
+    };
+    expect((await profile('pl_PL')).locale).toBe('pl_PL');
+    expect((await profile({ language: 'de' })).locale).toBe('de');
+    expect(await profile(undefined)).toEqual({ memberUrn: 'urn:li:person:abc123' });
+    expect(await profile({})).toEqual({ memberUrn: 'urn:li:person:abc123' });
+  });
 });
 
 describe('linkedin_read_connections', () => {
@@ -289,6 +301,22 @@ describe('linkedin_read_connections', () => {
     const first = await read({ limit: 2 });
     expect(first).toMatchObject({ matched: 3, nextOffset: 2 });
     expect(names(await read({ limit: 2, offset: first.nextOffset }))).toEqual(['Alan Turing']);
+  });
+
+  it('lists undated connections last, and leaves them out when filtering by date', async () => {
+    const h = await harness();
+    const csv = [
+      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+      'Undated,One,,,,,',
+      'Old,Friend,,,,,01 Jan 2020',
+      'Unreadable,Date,,,,,sometime in 2023',
+      'New,Friend,,,,,01 Jan 2026',
+    ].join('\n');
+    const names = async (args: Record<string, unknown>) =>
+      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    expect(await names({})).toEqual(['New Friend', 'Old Friend', 'Undated One', 'Unreadable Date']);
+    expect(await names({ connectedAfter: '2019-01-01' })).toEqual(['New Friend', 'Old Friend']);
+    expect(await names({ connectedBefore: '2030-01-01' })).toEqual(['New Friend', 'Old Friend']);
   });
 
   it('matches companies and text regardless of accents, and any of several companies', async () => {
@@ -447,6 +475,15 @@ describe('linkedin_create_post', () => {
     expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
   });
 
+  it("reports why the member couldn't be looked up, and publishes nothing", async () => {
+    const h = await harness();
+    h.linkedin.override(({ url }) => (url.pathname === '/v2/userinfo' ? Response.json({ message: 'Service unavailable' }, { status: 503 }) : undefined));
+    const result = await call(h, 'linkedin_create_post', { text: 'Hello' });
+    expect(result).toMatchObject({ isError: true, text: 'LinkedIn had an internal problem (HTTP 503): Service unavailable. Try again in a moment.' });
+    expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
+    expect(h.auth.member).toBeUndefined();
+  });
+
   it('uploads several images as a multi-image post', async () => {
     const h = await harness();
     const dataUri = `data:image/png;base64,${PNG.toString('base64')}`;
@@ -588,7 +625,22 @@ describe('linkedin_create_post', () => {
 
     h.linkedin.assetStatus = 'PROCESSING_FAILED';
     const failed = await call(h, 'linkedin_create_post', { text: 'Pic', images: [{ source: join(files, 'photo.png') }] });
-    expect(failed).toMatchObject({ isError: true, text: expect.stringContaining('could not process') });
+    expect(failed).toMatchObject({ isError: true, text: 'LinkedIn could not process the uploaded image.' });
+    const documents = await harness();
+    documents.linkedin.assetStatus = 'PROCESSING_FAILED';
+    const failedDocument = await call(documents, 'linkedin_create_post', { text: 'Deck', document: { source: `${web.url}/talk.pdf`, title: 'Deck' } });
+    expect(failedDocument).toMatchObject({ isError: true, text: 'LinkedIn could not process the uploaded document.' });
+    expect(documents.linkedin.find('POST', '/rest/posts')).toHaveLength(0);
+  });
+
+  it("posts without waiting when LinkedIn can't say whether an upload is ready, as it checks the upload when posting", async () => {
+    const h = await harness();
+    h.linkedin.override((request) =>
+      request.method === 'GET' && request.url.pathname.startsWith('/rest/images/') ? Response.json({ message: 'Unavailable' }, { status: 503 }) : undefined,
+    );
+    expect((await call(h, 'linkedin_create_post', { text: 'Pic', images: [{ source: join(files, 'photo.png') }] })).isError).toBe(false);
+    expect(h.linkedin.find('GET', '/rest/images/')).toHaveLength(1);
+    expect(h.linkedin.find('POST', '/rest/posts')).toHaveLength(1);
   });
 
   /** Keeps every upload processing; records when LinkedIn was asked about each and when the post was created. */
@@ -1246,6 +1298,18 @@ describe('linkedin_delete_post', () => {
     expect((await call(unscoped, 'linkedin_delete_post', { post: 'urn:li:share:7' })).text).toMatch(/^LinkedIn denied permission for this action: .*linkedin_login/);
   });
 
+  it('says LinkedIn could not be reached, even for an activity URN', async () => {
+    const h = await harness();
+    h.linkedin.override((r) => {
+      if (r.method === 'DELETE') throw new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNRESET'), { code: 'ECONNRESET' }) });
+      return undefined;
+    });
+    expect(await call(h, 'linkedin_delete_post', { post: 'urn:li:activity:7' })).toMatchObject({
+      isError: true,
+      text: 'Could not reach LinkedIn (ECONNRESET). Check the internet connection and try again.',
+    });
+  });
+
   it('explains when an activity URN cannot be deleted', async () => {
     const h = await harness();
     h.linkedin.override((r) => (r.method === 'DELETE' ? new Response('{"message":"Invalid post id"}', { status: 400 }) : undefined));
@@ -1530,6 +1594,14 @@ describe('authentication tools', () => {
       name: 'Ada Lovelace',
       message: 'Signed in to LinkedIn as Ada Lovelace.',
     });
+  });
+
+  it('says it signed in without a name when LinkedIn gave none', async () => {
+    const auth = new StubLocalAuth();
+    auth.signedIn = false;
+    auth.completion = Promise.resolve(undefined);
+    const h = await harness({ auth });
+    expect((await call(h, 'linkedin_login')).data).toEqual({ alreadySignedIn: false, signedIn: true, message: 'Signed in to LinkedIn.' });
   });
 
   it('says how to switch accounts when a forced sign-in kept the same one', async () => {

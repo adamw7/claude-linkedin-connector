@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -33,6 +33,12 @@ describe('TokenStore', () => {
     const store = new TokenStore(join(dir, 'token.json'));
     await writeFile(store.path, '{not json');
     expect(await store.read()).toBeUndefined();
+  });
+
+  it('reports a token file it cannot remove, rather than saying there was none', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'linkedin-store-'));
+    await mkdir(join(dir, 'token.json'));
+    await expect(new TokenStore(join(dir, 'token.json')).clear()).rejects.toThrow(expect.objectContaining({ code: 'ERR_FS_EISDIR' }));
   });
 
   it('defaults to the per-user config directory', () => {
@@ -105,6 +111,74 @@ describe('LocalAuth', () => {
     expect(await local.getSession()).toMatchObject({ accessToken: 'li-token-refreshed', memberId: 'abc123' });
     const saved = JSON.parse(await readFile(config.tokenFile, 'utf8')) as StoredToken;
     expect(saved).toMatchObject({ accessToken: 'li-token-refreshed', refreshToken: 'li-refresh-2' });
+  });
+
+  it('treats an expired sign-in as over when its refresh fails or cannot be tried', async () => {
+    const expired = token({ expiresAt: Date.now() - DAY, refreshToken: 'li-refresh', refreshTokenExpiresAt: Date.now() + 300 * DAY });
+    const revoked = auth();
+    await revoked.store.write({ ...expired, refreshToken: 'revoked-refresh' });
+    await expect(revoked.getSession()).rejects.toThrow(/^Your LinkedIn sign-in has expired\. /);
+    const uncredentialed = auth({ clientSecret: undefined });
+    await uncredentialed.store.write(expired);
+    await expect(uncredentialed.getSession()).rejects.toThrow(/^Your LinkedIn sign-in has expired\. /);
+    expect(linkedin.find('POST', '/oauth/v2/accessToken')).toHaveLength(1);
+    const lapsed = auth();
+    await lapsed.store.write({ ...expired, refreshTokenExpiresAt: Date.now() - DAY });
+    await expect(lapsed.getSession()).rejects.toThrow(/expired/);
+    expect(linkedin.find('POST', '/oauth/v2/accessToken')).toHaveLength(1);
+  });
+
+  it('keeps the refresh token and its expiry when LinkedIn does not issue a new one', async () => {
+    linkedin.override(({ url }) =>
+      url.pathname === '/oauth/v2/accessToken' ? Response.json({ access_token: 'li-token-refreshed', expires_in: 3600, scope: 'openid,w_member_social' }) : undefined,
+    );
+    const local = auth();
+    const refreshTokenExpiresAt = Date.now() + 300 * DAY;
+    await local.store.write(token({ expiresAt: Date.now() - DAY, refreshToken: 'li-refresh', refreshTokenExpiresAt }));
+    expect(await local.getSession()).toMatchObject({ accessToken: 'li-token-refreshed' });
+    expect(await local.store.read()).toMatchObject({ accessToken: 'li-token-refreshed', refreshToken: 'li-refresh', refreshTokenExpiresAt });
+  });
+
+  it('does not give a new refresh token the expiry of the one it replaces', async () => {
+    linkedin.override(({ url }) =>
+      url.pathname === '/oauth/v2/accessToken' ? Response.json({ access_token: 'li-token-refreshed', expires_in: 3600, refresh_token: 'li-refresh-2' }) : undefined,
+    );
+    const local = auth();
+    await local.store.write(token({ expiresAt: Date.now() - DAY, refreshToken: 'li-refresh', refreshTokenExpiresAt: Date.now() + DAY }));
+    await local.getSession();
+    const saved = await local.store.read();
+    expect(saved).toMatchObject({ refreshToken: 'li-refresh-2' });
+    expect(saved).not.toHaveProperty('refreshTokenExpiresAt');
+  });
+
+  it('describes a sign-in without an expiry, and a single permission it predates', async () => {
+    const local = auth({ scopes: ['openid', 'w_member_social', 'w_member_social_feed'] });
+    await local.store.write(token({ expiresAt: undefined }));
+    const status = await local.status();
+    expect(status).toMatchObject({ authenticated: true, expiresAt: undefined, missingScopes: ['w_member_social_feed'] });
+    expect(status.message).toBe(
+      `Signed in (token stored in ${config.tokenFile}). That sign-in predates the w_member_social_feed permission now configured: sign in again to grant it.`,
+    );
+  });
+
+  it('reports a token file it cannot read, rather than saying the user is signed out', async () => {
+    const local = auth();
+    await mkdir(config.tokenFile);
+    await expect(local.status()).rejects.toThrow(expect.objectContaining({ code: 'EISDIR' }));
+  });
+
+  it('signs out, forgetting the stored token and who LINKEDIN_ACCESS_TOKEN belongs to', async () => {
+    const local = auth();
+    await local.store.write(token());
+    expect(await local.logout()).toBe(true);
+    expect(await local.store.read()).toBeUndefined();
+    await expect(local.getSession()).rejects.toThrow(NotAuthenticatedError);
+    expect(await local.logout()).toBe(false);
+
+    const environment = auth({ accessToken: 'env-token' });
+    await environment.rememberMember({ id: 'abc123', name: 'Ada' });
+    expect(await environment.logout()).toBe(false);
+    expect(await environment.getSession()).toEqual({ accessToken: 'env-token', scopes: config.scopes });
   });
 
   it('requires app credentials to sign in', async () => {

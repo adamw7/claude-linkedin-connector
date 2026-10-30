@@ -94,6 +94,19 @@ describe('configuration', () => {
       'SERVER_SECRET must be at least 32 characters (try: openssl rand -base64 32).',
     );
     expect(loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'http://localhost:3000' }).publicUrl.href).toBe('http://localhost:3000/');
+    expect(() => loadRemoteConfig({ ...remoteEnv, PUBLIC_URL: 'linkedin-mcp.example.com' })).toThrow(
+      new ConfigError('PUBLIC_URL "linkedin-mcp.example.com" is not a valid URL.'),
+    );
+  });
+
+  it('reads PORT, refusing what is not a port', () => {
+    expect(loadRemoteConfig({ ...remoteEnv, PORT: '8080' }).port).toBe(8080);
+    // 0 lets the system choose.
+    expect(loadRemoteConfig({ ...remoteEnv, PORT: '0' }).port).toBe(0);
+    expect(loadRemoteConfig({ ...remoteEnv, PORT: '65535' }).port).toBe(65535);
+    for (const port of ['65536', '-1', '80.5', 'http']) {
+      expect(() => loadRemoteConfig({ ...remoteEnv, PORT: port })).toThrow(new ConfigError(`PORT "${port}" is not a valid port.`));
+    }
   });
 
   it('requires an explicit member allowlist unless the server is only on localhost', () => {

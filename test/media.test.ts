@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { UserInputError } from '../src/errors.js';
-import { loadMedia, sniffDocument, sniffImage } from '../src/linkedin/media.js';
+import { loadMedia, readSource, sniffDocument, sniffImage } from '../src/linkedin/media.js';
 import { PDF, PNG, startServer, type TestServer } from './helpers/http.js';
 
 const GIF = Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1');
@@ -54,7 +54,7 @@ describe('loadMedia', () => {
     await writeFile(join(dir, 'pixel.png'), PNG);
     await writeFile(join(dir, 'notes.txt'), 'not an image');
     server = await startServer((req, res) => {
-      if (req.url === '/deck.pdf' || req.url === '/100%.pdf') res.end(PDF);
+      if (req.url === '/deck.pdf' || req.url === '/100%.pdf' || req.url === '/') res.end(PDF);
       else if (req.url?.startsWith('/get?')) {
         const disposition = new URL(req.url, server.url).searchParams.get('disposition');
         if (disposition) res.setHeader('Content-Disposition', disposition);
@@ -106,6 +106,30 @@ describe('loadMedia', () => {
 
   it('does not reveal whether files outside the allowed folders exist', async () => {
     await expect(loadMedia(join(outside, 'missing.png'), 'image', { localFileDirs: [dir] })).rejects.toThrow(/outside the folders/);
+  });
+
+  it('reads only files, up to the limit for their kind', async () => {
+    await mkdir(join(dir, 'album'), { recursive: true });
+    await expect(loadMedia(join(dir, 'album'), 'image', { localFileDirs: [dir] })).rejects.toThrow(new UserInputError(`${join(dir, 'album')} is not a file.`));
+    // Sparse, so nothing is written: what counts is the size the file says it has.
+    const huge = join(dir, 'huge.png');
+    const file = await open(huge, 'w');
+    await file.truncate(20 * 1024 * 1024 + 1);
+    await file.close();
+    await expect(loadMedia(huge, 'image', { localFileDirs: [dir] })).rejects.toThrow(new UserInputError(`${huge} is larger than 20 MB.`));
+  });
+
+  it('limits data: URIs as it does files and downloads', async () => {
+    const uri = (bytes: number) => `data:application/octet-stream;base64,${Buffer.alloc(bytes).toString('base64')}`;
+    expect((await readSource(uri(1024 * 1024), 1024 * 1024, 'file', {})).data).toHaveLength(1024 * 1024);
+    await expect(readSource(uri(1024 * 1024 + 1), 1024 * 1024, 'file', {})).rejects.toThrow(new UserInputError('The file is larger than 1 MB.'));
+  });
+
+  it("says why a path in the allowed folders can't be read", async () => {
+    const path = join(dir, 'pixel.png', 'inside-a-file.png');
+    await expect(loadMedia(path, 'image', { localFileDirs: [dir] })).rejects.toThrow(
+      new UserInputError(`Cannot read ${path}: ENOTDIR: not a directory, realpath '${path}'.`),
+    );
   });
 
   it('never reads local files in remote mode', async () => {
@@ -282,6 +306,12 @@ describe('loadMedia', () => {
   ])('names a download by its Content-Disposition, %s', async (disposition, filename) => {
     const media = await loadMedia(`${server.url}/get?disposition=${encodeURIComponent(disposition)}`, 'document', { allowPrivateNetwork: true });
     expect(media.filename).toBe(filename);
+  });
+
+  it('leaves a download unnamed when neither its headers nor its URL name it', async () => {
+    const media = await loadMedia(`${server.url}/`, 'document', { allowPrivateNetwork: true });
+    expect(media.mimeType).toBe('application/pdf');
+    expect(media.filename).toBeUndefined();
   });
 
   it('keeps file names that are not valid percent-encoding', async () => {
