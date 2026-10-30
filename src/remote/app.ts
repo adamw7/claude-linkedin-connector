@@ -142,10 +142,12 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   );
   app.use(oauth.router);
 
+  /** MCP requests that were malformed, unsupported or failed; warn, since most are a client's doing. */
+  const mcpError = (error: Error) => logger('warn', 'mcp_error', { error });
   const handler = createMcpHandler(
     (ctx) => {
       const grant = grantFromAuthInfo(ctx.authInfo);
-      return createConnectorServer({
+      const server = createConnectorServer({
         mode: 'remote',
         auth: new ConnectorAuth(grant),
         version,
@@ -166,9 +168,13 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
             error: ok ? undefined : errorKind(error),
           }),
       });
+      // The SDK serves 2025-era requests through a transport of its own, which reports what it refuses (an
+      // unsupported protocol version, an Accept header without text/event-stream) only to the server it serves.
+      server.server.onerror = mcpError;
+      return server;
     },
-    // Also reports requests the SDK rejected (bad protocol version and the like), hence warn.
-    { onerror: (error) => logger('warn', 'mcp_error', { error }) },
+    // What the SDK refuses before a server is made, such as a body that is not JSON-RPC.
+    { onerror: mcpError },
   );
   const mcp = toNodeHandler(handler);
   const bearer = requireBearerAuth({

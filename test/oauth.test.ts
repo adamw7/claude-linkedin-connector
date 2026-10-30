@@ -86,6 +86,7 @@ describe('LinkedIn OAuth helpers', () => {
     ['a page from a proxy', () => new Response('<h1>502 Bad Gateway</h1>', { status: 502 }), 'http_502', '<h1>502 Bad Gateway</h1>'],
     ['an empty answer', () => new Response('', { status: 503 }), 'http_503', undefined],
     ['a success without a token', () => Response.json({ expires_in: 60 }), 'http_200', '{"expires_in":60}'],
+    ['an error code without a description', () => Response.json({ error: 'invalid_grant' }, { status: 400 }), 'invalid_grant', undefined],
   ])('reports %s from the token endpoint', async (_, answer, code, description) => {
     const error = await exchangeAuthorizationCode({ ...app, fetch: async () => answer() }, 'li-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(LinkedInOAuthError);
@@ -105,6 +106,13 @@ describe('LinkedIn OAuth helpers', () => {
     expect(error).toMatchObject({
       error: 'invalid_client',
       message: "invalid_client: Client authentication failed. Check that the Client ID and Client Secret you configured are the ones on the Auth tab of your LinkedIn app.",
+    });
+    // Also when LinkedIn gives no description.
+    const bare = async () => Response.json({ error: 'invalid_client' }, { status: 401 });
+    const undescribed = await exchangeAuthorizationCode({ ...app, fetch: bare }, 'li-code', 'http://localhost:8723/callback').catch((e: unknown) => e);
+    expect(undescribed).toMatchObject({
+      error: 'invalid_client',
+      message: 'invalid_client: Client authentication failed. Check that the Client ID and Client Secret you configured are the ones on the Auth tab of your LinkedIn app.',
     });
   });
 });

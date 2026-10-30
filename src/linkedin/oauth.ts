@@ -65,8 +65,10 @@ async function requestToken(app: LinkedInOAuthApp, params: Record<string, string
   const text = await response.text();
   const json = (parseJson(text) ?? {}) as Record<string, unknown>;
   if (!response.ok || typeof json.access_token !== 'string') {
-    const error = typeof json.error === 'string' ? json.error : `http_${response.status}`;
-    const description = typeof json.error_description === 'string' ? json.error_description : text.slice(0, 300) || undefined;
+    const code = typeof json.error === 'string' ? json.error : undefined;
+    const error = code ?? `http_${response.status}`;
+    // Without a code or description (a proxy's error page, say) the body is all there is to go on.
+    const description = typeof json.error_description === 'string' ? json.error_description : code ? undefined : text.slice(0, 300) || undefined;
     throw new LinkedInOAuthError(
       error,
       // Usually a mistyped or regenerated Client Secret; LinkedIn's own description doesn't say which setting is wrong.

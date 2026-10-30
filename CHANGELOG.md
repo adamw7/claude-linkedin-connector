@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
   that check, so the browser never sent the request and connecting failed after LinkedIn's sign-in.
 - A link preview title longer than 200 characters, or description longer than 300, could be cut in the middle of
   an emoji, which then showed as � at the end of the card on LinkedIn. It is now shortened by whole characters.
+- When LinkedIn refused a sign-in without describing why, the message repeated LinkedIn's raw answer after the
+  error, as in `invalid_grant: {"error":"invalid_grant"}`. It now gives the error alone, and a rejected Client ID or
+  Client Secret is still explained.
+- A remote server didn't log `mcp_error` for MCP requests it refused for an unsupported protocol version, or for an
+  `Accept` header without `text/event-stream`, although the Monitoring table in the deployment guide lists them.
+  They showed only as an `http_request` with status 400 or 406.
 
 ### Security
 
