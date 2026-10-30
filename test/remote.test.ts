@@ -542,15 +542,23 @@ describe('remote connector discovery', () => {
     expect(remote.logs.filter((entry) => entry.level === 'error')).toEqual([]);
   });
 
-  it('logs malformed MCP requests', async () => {
+  it.each<[string, Record<string, string>, unknown, number, string]>([
+    ['that is not JSON-RPC', {}, { jsonrpc: '2.0', id: 1 }, 400, 'not a valid JSON-RPC message'],
+    ['for a protocol version it does not support', { 'MCP-Protocol-Version': '1999-01-01' }, { jsonrpc: '2.0', id: 1, method: 'ping' }, 400, 'Unsupported protocol version'],
+    ['that cannot take a stream back', { Accept: 'application/json' }, { jsonrpc: '2.0', id: 1, method: 'ping' }, 406, 'Not Acceptable'],
+  ])('logs an MCP request %s, once', async (_, headers, body, status, message) => {
     const remote = await startRemote();
+    const bearer = await accessToken(remote);
+    expect((await ping(remote, bearer)).status).toBe(200);
     const response = await fetch(remote.mcpUrl, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${await accessToken(remote)}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1 }),
+      headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+      body: JSON.stringify(body),
     });
-    expect(response.status).toBe(400);
-    expect(remote.logs).toContainEqual({ level: 'warn', event: 'mcp_error', error: expect.objectContaining({ message: expect.stringContaining('not a valid JSON-RPC message') }) });
+    expect(response.status).toBe(status);
+    expect(remote.logs.filter((entry) => entry.event === 'mcp_error')).toEqual([
+      { level: 'warn', event: 'mcp_error', error: expect.objectContaining({ message: expect.stringContaining(message) }) },
+    ]);
   });
 
   it('refuses compressed bodies on the endpoints anyone can call before signing in', async () => {
