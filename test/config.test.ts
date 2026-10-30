@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SCOPES, defaultFileDirs, loadLocalConfig, loadRemoteConfig } from '../src/config.js';
 import { ConfigError } from '../src/errors.js';
@@ -120,6 +121,29 @@ describe('configuration', () => {
     // 0 would keep idle connections open forever.
     expect(() => loadRemoteConfig({ ...remoteEnv, KEEP_ALIVE_TIMEOUT: '0' })).toThrow('KEEP_ALIVE_TIMEOUT must be a whole number of at least 1, got "0".');
     expect(loadRemoteConfig({ ...remoteEnv, KEEP_ALIVE_TIMEOUT: '1' }).keepAliveTimeoutMs).toBe(1000);
+  });
+
+  it('reads TRUST_PROXY as a yes/no setting, a hop count or ranges, refusing what Express would refuse', () => {
+    const read = (raw: string) => loadRemoteConfig({ ...remoteEnv, TRUST_PROXY: raw }).trustProxy;
+    expect(read('TRUE')).toBe(true);
+    expect(read('yes')).toBe(true);
+    expect(read('Off')).toBe(false);
+    expect(read('0')).toBe(0);
+    expect(read('2')).toBe(2);
+    // Express knows its named ranges in lower case only.
+    const ranges = read('LOOPBACK, 10.0.0.0/8 ,fd00::/8, 10.0.0.0/255.0.0.0, 192.168.1.1');
+    expect(ranges).toBe('loopback, 10.0.0.0/8, fd00::/8, 10.0.0.0/255.0.0.0, 192.168.1.1');
+    for (const accepted of [ranges, read('uniquelocal'), read('linklocal')]) {
+      expect(() => express().set('trust proxy', accepted)).not.toThrow();
+    }
+    for (const raw of ['maybe', 'loopback,', '10.0.0.0/33', '::/129', '10.0.0.0/8/8', 'fd00::/255.0.0.0']) {
+      expect(() => express().set('trust proxy', raw)).toThrow();
+      expect(() => read(raw)).toThrow(
+        new ConfigError(
+          `TRUST_PROXY must be true, false, the number of proxies in front, or their addresses or subnets (e.g. loopback, 10.0.0.0/8), got "${raw}".`,
+        ),
+      );
+    }
   });
 
   it('requires SERVER_SECRET unless the server is only on localhost, where it generates one with a warning', () => {

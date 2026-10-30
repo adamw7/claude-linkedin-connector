@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
   that check, so the browser never sent the request and connecting failed after LinkedIn's sign-in.
 - A link preview title longer than 200 characters, or description longer than 300, could be cut in the middle of
   an emoji, which then showed as � at the end of the card on LinkedIn. It is now shortened by whole characters.
+- A remote server with `TRUST_PROXY=TRUE`, `yes` or `on` failed to start with "invalid IP address: TRUE". It now
+  takes any spelling of yes and no, as the other yes/no settings do, and a value it can't use stops it with a
+  message naming `TRUST_PROXY` and what it takes.
 
 ### Security
 

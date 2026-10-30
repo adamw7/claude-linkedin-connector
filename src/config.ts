@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { defaultTokenFile } from './auth/token-store.js';
 import { ConfigError } from './errors.js';
@@ -93,11 +94,14 @@ function list(env: Env, name: string): string[] | undefined {
   return raw === undefined ? undefined : raw.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+const YES = ['true', 'yes', 'on'];
+const NO = ['false', 'no', 'off'];
+
 /** A yes/no setting; the Claude Desktop extension passes its checkboxes as "true" or "false". */
 function flag(env: Env, name: string): boolean {
   const raw = value(env, name)?.toLowerCase();
-  if (raw === undefined || ['false', '0', 'no', 'off'].includes(raw)) return false;
-  if (['true', '1', 'yes', 'on'].includes(raw)) return true;
+  if (raw === undefined || raw === '0' || NO.includes(raw)) return false;
+  if (raw === '1' || YES.includes(raw)) return true;
   throw new ConfigError(`${name} must be true or false, got "${value(env, name)}".`);
 }
 
@@ -132,11 +136,36 @@ function count(env: Env, name: string, fallback: number, min = 0): number {
 
 const SECRET_HINT = 'at least 32 characters (try: openssl rand -base64 32)';
 
-/** `true`/`false`, a hop count, or the subnets Express accepts (e.g. `loopback, 10.0.0.0/8`). */
+/** The address ranges Express (proxy-addr) knows by name, in the case it knows them. */
+const NAMED_RANGES = new Set(['loopback', 'linklocal', 'uniquelocal']);
+
+/**
+ * `true`/`false` (spelt as any yes/no setting), a hop count, or the addresses and subnets Express accepts (e.g.
+ * `loopback, 10.0.0.0/8`). Anything else Express refuses as the server starts, naming neither the setting nor what
+ * it takes: "invalid IP address: TRUE".
+ */
 function trustProxy(raw: string | undefined): boolean | number | string {
-  if (raw === undefined || raw === 'false') return false;
-  if (raw === 'true') return true;
-  return /^\d+$/.test(raw) ? Number(raw) : raw;
+  if (raw === undefined) return false;
+  if (NO.includes(raw.toLowerCase())) return false;
+  if (YES.includes(raw.toLowerCase())) return true;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const ranges = raw.split(',').map((range) => range.trim());
+  if (!ranges.every(isAddressRange)) {
+    throw new ConfigError(
+      `TRUST_PROXY must be true, false, the number of proxies in front, or their addresses or subnets (e.g. loopback, 10.0.0.0/8), got "${raw}".`,
+    );
+  }
+  return ranges.map((range) => (NAMED_RANGES.has(range.toLowerCase()) ? range.toLowerCase() : range)).join(', ');
+}
+
+/** A range as Express reads one: a name it knows, an address, or a subnet (`10.0.0.0/8`, `10.0.0.0/255.0.0.0`). */
+function isAddressRange(range: string): boolean {
+  if (NAMED_RANGES.has(range.toLowerCase())) return true;
+  const [address = '', prefix, ...rest] = range.split('/');
+  const family = isIP(address);
+  if (family === 0 || rest.length > 0) return false;
+  if (prefix === undefined) return true;
+  return /^\d+$/.test(prefix) ? Number(prefix) <= (family === 4 ? 32 : 128) : family === 4 && isIP(prefix) === 4;
 }
 
 /**
