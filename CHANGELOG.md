@@ -21,6 +21,9 @@ All notable changes to this project are documented here. The format follows
 - A remote server with `TRUST_PROXY=TRUE`, `yes` or `on` failed to start with "invalid IP address: TRUE". It now
   takes any spelling of yes and no, as the other yes/no settings do, and a value it can't use stops it with a
   message naming `TRUST_PROXY` and what it takes.
+- Reloading LinkedIn's sign-in callback page while the connector was still finishing the sign-in exchanged its code
+  a second time, which LinkedIn refuses, and could report a sign-in that worked as failed. The second page now says
+  the sign-in is already being completed.
 
 ### Security
 

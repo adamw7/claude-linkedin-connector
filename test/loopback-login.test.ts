@@ -120,6 +120,26 @@ describe('LoopbackLogin', () => {
     expect(next).not.toBe(flow);
   });
 
+  it('exchanges the code once when the callback arrives again while it is being exchanged', async () => {
+    const stored = Promise.withResolvers<string | undefined>();
+    const { loopback, linkedin } = await login({ onTokens: () => stored.promise });
+    const flow = await loopback.start();
+
+    const first = fetch(callback(flow, { code: 'li-code' }));
+    await expect.poll(() => linkedin.find('POST', '/oauth/v2/accessToken').length).toBe(1);
+    // The tab reloaded, say: a second exchange of the code would fail and could end the flow as failed.
+    const again = await fetch(callback(flow, { code: 'li-code' }));
+    expect(again.status).toBe(409);
+    expect(await again.text()).toContain('This sign-in is already being completed');
+    const cancelled = await fetch(callback(flow, { error: 'access_denied' }));
+    expect(cancelled.status).toBe(409);
+
+    stored.resolve('Ada');
+    expect((await first).status).toBe(200);
+    expect(await flow.completion).toBe('Ada');
+    expect(linkedin.find('POST', '/oauth/v2/accessToken')).toHaveLength(1);
+  });
+
   it('rejects callbacks with the wrong state without ending the flow', async () => {
     const { loopback } = await login();
     const flow = await loopback.start();

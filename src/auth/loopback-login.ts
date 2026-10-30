@@ -90,6 +90,8 @@ export class LoopbackLogin {
     let timer: NodeJS.Timeout | undefined;
     let flow: LoopbackLoginHandle | undefined;
     let finished = false;
+    /** A callback is exchanging the code: another (the tab reloaded, say) must not exchange it again. */
+    let claimed = false;
     const finish = (error?: Error, name?: string) => {
       if (finished) return;
       finished = true;
@@ -111,6 +113,10 @@ export class LoopbackLogin {
       if (finished || url.searchParams.get('state') !== state) {
         return respond(res, 400, 'Sign-in link expired', '<h1>This sign-in link has expired</h1><p>Start the LinkedIn sign-in again from Claude.</p>');
       }
+      // A second exchange of the code fails, and could report a sign-in that succeeded as failed.
+      if (claimed) {
+        return respond(res, 409, 'Signing in', '<h1>This sign-in is already being completed</h1><p>The tab that started it finishes it: you can close this one.</p>');
+      }
       const error = url.searchParams.get('error');
       if (error) {
         // LinkedIn HTML-escapes quotes in descriptions: Scope &quot;w_member_social_feed&quot; is not authorized.
@@ -122,6 +128,7 @@ export class LoopbackLogin {
       }
       const code = url.searchParams.get('code');
       if (!code) return respond(res, 400, 'Missing code', '<h1>LinkedIn did not return an authorization code</h1>');
+      claimed = true;
       try {
         const tokens = await exchangeAuthorizationCode(this.options.app, code, this.options.redirectUri);
         const name = await this.options.onTokens(tokens);
