@@ -10,8 +10,15 @@ All notable changes to this project are documented here. The format follows
 
 - The README and the guides are shorter, with each detail in one place. The README's troubleshooting table now
   lists only the problems no error message can explain: the connector's messages say how to fix what they report.
+- A mistyped command or option, such as `lgoin` or `login --nobrowser`, is now reported in one line that suggests
+  what you probably meant, instead of above the whole help text, which pushed the error off the screen.
+- When `npm run setup` finds a Node.js older than 24, it now says where to get a newer one.
 
 ### Fixed
+
+- Without the LinkedIn app's Client ID and Client Secret configured, `status` and `linkedin_auth_status` said to
+  sign in, which could only fail. They now say to set the credentials first, and the message names the Claude
+  Desktop extension's settings for them as well as the environment variables.
 
 - A remote server turned away browser-based MCP clients, such as the MCP Inspector, when they signed in with a
   client secret: the browser checks first whether it may send the secret to `/token`, and the server didn't answer

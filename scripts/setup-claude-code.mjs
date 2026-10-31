@@ -226,7 +226,12 @@ async function main() {
     throw new SetupError(`--scope must be "user" or "local", not "${options.scope}".${hint}`);
   }
   const major = Number(process.versions.node.split('.')[0]);
-  if (major < 24) throw new SetupError(`Node.js 24 or later is required; you have ${process.versions.node}.`);
+  if (major < 24) {
+    throw new SetupError(
+      `Node.js 24 or later is required; you have ${process.versions.node}. ` +
+        'Install the LTS release from https://nodejs.org (or run `nvm install 24` if you use nvm), then run this again.',
+    );
+  }
   if (run('claude', ['--version'], { quiet: true }).status !== 0) {
     throw new SetupError('`claude --version` failed. Is Claude Code installed?');
   }

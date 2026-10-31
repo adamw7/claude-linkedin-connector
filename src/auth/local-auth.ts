@@ -40,6 +40,14 @@ export const ACCESS_TOKEN_HINT =
   'Replace LINKEDIN_ACCESS_TOKEN with a fresh token, or remove it to sign in through the browser instead: ' +
   'while it is set, the connector ignores the token a sign-in stores.';
 
+/**
+ * Without the LinkedIn app's credentials the browser sign-in can't start, so this, not SIGN_IN_HINT, is what to fix
+ * first. Most users configure them in the Claude Desktop extension's settings, which it names as the extension does.
+ */
+export const CREDENTIALS_HINT =
+  'LinkedIn sign-in needs your LinkedIn app\'s Client ID and Client Secret: enter them as "LinkedIn Client ID" and "LinkedIn Client Secret" in the Claude Desktop extension\'s settings, ' +
+  'or set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET where the connector is configured (see the README). Or provide LINKEDIN_ACCESS_TOKEN directly.';
+
 /** Starts the note, in "not signed in" messages, on why the last browser sign-in failed. */
 export const LAST_FAILURE = 'The last sign-in attempt failed:';
 
@@ -73,11 +81,7 @@ export class LocalAuth implements LinkedInAuth {
 
   private oauthApp(): LinkedInOAuthApp {
     const { clientId, clientSecret, scopes, oauthBaseUrl } = this.config;
-    if (!clientId || !clientSecret) {
-      throw new ConfigError(
-        'LinkedIn sign-in needs your LinkedIn app credentials: set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET (see the README), or provide LINKEDIN_ACCESS_TOKEN directly.',
-      );
-    }
+    if (!clientId || !clientSecret) throw new ConfigError(CREDENTIALS_HINT);
     return { clientId, clientSecret, scopes, oauthBaseUrl, fetch: this.options.fetch };
   }
 
@@ -90,12 +94,22 @@ export class LocalAuth implements LinkedInAuth {
       return { accessToken: this.config.accessToken, scopes: this.config.scopes, ...memberFields(this.envMember) };
     }
     let token = await this.store.read();
-    if (!token) throw new NotAuthenticatedError(`You are not signed in to LinkedIn.${this.lastFailure()} ${SIGN_IN_HINT}`);
+    if (!token) throw new NotAuthenticatedError(`You are not signed in to LinkedIn.${this.lastFailure()} ${this.signInHint()}`);
     if (this.isExpired(token.expiresAt)) {
       token = await this.tryRefresh(token);
-      if (!token) throw new NotAuthenticatedError(`Your LinkedIn sign-in has expired.${this.lastFailure()} ${SIGN_IN_HINT}`);
+      if (!token) throw new NotAuthenticatedError(`Your LinkedIn sign-in has expired.${this.lastFailure()} ${this.signInHint()}`);
     }
     return { accessToken: token.accessToken, scopes: token.scopes, expiresAt: token.expiresAt, ...memberFields(token.member) };
+  }
+
+  /** Whether a browser sign-in can start: it needs the LinkedIn app's credentials. */
+  get canSignIn(): boolean {
+    return Boolean(this.config.clientId && this.config.clientSecret);
+  }
+
+  /** How to sign in, or, without the app's credentials, that they come first: linkedin_login would only fail. */
+  private signInHint(): string {
+    return this.canSignIn ? SIGN_IN_HINT : CREDENTIALS_HINT;
   }
 
   /** Why the last browser sign-in failed, which only the browser showed: otherwise Claude just hands out another link. */
@@ -106,7 +120,7 @@ export class LocalAuth implements LinkedInAuth {
 
   private async tryRefresh(token: StoredToken): Promise<StoredToken | undefined> {
     if (!token.refreshToken || this.isExpired(token.refreshTokenExpiresAt)) return undefined;
-    if (!this.config.clientId || !this.config.clientSecret) return undefined;
+    if (!this.canSignIn) return undefined;
     try {
       const refreshed = await refreshAccessToken(this.oauthApp(), token.refreshToken);
       const next = toStoredToken(refreshed, token.member, token.refreshToken, token.refreshTokenExpiresAt);
