@@ -199,9 +199,7 @@ export class ClientRegistry {
     // A document that can't be fetched or parsed, or isn't an object, has no matching client_id.
     const document = parseJson(await fetchDocument(clientId).catch(() => '')) as Record<string, unknown> | null | undefined;
     if (document?.client_id !== clientId || !Array.isArray(document.redirect_uris)) return undefined;
-    const redirectUris = document.redirect_uris.filter(
-      (uri): uri is string => typeof uri === 'string' && this.policy.allows(uri),
-    );
+    const redirectUris = document.redirect_uris.filter((uri): uri is string => typeof uri === 'string' && this.policy.allows(uri));
     if (redirectUris.length === 0) return undefined;
     return { clientId, redirectUris, authMethod: 'none', kind: 'metadata-document', clientName: clientName(document.client_name) };
   }

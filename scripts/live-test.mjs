@@ -378,10 +378,7 @@ async function main() {
 
     let first;
     await step('A text post with the characters LinkedIn treats as markup, for your connections', async () => {
-      first = await publish({
-        text: `${intro}\n${markup}`,
-        visibility: 'CONNECTIONS',
-      });
+      first = await publish({ text: `${intro}\n${markup}`, visibility: 'CONNECTIONS' });
     });
 
     await step('Editing its text', async () => {

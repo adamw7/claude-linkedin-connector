@@ -32,10 +32,7 @@ export class PostHistory {
   /** The update in progress; updates run one at a time so posts published at once are all remembered. */
   private updating: Promise<void> = Promise.resolve();
 
-  constructor(
-    readonly path: string,
-    private readonly now: () => number = Date.now,
-  ) {}
+  constructor(readonly path: string, private readonly now: () => number = Date.now) {}
 
   async list(): Promise<PublishedPost[]> {
     const data = (await readJsonFile(this.path)) as { version?: unknown; posts?: unknown } | undefined;

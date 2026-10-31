@@ -31,10 +31,7 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((remote) => remote.close()));
 });
 
-async function startRemote(
-  overrides: Partial<RemoteConfig> = {},
-  fetchClientMetadata?: (url: string) => Promise<string>,
-): Promise<Remote> {
+async function startRemote(overrides: Partial<RemoteConfig> = {}, fetchClientMetadata?: (url: string) => Promise<string>): Promise<Remote> {
   const linkedin = new FakeLinkedIn();
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

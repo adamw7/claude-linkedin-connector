@@ -1,19 +1,13 @@
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { LinkedInTokens } from '../linkedin/oauth.js';
 import type { MemberInfo } from './types.js';
 import { NAME } from '../version.js';
 import { readJsonFile, writePrivateJsonFile } from './json-file.js';
 
-export interface StoredToken {
+export interface StoredToken extends LinkedInTokens {
   version: 1;
-  accessToken: string;
-  /** Epoch milliseconds. */
-  expiresAt?: number;
-  refreshToken?: string;
-  /** Epoch milliseconds. */
-  refreshTokenExpiresAt?: number;
-  scopes: string[];
   member?: MemberInfo;
 }
 

@@ -127,6 +127,14 @@ async function call(h: Harness, name: string, args: Record<string, unknown> = {}
   return { isError: result.isError === true, text, data: result.structuredContent as Record<string, any> | undefined };
 }
 
+/** Lists the names linkedin_read_connections finds among `rows` of Connections.csv (after its header), given `args`. */
+async function connectionNames(rows: string[]) {
+  const h = await harness();
+  const csv = ['First Name,Last Name,URL,Email Address,Company,Position,Connected On', ...rows].join('\n');
+  return async (args: Record<string, unknown>) =>
+    (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+}
+
 let web: TestServer;
 let files: string;
 /** Requests for /counted, a page with full preview metadata. */
@@ -304,32 +312,24 @@ describe('linkedin_read_connections', () => {
   });
 
   it('lists undated connections last, and leaves them out when filtering by date', async () => {
-    const h = await harness();
-    const csv = [
-      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+    const names = await connectionNames([
       'Undated,One,,,,,',
       'Old,Friend,,,,,01 Jan 2020',
       'Unreadable,Date,,,,,sometime in 2023',
       'New,Friend,,,,,01 Jan 2026',
-    ].join('\n');
-    const names = async (args: Record<string, unknown>) =>
-      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    ]);
     expect(await names({})).toEqual(['New Friend', 'Old Friend', 'Undated One', 'Unreadable Date']);
     expect(await names({ connectedAfter: '2019-01-01' })).toEqual(['New Friend', 'Old Friend']);
     expect(await names({ connectedBefore: '2030-01-01' })).toEqual(['New Friend', 'Old Friend']);
   });
 
   it('matches companies and text regardless of accents, and any of several companies', async () => {
-    const h = await harness();
-    const csv = [
-      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+    const names = await connectionNames([
       'Zofia,Wójcik,,,Łódzka Spółka,Księgowa,01 Oct 2026',
       'Jan,Kowalski,,,XYZ Sp. z o.o.,Engineer,02 Sep 2026',
       'Anna,Nowak,,,abc Group,Designer,03 Aug 2026',
       'Piotr,Zieliński,,,Other,Engineer,04 Jul 2026',
-    ].join('\n');
-    const names = async (args: Record<string, unknown>) =>
-      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    ]);
     expect(await names({ company: 'lodzka spolka' })).toEqual(['Zofia Wójcik']);
     expect(await names({ query: 'WOJCIK' })).toEqual(['Zofia Wójcik']);
     expect(await names({ query: 'zielinski' })).toEqual(['Piotr Zieliński']);
@@ -338,17 +338,13 @@ describe('linkedin_read_connections', () => {
   });
 
   it('matches the start of words, so a short company name finds only that company', async () => {
-    const h = await harness();
-    const csv = [
-      'First Name,Last Name,URL,Email Address,Company,Position,Connected On',
+    const names = await connectionNames([
       'Anna,Bank,,,ING Bank,Analyst,01 Oct 2026',
       'Joanna,Boe,,,Boeing,Engineer,02 Sep 2026',
       'Marek,Agent,,,Digital Marketing Agency,Lead,03 Aug 2026',
       'Ewa,Young,,,EY,Consultant,04 Jul 2026',
       'Dan,Mouse,,,Disney,Producer,05 Jun 2026',
-    ].join('\n');
-    const names = async (args: Record<string, unknown>) =>
-      (await call(h, 'linkedin_read_connections', { csv, ...args })).data!.connections.map((c: { name: string }) => c.name);
+    ]);
     expect(await names({ company: 'ING' })).toEqual(['Anna Bank']);
     expect(await names({ company: ['ey', 'boeing'] })).toEqual(['Joanna Boe', 'Ewa Young']);
     expect(await names({ query: 'ann' })).toEqual(['Anna Bank']);

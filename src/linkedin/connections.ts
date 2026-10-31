@@ -198,10 +198,7 @@ export function countCompanies(connections: Connection[]): CompanyCount[] {
     groups.set(key, group);
   }
   return [...groups.values()]
-    .map(({ count, spellings }) => ({
-      company: [...spellings].reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0],
-      count,
-    }))
+    .map(({ count, spellings }) => ({ company: [...spellings].reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0], count }))
     .sort((a, b) => b.count - a.count || a.company.localeCompare(b.company));
 }
 

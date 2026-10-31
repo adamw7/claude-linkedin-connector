@@ -91,16 +91,13 @@ const characters = (text: string) => [...text].length;
 
 /** Text of up to `max` characters. Text that is too long says by how much, which Claude can't count for itself. */
 function limitedText(max: number, noun: string) {
-  return z
-    .string()
-    .min(1)
-    .max(max, {
-      error: (issue) => {
-        const length = characters(issue.input as string);
-        const over = length - max;
-        return `The ${noun} is ${length} characters long; LinkedIn allows ${max}. Shorten it by at least ${over} character${over === 1 ? '' : 's'}.`;
-      },
-    });
+  return z.string().min(1).max(max, {
+    error: (issue) => {
+      const length = characters(issue.input as string);
+      const over = length - max;
+      return `The ${noun} is ${length} characters long; LinkedIn allows ${max}. Shorten it by at least ${over} character${over === 1 ? '' : 's'}.`;
+    },
+  });
 }
 
 /** Network errors from connecting to LinkedIn: the request never reached it. */
@@ -348,13 +345,10 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     }
   };
 
-  const organizationField = z
-    .string()
-    .optional()
-    .describe(
-      "Act as this LinkedIn Page instead of as the member: its organization ID (the number in the address of the Page's admin view, " +
-        'linkedin.com/company/<ID>/admin/), that address, or urn:li:organization:<ID>. The user must be a super admin or content admin of the Page.',
-    );
+  const organizationField = z.string().optional().describe(
+    "Act as this LinkedIn Page instead of as the member: its organization ID (the number in the address of the Page's admin view, " +
+      'linkedin.com/company/<ID>/admin/), that address, or urn:li:organization:<ID>. The user must be a super admin or content admin of the Page.',
+  );
   // Strict, nested objects too, because these tools publish: an argument dropped silently (a mistyped key, or
   // `organization` without Pages) would publish something other than what the user approved, or as someone else.
   const pagesOff = `Acting as a Page needs ${settingName(PAGES)} turned on for this connector (Community Management API). Leave out "organization" to act as yourself.`;
@@ -433,30 +427,18 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       inputSchema: z.object({
         file: z.string().optional().describe(`Connections.csv or LinkedIn's export zip archive, as ${mediaSources}.`),
         csv: z.string().optional().describe('The contents of Connections.csv, when the user pasted or attached the text.'),
-        query: z
-          .string()
-          .optional()
-          .describe(
-            'Text that must start a word in the name, company, position, email or profile URL ("ann" finds Ann and Annette, not Joanna). Ignores case and accents.',
-          ),
-        company: z
-          .union([z.string(), z.array(z.string()).min(1)])
-          .optional()
-          .describe(
-            'Only connections whose company has a word starting with this text, or with any of these texts (e.g. ["xyz", "abc"] for everyone at xyz or abc). ' +
-              '"ING" finds ING Bank but not Boeing. Ignores case and accents.',
-          ),
+        query: z.string().optional().describe(
+          'Text that must start a word in the name, company, position, email or profile URL ("ann" finds Ann and Annette, not Joanna). Ignores case and accents.',
+        ),
+        company: z.union([z.string(), z.array(z.string()).min(1)]).optional().describe(
+          'Only connections whose company has a word starting with this text, or with any of these texts (e.g. ["xyz", "abc"] for everyone at xyz or abc). ' +
+            '"ING" finds ING Bank but not Boeing. Ignores case and accents.',
+        ),
         connectedAfter: isoDate.optional().describe('Only connections made on or after this date (YYYY-MM-DD).'),
         connectedBefore: isoDate.optional().describe('Only connections made on or before this date (YYYY-MM-DD).'),
         limit: z.number().int().min(0).max(1000).default(100).describe('Maximum connections to return. 0 returns only the counts.'),
         offset: z.number().int().min(0).default(0).describe('Number of matching connections to skip, for paging.'),
-        companyCounts: z
-          .number()
-          .int()
-          .min(1)
-          .max(1000)
-          .optional()
-          .describe('Also return the companies with the most matching connections, up to this many, with their counts.'),
+        companyCounts: z.number().int().min(1).max(1000).optional().describe('Also return the companies with the most matching connections, up to this many, with their counts.'),
       }),
       outputSchema: z.object({
         file: z.string().optional().describe('The export that was found and read, when no file or csv was passed.'),
@@ -465,10 +447,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         offset: z.number(),
         connections: z.array(connectionSchema),
         nextOffset: z.number().optional().describe('Pass as offset to get the next page, when there are more matches.'),
-        companies: z
-          .array(z.object({ company: z.string(), count: z.number() }))
-          .optional()
-          .describe('Matching connections per company, most first, when companyCounts is set.'),
+        companies: z.array(z.object({ company: z.string(), count: z.number() })).optional().describe('Matching connections per company, most first, when companyCounts is set.'),
         companiesTotal: z.number().optional().describe('Distinct companies among the matching connections.'),
         withoutCompany: z.number().optional().describe('Matching connections with no company listed.'),
       }),
@@ -554,40 +533,23 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     text: limitedText(MAX_POST_CHARACTERS, 'post text').describe(
       `The post text, max ${MAX_POST_CHARACTERS} characters. Plain text only (no Markdown); line breaks are kept and #hashtags become links. @mentions can't tag anyone: "@Name" shows as plain text. Special characters are escaped automatically.`,
     ),
-    visibility: z
-      .enum(['PUBLIC', 'CONNECTIONS'])
-      .default('PUBLIC')
-      .describe("PUBLIC: anyone on or off LinkedIn. CONNECTIONS: 1st-degree connections only (not for a Page's posts, which are public)."),
-    article: z
-      .strictObject({
-        url: z.url({ protocol: /^https?$/ }).describe('The link to share.'),
-        title: z.string().max(200).optional().describe("Preview title. Defaults to the page's own title."),
-        description: z.string().max(300).optional().describe("Preview description. Defaults to the page's description."),
-        thumbnail: z
-          .string()
-          .optional()
-          .describe(`Preview image as ${mediaSources}. Defaults to the page's preview image.`),
-      })
-      .optional()
-      .describe('Share a link with a preview card. A link in the text alone gets no card.'),
-    images: z
-      .array(
-        z.strictObject({
-          source: z.string().describe(`A JPEG, PNG or GIF as ${mediaSources}.`),
-          altText: z.string().max(4000).optional().describe('Alternative text describing the image for screen readers.'),
-        }),
-      )
-      .min(1)
-      .max(20)
-      .optional()
-      .describe('Attach 1 to 20 images.'),
-    document: z
-      .strictObject({
-        source: z.string().describe(`A PDF, PPT, PPTX, DOC or DOCX (max 100 MB, 300 pages) as ${mediaSources}.`),
-        title: z.string().max(300).optional().describe('Title shown on the document. Defaults to the file name without its extension.'),
-      })
-      .optional()
-      .describe('Attach a document, shown as a swipeable carousel.'),
+    visibility: z.enum(['PUBLIC', 'CONNECTIONS']).default('PUBLIC').describe(
+      "PUBLIC: anyone on or off LinkedIn. CONNECTIONS: 1st-degree connections only (not for a Page's posts, which are public).",
+    ),
+    article: z.strictObject({
+      url: z.url({ protocol: /^https?$/ }).describe('The link to share.'),
+      title: z.string().max(200).optional().describe("Preview title. Defaults to the page's own title."),
+      description: z.string().max(300).optional().describe("Preview description. Defaults to the page's description."),
+      thumbnail: z.string().optional().describe(`Preview image as ${mediaSources}. Defaults to the page's preview image.`),
+    }).optional().describe('Share a link with a preview card. A link in the text alone gets no card.'),
+    images: z.array(z.strictObject({
+      source: z.string().describe(`A JPEG, PNG or GIF as ${mediaSources}.`),
+      altText: z.string().max(4000).optional().describe('Alternative text describing the image for screen readers.'),
+    })).min(1).max(20).optional().describe('Attach 1 to 20 images.'),
+    document: z.strictObject({
+      source: z.string().describe(`A PDF, PPT, PPTX, DOC or DOCX (max 100 MB, 300 pages) as ${mediaSources}.`),
+      title: z.string().max(300).optional().describe('Title shown on the document. Defaults to the file name without its extension.'),
+    }).optional().describe('Attach a document, shown as a swipeable carousel.'),
   });
 
   /** Loads and checks everything a post needs without touching LinkedIn, so bad inputs fail before anything is published. */
@@ -673,16 +635,13 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         attachment: z.enum(ATTACHMENTS),
         images: z.number().optional().describe('Number of images, all checked.'),
         document: z.object({ title: z.string() }).optional(),
-        linkPreview: z
-          .object({
-            url: z.string(),
-            title: z.string(),
-            description: z.string().optional(),
-            thumbnail: z.boolean(),
-            imageUrl: z.string().optional().describe("The page's own preview image, when the card uses it."),
-          })
-          .optional()
-          .describe('The card LinkedIn will show for an article.'),
+        linkPreview: z.object({
+          url: z.string(),
+          title: z.string(),
+          description: z.string().optional(),
+          thumbnail: z.boolean(),
+          imageUrl: z.string().optional().describe("The page's own preview image, when the card uses it."),
+        }).optional().describe('The card LinkedIn will show for an article.'),
         warnings: z.array(z.string()).describe('What would come out differently than the user may expect. Tell the user before they approve.'),
       }),
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -722,10 +681,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         author: z.string(),
         visibility: z.string(),
         attachment: z.enum(ATTACHMENTS),
-        linkPreview: z
-          .object({ title: z.string(), description: z.string().optional(), thumbnail: z.boolean() })
-          .optional()
-          .describe('The preview card published with an article, so the user can be told if it came out bare.'),
+        linkPreview: z.object({ title: z.string(), description: z.string().optional(), thumbnail: z.boolean() }).optional().describe(
+          'The preview card published with an article, so the user can be told if it came out bare.',
+        ),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -828,9 +786,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
     {
       title: 'Delete a LinkedIn post',
       description: `Permanently deletes a post the signed-in member (or their Page) authored. ${findPost} Confirm with the user first.`,
-      inputSchema: z.object({
-        post: ownPostField,
-      }),
+      inputSchema: z.object({ post: ownPostField }),
       outputSchema: z.object({ deleted: z.boolean(), postUrn: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
@@ -937,10 +893,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
         description: 'Adds a reaction (like, celebrate, support, love, insightful or funny) to a LinkedIn post.',
         inputSchema: withOrganization({
           post: z.string().describe('Post URN or URL.'),
-          reaction: z
-            .enum(Object.keys(REACTIONS) as Array<keyof typeof REACTIONS>)
-            .default('like')
-            .describe('Reaction type.'),
+          reaction: z.enum(Object.keys(REACTIONS) as Array<keyof typeof REACTIONS>).default('like').describe('Reaction type.'),
         }),
         outputSchema: z.object({ postUrn: z.string(), url: z.string(), reaction: z.string(), actor: z.string() }),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -986,10 +939,9 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
           "Opens LinkedIn's sign-in page in the user's browser and waits a while for them to approve access. Use it when the user asks to connect or switch LinkedIn accounts. If it returns a link because the sign-in isn't finished yet, show the link to the user; once they say they approved access, retry what they asked for. " +
           'LinkedIn signs in whoever is signed in to linkedin.com in that browser: to switch accounts, the user must sign out of linkedin.com there first.',
         inputSchema: z.object({
-          force: z
-            .boolean()
-            .default(false)
-            .describe('Start a new sign-in even if already signed in, e.g. to switch accounts (after signing out of linkedin.com in the browser) or when LinkedIn rejected the stored token.'),
+          force: z.boolean().default(false).describe(
+            'Start a new sign-in even if already signed in, e.g. to switch accounts (after signing out of linkedin.com in the browser) or when LinkedIn rejected the stored token.',
+          ),
         }),
         outputSchema: z.object({
           alreadySignedIn: z.boolean(),

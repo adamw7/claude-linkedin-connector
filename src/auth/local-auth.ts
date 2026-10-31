@@ -205,11 +205,7 @@ export class LocalAuth implements LinkedInAuth {
 
   private startLoopback() {
     const app = this.oauthApp();
-    this.loopback ??= new LoopbackLogin({
-      app,
-      redirectUri: this.config.redirectUri,
-      onTokens: (tokens) => this.saveTokens(tokens),
-    });
+    this.loopback ??= new LoopbackLogin({ app, redirectUri: this.config.redirectUri, onTokens: (tokens) => this.saveTokens(tokens) });
     return this.loopback.start();
   }
 

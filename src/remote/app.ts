@@ -1,4 +1,4 @@
-import express, { type ErrorRequestHandler, type Express, type Request, type RequestHandler, type Response } from 'express';
+import express, { type ErrorRequestHandler, type Express, type Request, type Response } from 'express';
 import {
   getOAuthProtectedResourceMetadataUrl,
   hostHeaderValidation,
@@ -18,7 +18,7 @@ import { ClientRegistry, RedirectPolicy } from './clients.js';
 import { ConnectorAuth, grantFromAuthInfo } from './connector-auth.js';
 import { Sealer } from './crypto.js';
 import { pathOf, requestId, requestLogger, silentLogger, type Logger } from './logger.js';
-import { createOAuthServer, MAX_OAUTH_BODY } from './oauth-server.js';
+import { cors, createOAuthServer, MAX_OAUTH_BODY } from './oauth-server.js';
 import { sendPage } from './pages.js';
 import { rateLimit } from './rate-limit.js';
 
@@ -84,17 +84,11 @@ const jsonErrors = (logger: Logger): ErrorRequestHandler => (error: { status?: n
 };
 
 /** Browser-based MCP clients need CORS; tokens travel in a header, not cookies, so any origin is fine. */
-const mcpCors: RequestHandler = (req, res, next) => {
-  res.set({
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': req.headers['access-control-request-headers'] ?? 'Authorization, Content-Type',
-    'Access-Control-Expose-Headers': 'WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version',
-    'Access-Control-Max-Age': '86400',
-  });
-  if (req.method === 'OPTIONS') res.status(204).end();
-  else next();
-};
+const mcpCors = cors((req) => ({
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': req.headers['access-control-request-headers'] ?? 'Authorization, Content-Type',
+  'Access-Control-Expose-Headers': 'WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version',
+}));
 
 /** The HTTP server for claude.ai custom connectors: OAuth + Streamable HTTP MCP endpoint. */
 export function createRemoteApp(options: RemoteAppOptions): RemoteApp {

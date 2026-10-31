@@ -1,4 +1,4 @@
-import express, { type NextFunction, type Request, type Response, type Router } from 'express';
+import express, { type Request, type RequestHandler, type Response, type Router } from 'express';
 import { OAuthError, OAuthErrorCode, type AuthInfo, type OAuthMetadata, type OAuthTokenVerifier } from '@modelcontextprotocol/server';
 import type { RemoteConfig } from '../config.js';
 import { decodeHtmlEntities } from '../html.js';
@@ -128,17 +128,16 @@ function parseBasicAuth(header: string | undefined): { id: string; secret: strin
   }
 }
 
-/** Lets browser-based MCP clients call the token and registration endpoints. */
-function cors(req: Request, res: Response, next: NextFunction): void {
-  res.set({
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, MCP-Protocol-Version',
-    'Access-Control-Max-Age': '86400',
-  });
+/** Lets browser-based MCP clients call an endpoint from any origin, with `headers` for the request; answers preflights. */
+export const cors = (headers: (req: Request) => Record<string, string>): RequestHandler => (req, res, next) => {
+  res.set({ 'Access-Control-Allow-Origin': '*', ...headers(req), 'Access-Control-Max-Age': '86400' });
   if (req.method === 'OPTIONS') res.status(204).end();
   else next();
-}
+};
+const oauthCors = cors(() => ({
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, MCP-Protocol-Version',
+}));
 
 /**
  * A small OAuth 2.1 authorization server for MCP clients (PKCE, dynamic
@@ -319,8 +318,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   });
 
   // A client authenticating with client_secret_basic sends an Authorization header, which takes a preflight.
-  router.options('/token', cors);
-  router.post('/token', cors, formBody, async (req, res) => {
+  router.options('/token', oauthCors);
+  router.post('/token', oauthCors, formBody, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const fail = (error: string, description: string, status = 400) => oauthError(res, status, error, description);
     if (body.grant_type !== 'authorization_code') return fail('unsupported_grant_type', 'Only the authorization_code grant is supported.');
@@ -361,8 +360,8 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
     res.set(NO_STORE).json({ access_token: sealer.seal('access', token), token_type: 'Bearer', expires_in: expiresAt - issuedAt });
   });
 
-  router.options('/register', cors);
-  router.post('/register', cors, (req, res) => {
+  router.options('/register', oauthCors);
+  router.post('/register', oauthCors, (req, res) => {
     const result = clients.register(req.body);
     res.status(result.status).set('Cache-Control', 'no-store').json(result.body);
   });

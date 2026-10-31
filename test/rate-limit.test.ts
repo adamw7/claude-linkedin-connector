@@ -6,13 +6,7 @@ function harness(limit: number, windowMs = 1000) {
   const clock = { t: 0 };
   const rejected: string[] = [];
   const headers: Record<string, string> = {};
-  const limiter = rateLimit({
-    limit,
-    windowMs,
-    key: (req) => req.ip,
-    reject: (req) => rejected.push(req.ip!),
-    now: () => clock.t,
-  });
+  const limiter = rateLimit({ limit, windowMs, key: (req) => req.ip, reject: (req) => rejected.push(req.ip!), now: () => clock.t });
   const res = { set: (name: string, value: string) => (headers[name] = value) } as unknown as Response;
   const hit = (ip: string | undefined) => {
     let passed = false;

@@ -32,10 +32,7 @@ describe('drainServer', () => {
 
   it('gives up after the timeout, aborts and drops remaining connections', async () => {
     const { url, server } = await slowServer(5000);
-    const response = fetch(url).then(
-      () => 'finished',
-      () => 'dropped',
-    );
+    const response = fetch(url).then(() => 'finished', () => 'dropped');
     await new Promise((resolve) => setTimeout(resolve, 20));
     const abort = vi.fn(async () => {});
     const logger = vi.fn();
