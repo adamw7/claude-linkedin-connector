@@ -37,9 +37,36 @@ function log(message: string): void {
   process.stderr.write(`[${NAME}] ${message}\n`);
 }
 
-function usageError(message: string): void {
-  log(`${message}\n\n${HELP}`);
+/**
+ * One line on what was wrong and, for a typo, what was meant: the whole help would push the error off the screen.
+ * The help is named, not the command, which may be the installed one, npx, or node and a path.
+ */
+function usageError(message: string, meant?: string): void {
+  log(`${message}${meant ? ` Did you mean "${meant}"?` : ''} Add --help to see the commands and their options.`);
   process.exitCode = 2;
+}
+
+/** Edits (insertions, deletions, substitutions) turning one word into the other. */
+function distance(from: string, to: string): number {
+  let previous = Array.from({ length: to.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= from.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= to.length; j++) {
+      current[j] = Math.min(previous[j]! + 1, current[j - 1]! + 1, previous[j - 1]! + (from[i - 1] === to[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[to.length]!;
+}
+
+/** The candidate `input` was most likely a typo of: the nearest within two edits, as "lgoin" is of "login". */
+function nearest(input: string, candidates: readonly string[]): string | undefined {
+  let best: { candidate: string; edits: number } | undefined;
+  for (const candidate of candidates) {
+    const edits = distance(input, candidate);
+    if (edits <= 2 && (best === undefined || edits < best.edits)) best = { candidate, edits };
+  }
+  return best?.candidate;
 }
 
 function localSetup(browser = true) {
@@ -139,8 +166,9 @@ async function runStatus(): Promise<void> {
   if (status.authenticated && status.scopes.length > 0) console.log(`Scopes: ${status.scopes.join(' ')}`);
   // Non-zero whenever signing in would help, so `npm run setup` signs in again after scopes were added.
   if (!status.authenticated || status.missingScopes) {
-    // However this was started (the installed command, npx, node and a path), the same again works.
-    console.log('To sign in from this terminal, run the same command with "login" in place of "status".');
+    // However this was started (the installed command, npx, node and a path), the same again works. Without the app's
+    // credentials it would only fail, and the message above says to set them.
+    if (auth.canSignIn) console.log('To sign in from this terminal, run the same command with "login" in place of "status".');
     process.exitCode = 1;
   }
 }
@@ -164,13 +192,17 @@ async function main(argv: string[]): Promise<void> {
   if (['help', '--help', '-h'].includes(command)) return console.log(HELP);
   if (['version', '--version', '-v'].includes(command)) return console.log(VERSION);
   const entry = COMMANDS.get(command);
-  if (!entry) return usageError(`Unknown command "${command}".`);
+  if (!entry) return usageError(`Unknown command "${command}".`, nearest(command, [...COMMANDS.keys(), 'help', 'version']));
+  const options = { ...entry.options, help: { type: 'boolean', short: 'h' } } satisfies ParseArgsOptionsConfig;
   let values: Record<string, unknown>;
   try {
-    ({ values } = parseArgs({ args: rest, options: { ...entry.options, help: { type: 'boolean', short: 'h' } } }));
+    ({ values } = parseArgs({ args: rest, options }));
   } catch (error) {
     // The first sentence names the problem; the rest is about positional arguments starting with "-".
-    return usageError(`${command}: ${(error as Error).message.split('. ')[0]}.`);
+    const message = (error as Error).message;
+    const unknown = /^Unknown option '(--[^']+)'/.exec(message)?.[1];
+    const meant = unknown && nearest(unknown, Object.keys(options).map((name) => `--${name}`));
+    return usageError(`${command}: ${message.split('. ')[0]}.`, meant);
   }
   return values.help ? console.log(HELP) : entry.run(values);
 }

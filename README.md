@@ -166,7 +166,7 @@ The connector's error messages say how to fix what they report. For the rest:
 | `LINKEDIN_REDIRECT_URI` | local | `http://localhost:8723/callback` | Sign-in callback; must match the LinkedIn app exactly |
 | `LINKEDIN_TOKEN_FILE` | local | per-user config dir | Where the token is stored |
 | `LINKEDIN_ACCESS_TOKEN` | local | | Use this token instead of signing in |
-| `LINKEDIN_FILE_DIRS` | local | `~/Downloads`, `~/Desktop`, `~/Pictures`, working directory | Comma-separated folders local images, documents and `Connections.csv` may be read from, instead of the defaults (list them too to keep them). Symlinks out of them are refused |
+| `LINKEDIN_FILE_DIRS` | local | `~/Downloads`, `~/Desktop`, `~/Pictures`, and in Claude Code the project it runs in | Comma-separated folders local images, documents and `Connections.csv` may be read from, instead of the defaults (list them too to keep them). Symlinks out of them are refused |
 | `PUBLIC_URL` | remote | | Public origin, e.g. `https://linkedin-mcp.example.com` (required) |
 | `SERVER_SECRET` | remote | | At least 32 characters; keep it the same across restarts and replicas. Required unless `PUBLIC_URL` is localhost, where a random one is used |
 | `SERVER_SECRET_PREVIOUS` | remote | | The secret used before `SERVER_SECRET`, still accepted for tokens issued with it, while [rotating](docs/deployment.md#rotating-server_secret) |

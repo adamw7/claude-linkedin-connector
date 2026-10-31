@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { CREDENTIALS_HINT } from '../src/auth/local-auth.js';
 import { VERSION } from '../src/version.js';
 import { freePort, startServer, type TestServer } from './helpers/http.js';
 
@@ -62,10 +63,17 @@ describe('command line', () => {
     expect(stdout).toContain('To switch\n            accounts, sign out of linkedin.com in the browser first.');
   });
 
-  it('rejects unknown commands with exit code 2', () => {
-    const { status, stderr } = cli(['nope']);
-    expect(status).toBe(2);
-    expect(stderr).toContain('Unknown command "nope"');
+  it('rejects unknown commands with exit code 2, in one line naming what was meant', () => {
+    const more = ' Add --help to see the commands and their options.\n';
+    expect(cli(['nope'])).toMatchObject({ status: 2, stderr: `[claude-linkedin-connector] Unknown command "nope".${more}` });
+    // The nearest command within two edits; the help is pointed to, not printed, so the error stays on screen.
+    expect(cli(['lgoin'])).toMatchObject({ status: 2, stderr: `[claude-linkedin-connector] Unknown command "lgoin". Did you mean "login"?${more}` });
+    expect(cli(['stauts']).stderr).toContain('Did you mean "status"?');
+    expect(cli(['hepl']).stderr).toContain('Did you mean "help"?');
+    expect(cli(['verison']).stderr).toContain('Did you mean "version"?');
+    expect(cli(['logot']).stderr).toContain('Did you mean "logout"?');
+    // Three edits from every command is not a typo of one.
+    expect(cli(['lxyzn']).stderr).not.toContain('Did you mean');
   });
 
   it('shows help for --help after a command instead of running it', () => {
@@ -82,20 +90,28 @@ describe('command line', () => {
     storeToken();
     const typo = cli(['logout', '--all']);
     expect(typo.status).toBe(2);
-    expect(typo.stderr).toContain("logout: Unknown option '--all'.");
-    expect(typo.stderr).toContain('Usage:');
+    expect(typo.stderr).toBe("[claude-linkedin-connector] logout: Unknown option '--all'. Add --help to see the commands and their options.\n");
     expect(existsSync(tokenFile)).toBe(true);
+    expect(cli(['login', '--nobrowser']).stderr).toBe(
+      "[claude-linkedin-connector] login: Unknown option '--nobrowser'. Did you mean \"--no-browser\"? Add --help to see the commands and their options.\n",
+    );
+    expect(cli(['status', '--hlep']).stderr).toContain('Did you mean "--help"?');
     expect(cli(['status', 'now'])).toMatchObject({ status: 2, stderr: expect.stringContaining("status: Unexpected argument 'now'.") });
   });
 
   it('reports the sign-in status', () => {
     const terminalSignIn = 'To sign in from this terminal, run the same command with "login" in place of "status".\n';
-    const signedOut = cli(['status']);
+    const signedOut = cli(['status'], { LINKEDIN_CLIENT_ID: 'test-client', LINKEDIN_CLIENT_SECRET: 'test-secret' });
     expect(signedOut.status).toBe(1);
     expect(signedOut.stdout).toBe(
       "You are not signed in to LinkedIn. Ask Claude to run the linkedin_login tool, which opens LinkedIn's sign-in page in your browser.\n" +
         terminalSignIn,
     );
+
+    // Signing in can't start without the app's credentials, so they are what status says to set, and nothing more.
+    const unconfigured = cli(['status']);
+    expect(unconfigured.status).toBe(1);
+    expect(unconfigured.stdout).toBe(`You are not signed in to LinkedIn. ${CREDENTIALS_HINT}\n`);
 
     storeToken();
     const signedIn = cli(['status']);
@@ -105,7 +121,11 @@ describe('command line', () => {
     expect(signedIn.stdout).not.toContain(terminalSignIn);
 
     // Scopes added after signing in (e.g. for comments) need a new sign-in, which `npm run setup` keys off the exit code.
-    const predates = cli(['status'], { LINKEDIN_SCOPES: 'openid profile email w_member_social w_member_social_feed' });
+    const predates = cli(['status'], {
+      LINKEDIN_SCOPES: 'openid profile email w_member_social w_member_social_feed',
+      LINKEDIN_CLIENT_ID: 'test-client',
+      LINKEDIN_CLIENT_SECRET: 'test-secret',
+    });
     expect(predates.status).toBe(1);
     expect(predates.stdout).toContain('That sign-in predates the w_member_social_feed permission now configured: sign in again to grant it.');
     expect(predates.stdout.endsWith(terminalSignIn)).toBe(true);
@@ -123,7 +143,7 @@ describe('command line', () => {
   it('explains missing configuration instead of crashing', () => {
     const login = cli(['login', '--no-browser']);
     expect(login.status).toBe(1);
-    expect(login.stderr).toContain('set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET');
+    expect(login.stderr).toBe(`[claude-linkedin-connector] ${CREDENTIALS_HINT}\n`);
 
     const http = cli(['http']);
     expect(http.status).toBe(1);
@@ -238,12 +258,9 @@ describe('stdio command', () => {
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['linkedin_create_post', 'linkedin_login', 'linkedin_logout']));
       const status = await client.callTool({ name: 'linkedin_auth_status', arguments: {} });
-      // No terminal command: this install's command and app credentials are Claude's, not the user's shell's.
-      expect(status.structuredContent).toMatchObject({
-        authenticated: false,
-        source: 'none',
-        message: "You are not signed in to LinkedIn. Ask Claude to run the linkedin_login tool, which opens LinkedIn's sign-in page in your browser.",
-      });
+      // No terminal command: this install's command and app credentials are Claude's, not the user's shell's. Without
+      // the credentials, linkedin_login would only fail, so they come first.
+      expect(status.structuredContent).toMatchObject({ authenticated: false, source: 'none', message: `You are not signed in to LinkedIn. ${CREDENTIALS_HINT}` });
     } finally {
       await client.close();
     }

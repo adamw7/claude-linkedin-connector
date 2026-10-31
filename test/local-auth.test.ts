@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { LocalAuth } from '../src/auth/local-auth.js';
+import { CREDENTIALS_HINT, LocalAuth, SIGN_IN_HINT } from '../src/auth/local-auth.js';
 import { defaultTokenFile, TokenStore, type StoredToken } from '../src/auth/token-store.js';
 import { loadLocalConfig, type LocalConfig } from '../src/config.js';
 import { ConfigError, NotAuthenticatedError } from '../src/errors.js';
@@ -182,7 +182,28 @@ describe('LocalAuth', () => {
   });
 
   it('requires app credentials to sign in', async () => {
-    await expect(auth({ clientId: undefined }).login()).rejects.toThrow(ConfigError);
+    await expect(auth({ clientId: undefined }).login()).rejects.toThrow(new ConfigError(CREDENTIALS_HINT));
+    await expect(auth({ clientSecret: undefined }).login()).rejects.toThrow(new ConfigError(CREDENTIALS_HINT));
+    expect(auth().canSignIn).toBe(true);
+    expect(auth({ clientId: undefined }).canSignIn).toBe(false);
+    expect(auth({ clientSecret: undefined }).canSignIn).toBe(false);
+  });
+
+  it('says to set the app credentials, not to sign in, while signing in could only fail', async () => {
+    const unconfigured = auth({ clientId: undefined, clientSecret: undefined });
+    await expect(unconfigured.getSession()).rejects.toThrow(new NotAuthenticatedError(`You are not signed in to LinkedIn. ${CREDENTIALS_HINT}`));
+    expect(await unconfigured.status()).toEqual({
+      authenticated: false,
+      source: 'none',
+      scopes: [],
+      message: `You are not signed in to LinkedIn. ${CREDENTIALS_HINT}`,
+    });
+    // An expired sign-in can't be renewed without them either.
+    await new TokenStore(config.tokenFile).write(token({ expiresAt: Date.now() - DAY }));
+    await expect(auth({ clientSecret: undefined }).getSession()).rejects.toThrow(
+      new NotAuthenticatedError(`Your LinkedIn sign-in has expired. ${CREDENTIALS_HINT}`),
+    );
+    await expect(auth().getSession()).rejects.toThrow(new NotAuthenticatedError(`Your LinkedIn sign-in has expired. ${SIGN_IN_HINT}`));
   });
 
   it('only accepts loopback redirect URIs with a fixed port', async () => {
