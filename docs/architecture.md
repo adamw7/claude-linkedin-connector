@@ -41,12 +41,12 @@ C4Container
   System_Ext(web, "Public web", "Link targets, media URLs")
 
   System_Boundary(local, "Member's computer") {
-    Container(stdio, "Local MCP server", "Node.js 24, stdio", "dist/index.js stdio|login|logout|status; started by Claude Desktop / Claude Code or installed as an .mcpb extension")
+    Container(stdio, "Local MCP server", "Node.js 24 or later, stdio", "dist/index.js stdio|login|logout|status; started by Claude Desktop / Claude Code or installed as an .mcpb extension")
     ContainerDb(tokenFile, "Token and post history", "JSON, mode 0600", "token.json and posts.json in ~/.config/claude-linkedin-connector/")
   }
 
   System_Boundary(server, "Hosting provider") {
-    Container(http, "Remote MCP server", "Node.js 24, Express, Docker", "dist/index.js http; OAuth 2.1 authorization server plus /mcp endpoint; keeps no database")
+    Container(http, "Remote MCP server", "Node.js 26, Express, Docker", "dist/index.js http; OAuth 2.1 authorization server plus /mcp endpoint; keeps no database")
   }
 
   Rel(claude, stdio, "Calls tools", "MCP over stdio")

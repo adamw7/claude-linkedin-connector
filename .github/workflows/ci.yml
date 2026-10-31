@@ -16,7 +16,8 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        node: [24]
+        # The oldest Node.js that engines allows, and the one the image and the other workflows run.
+        node: [24, 26]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -40,7 +41,7 @@ jobs:
           JS
       - uses: actions/upload-artifact@v7
         with:
-          name: coverage-report
+          name: coverage-report-node${{ matrix.node }}
           path: coverage/
       - run: npm run bench
         timeout-minutes: 10

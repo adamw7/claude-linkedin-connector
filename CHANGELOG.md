@@ -27,8 +27,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
-- The Docker image now runs Node.js 24.22.1, a security release with fixes to TLS certificate checks, HTTP, DNS and
-  brotli decompression, and newer OpenSSL and root certificates. The image had Node.js 24.22.0.
+- The Docker image now runs Node.js 26.13.0, the new long-term support line, with the security fixes to TLS
+  certificate checks, HTTP, DNS and brotli decompression, and newer OpenSSL and root certificates. The image had
+  Node.js 24.22.0. The npm package and the Claude Desktop extension still run on Node.js 24 or later.
 
 ## [0.4.0] - 2026-10-24
 

@@ -3,7 +3,7 @@
 
 # The output is plain JavaScript (no native modules), so it is built once on the build machine's own platform,
 # also when the image is for another architecture.
-FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS build
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
@@ -12,7 +12,7 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 # No RUN steps here, so images for other architectures build without emulation.
-FROM node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+FROM node:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94
 LABEL org.opencontainers.image.title="claude-linkedin-connector" \
       org.opencontainers.image.description="Remote MCP server (custom connector) that lets Claude use your LinkedIn account" \
       org.opencontainers.image.source="https://github.com/adamw7/claude-linkedin-connector" \
