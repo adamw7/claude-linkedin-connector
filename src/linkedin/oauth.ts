@@ -54,11 +54,7 @@ async function requestToken(app: LinkedInOAuthApp, params: Record<string, string
   const fetchImpl = app.fetch ?? globalThis.fetch;
   const response = await fetchImpl(oauthUrl(app, '/oauth/v2/accessToken'), {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-      'User-Agent': USER_AGENT,
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', 'User-Agent': USER_AGENT },
     body: new URLSearchParams({ ...params, client_id: app.clientId, client_secret: app.clientSecret }),
     signal: AbortSignal.timeout(30_000),
   });

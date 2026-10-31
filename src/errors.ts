@@ -19,10 +19,7 @@ export class LinkedInApiError extends Error {
 export class LinkedInOAuthError extends Error {
   override readonly name = 'LinkedInOAuthError';
 
-  constructor(
-    readonly error: string,
-    readonly description?: string,
-  ) {
+  constructor(readonly error: string, readonly description?: string) {
     super(description ? `${error}: ${description}` : error);
   }
 }

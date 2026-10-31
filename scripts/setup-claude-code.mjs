@@ -286,9 +286,7 @@ async function main() {
     for (const scope of ['user', 'local']) run('claude', ['mcp', 'remove', options.name, '--scope', scope], { quiet: true });
   }
   const server = { type: 'stdio', command: process.execPath, args: [ENTRY], env };
-  runOrFail('claude', ['mcp', 'add-json', options.name, JSON.stringify(server), '--scope', options.scope], {
-    quiet: true,
-  });
+  runOrFail('claude', ['mcp', 'add-json', options.name, JSON.stringify(server), '--scope', options.scope], { quiet: true });
   console.log(`Added. \`claude mcp get ${options.name}\` shows it.`);
 
   if (options['no-login']) {

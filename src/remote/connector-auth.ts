@@ -13,10 +13,7 @@ export function grantFromAuthInfo(authInfo: AuthInfo | undefined): LinkedInGrant
 
 /** Tokens for HTTP mode: the LinkedIn grant carried inside the caller's verified access token. */
 export class ConnectorAuth implements LinkedInAuth {
-  constructor(
-    private grant: LinkedInGrant | undefined,
-    private readonly now: () => number = Date.now,
-  ) {}
+  constructor(private grant: LinkedInGrant | undefined, private readonly now: () => number = Date.now) {}
 
   async getSession(): Promise<LinkedInSession> {
     const grant = this.grant;

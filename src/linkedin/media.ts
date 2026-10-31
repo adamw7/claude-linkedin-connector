@@ -8,10 +8,7 @@ import { expandHome, isInside } from '../paths.js';
 
 export type MediaKind = 'image' | 'document';
 
-const MAX_BYTES: Record<MediaKind, number> = {
-  image: 20 * 1024 * 1024,
-  document: 100 * 1024 * 1024,
-};
+const MAX_BYTES: Record<MediaKind, number> = { image: 20 * 1024 * 1024, document: 100 * 1024 * 1024 };
 
 export interface LoadedMedia {
   data: Buffer;

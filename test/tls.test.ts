@@ -37,10 +37,7 @@ afterAll(() => {
 });
 
 const fetchErrorCode = (url: string) =>
-  fetch(url).then(
-    () => 'connected',
-    (error: Error) => (error.cause as NodeJS.ErrnoException).code,
-  );
+  fetch(url).then(() => 'connected', (error: Error) => (error.cause as NodeJS.ErrnoException).code);
 
 describe('TLS', () => {
   it('requires TLS 1.3', () => {

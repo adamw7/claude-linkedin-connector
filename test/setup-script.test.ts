@@ -63,11 +63,7 @@ describe.skipIf(process.platform === 'win32' || nodeMajor < 24)('setup-claude-co
       type: 'stdio',
       command: process.execPath,
       args: [ENTRY],
-      env: {
-        LINKEDIN_CLIENT_ID: 'id-123',
-        LINKEDIN_CLIENT_SECRET: 'secret-456',
-        LINKEDIN_SCOPES: 'openid profile email w_member_social',
-      },
+      env: { LINKEDIN_CLIENT_ID: 'id-123', LINKEDIN_CLIENT_SECRET: 'secret-456', LINKEDIN_SCOPES: 'openid profile email w_member_social' },
     });
   });
 

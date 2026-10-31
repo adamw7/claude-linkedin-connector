@@ -100,9 +100,7 @@ export class LinkedInClient {
 
   /** Registers an upload and returns the URL to PUT the bytes to plus the asset URN. */
   async initializeUpload(kind: AssetKind, owner: string): Promise<{ uploadUrl: string; urn: string }> {
-    const response = await this.call('POST', `/rest/${kind}?action=initializeUpload`, {
-      body: { initializeUploadRequest: { owner } },
-    });
+    const response = await this.call('POST', `/rest/${kind}?action=initializeUpload`, { body: { initializeUploadRequest: { owner } } });
     const json = (await response.json()) as { value?: { uploadUrl?: string; image?: string; document?: string } };
     const uploadUrl = json.value?.uploadUrl;
     const urn = kind === 'images' ? json.value?.image : json.value?.document;
