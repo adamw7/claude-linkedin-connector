@@ -111,10 +111,13 @@ in parallel, it:
 
 ## Dependencies
 
-Dependabot proposes npm and base image updates weekly, and Renovate GitHub Actions updates. Renovate is meant to
-propose all three, but so far detects only GitHub Actions
-([#43](https://github.com/adamw7/claude-linkedin-connector/issues/43)); once it detects the rest, delete
-`.github/dependabot.yml`. Their pull requests merge on green like any other.
+Renovate proposes npm, base image and GitHub Actions updates weekly. The Renovate app's own config watches only GitHub
+Actions, so `.github/renovate.json` names every manager in `enabledManagers`
+([#43](https://github.com/adamw7/claude-linkedin-connector/issues/43)). Dependabot proposes npm and base image updates
+too until Renovate's Dependency Dashboard lists `package.json` and the `Dockerfile` under **Detected dependencies**;
+then delete `.github/dependabot.yml`, or the two open the same pull requests. Their pull requests merge on green like
+any other. A new Node.js LTS is a move made on purpose: the base image, every workflow's `node-version` and the CI
+matrix together, and `engines` (with `@types/node`) only when the oldest supported LTS is dropped.
 
 The `Audit` workflow runs `npm audit --omit=dev --audit-level=high` on every push to `main`, every pull request and
 every day, so an advisory published since the last push shows up without one. It fails when a dependency that ships

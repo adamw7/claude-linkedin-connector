@@ -1,6 +1,6 @@
-# Weekly npm and base image updates. Renovate (.github/renovate.json) only detects GitHub Actions so far (#43), so it
-# keeps proposing those and Dependabot the rest. Once Renovate detects package.json and the Dockerfile too, delete
-# this file, or the two open the same PRs.
+# Weekly npm and base image updates, until Renovate (.github/renovate.json) proposes them too: it detected only GitHub
+# Actions until its enabledManagers named the rest (#43). Once its Dependency Dashboard lists package.json and the
+# Dockerfile, delete this file, or the two open the same PRs.
 version: 2
 updates:
   - package-ecosystem: npm

@@ -1,7 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Weekly dependency updates. Minor and patch npm updates arrive as one PR; majors one by one.",
+  "description": [
+    "Weekly dependency updates. Minor and patch npm updates arrive as one PR; majors one by one.",
+    "The Renovate app's own config watches only GitHub Actions unless enabledManagers names the rest (#43), and leaves lock files alone unless skipArtifactsUpdate is false, so an npm update would move package.json without package-lock.json."
+  ],
   "extends": ["config:recommended", "schedule:weekly"],
+  "enabledManagers": ["npm", "dockerfile", "docker-compose", "github-actions"],
+  "skipArtifactsUpdate": false,
   "packageRules": [
     {
       "matchManagers": ["npm"],
@@ -20,8 +25,7 @@
       "groupName": "GitHub Actions"
     },
     {
-      "description": "Keep the digest-pinned base image current, but move to the next Node.js LTS on purpose, together with engines and CI.",
-      "matchManagers": ["dockerfile"],
+      "description": "Keep the digest-pinned base image current, but move to the next Node.js LTS on purpose: the base image, the workflows' node-version and the CI matrix together, engines when the oldest supported LTS goes.",
       "matchPackageNames": ["node"],
       "matchUpdateTypes": ["major"],
       "enabled": false
