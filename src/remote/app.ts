@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import express, { type ErrorRequestHandler, type Express, type Request, type Response } from 'express';
 import {
   getOAuthProtectedResourceMetadataUrl,
@@ -178,7 +179,12 @@ export function createRemoteApp(options: RemoteAppOptions): RemoteApp {
   });
   const mcpLimit = rateLimit({
     limit: config.mcpRateLimit,
-    key: ({ auth }) => auth && (grantFromAuthInfo(auth)?.sub ?? auth.clientId),
+    key: ({ auth }) => {
+      const grant = auth && grantFromAuthInfo(auth);
+      // Without a member ID (no OpenID scopes), the connection's LinkedIn token stands for the account: the client ID
+      // can't, as everyone using the same app shares it. Hashed, so the limiter holds no tokens.
+      return grant && (grant.sub ?? createHash('sha256').update(grant.at).digest('base64url'));
+    },
     reject: tooMany,
   });
   // Tool calls can carry base64 images, so allow large JSON bodies, but only from authenticated callers

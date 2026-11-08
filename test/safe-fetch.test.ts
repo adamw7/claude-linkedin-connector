@@ -39,11 +39,15 @@ describe('isBlockedAddress', () => {
     '64:ff9b:1::a00:1',
     '2002:c0a8:0101::1',
     '[::1]',
+    // IPv4-translated (SIIT): a translator in front would reach 127.0.0.1, then 8.8.8.8, both through the reserved block.
+    '::ffff:0:7f00:1',
+    '::ffff:0:8.8.8.8',
+    '0:0:0:1::1',
   ])('blocks %s', (address) => {
     expect(isBlockedAddress(address)).toBe(true);
   });
 
-  it.each(['8.8.8.8', '13.107.42.14', '2606:4700:4700::1111', '::ffff:8.8.8.8'])('allows %s', (address) => {
+  it.each(['8.8.8.8', '13.107.42.14', '2606:4700:4700::1111', '::ffff:8.8.8.8', '64:ff9b::808:808', '0100:0:0:1::1'])('allows %s', (address) => {
     expect(isBlockedAddress(address)).toBe(false);
   });
 

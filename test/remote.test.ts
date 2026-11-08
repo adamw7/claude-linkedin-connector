@@ -917,6 +917,22 @@ describe('rate limiting', () => {
     // Unauthenticated requests are challenged, not counted against anyone.
     expect((await fetch(remote.mcpUrl, { method: 'POST' })).status).toBe(401);
   });
+
+  it("limits each connection on its own when LinkedIn didn't say who the member is", async () => {
+    const remote = await startRemote({ mcpRateLimit: 1 });
+    // No member ID (as without the OpenID scopes), and a LinkedIn token of its own for each connection.
+    remote.linkedin.override(({ url }) => (url.pathname === '/v2/userinfo' ? Response.json({ message: 'Not enough permissions' }, { status: 403 }) : undefined));
+    let issued = 0;
+    remote.linkedin.override(({ url }) =>
+      url.pathname === '/oauth/v2/accessToken' ? Response.json({ access_token: `li-token-${++issued}`, expires_in: 5_184_000 }) : undefined,
+    );
+    const first = await accessToken(remote);
+    const second = await accessToken(remote);
+    expect((await ping(remote, first)).status).not.toBe(429);
+    // Everyone using the same app shares its client ID, so that can't stand for the account.
+    expect((await ping(remote, second)).status).not.toBe(429);
+    expect((await ping(remote, first)).status).toBe(429);
+  });
 });
 
 describe('token endpoint', () => {

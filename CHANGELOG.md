@@ -31,9 +31,21 @@ All notable changes to this project are documented here. The format follows
 - A remote server didn't log `mcp_error` for MCP requests it refused for an unsupported protocol version, or for an
   `Accept` header without `text/event-stream`, although the Monitoring table in the deployment guide lists them.
   They showed only as an `http_request` with status 400 or 406.
+- Editing or deleting a post given by a link with an activity ID (`urn:li:activity:…`) blamed that ID for any refusal
+  from LinkedIn. When LinkedIn had rejected an expired or revoked sign-in, Claude was told to find the post's embed
+  code instead of the connector signing you in again; a rate limit or an outdated API version was reported the same
+  way. The sign-in now starts again, and the rate limit and API version are reported as such.
+- Reloading LinkedIn's "connected" page while the sign-in was still finishing could report the sign-in as failed,
+  in the browser and to Claude, although it had worked. Both now show its actual outcome.
+- A remote server whose LinkedIn app doesn't have the OpenID Connect product counted every connection's `/mcp`
+  requests against one shared `RATE_LIMIT_MCP`, so one busy user could get everyone else turned away with `429`.
+  Without a member ID, each connection now has its own limit.
 
 ### Security
 
+- Images, documents, link previews and client metadata documents are no longer fetched from IPv4-translated IPv6
+  addresses (`::ffff:0:a.b.c.d`) or the rest of the reserved `::/8` block, which a network translating IPv6 to IPv4
+  could route to a private or loopback address.
 - The Docker image now runs Node.js 24.22.1, a security release with fixes to TLS certificate checks, HTTP, DNS and
   brotli decompression, and newer OpenSSL and root certificates. The image had Node.js 24.22.0.
 
