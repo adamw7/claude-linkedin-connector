@@ -1263,6 +1263,36 @@ describe('editing and deleting errors', () => {
       'LinkedIn had an internal problem (HTTP 500): Invalid post id. Try again in a moment.',
     );
   });
+
+  it("doesn't blame an activity URN for a rate limit or an API version LinkedIn refused", async () => {
+    const limited = await harness();
+    limited.linkedin.override((r) =>
+      r.url.pathname.startsWith('/rest/posts/') ? Response.json({ message: 'Too many requests' }, { status: 429, headers: { 'retry-after': '30' } }) : undefined,
+    );
+    expect((await call(limited, 'linkedin_edit_post', { post: 'urn:li:activity:7', text: 'New' })).text).toBe(
+      "LinkedIn's rate limit was reached (retry after 30s). Try again later.",
+    );
+    const outdated = await harness();
+    failWith(outdated, 426);
+    expect((await call(outdated, 'linkedin_delete_post', { post: 'urn:li:activity:7' })).text).toMatch(
+      /^LinkedIn accepts none of the API versions the connector tried: Invalid post id\. /,
+    );
+  });
+
+  it('signs in again when LinkedIn rejects the token, even for an activity URN', async () => {
+    const auth = new StubLocalAuth();
+    auth.rejected = async () => {
+      auth.signedIn = false;
+      return true;
+    };
+    const h = await harness({ auth });
+    h.linkedin.override(() => Response.json({ message: 'Invalid access token' }, { status: 401 }));
+    expect((await call(h, 'linkedin_delete_post', { post: 'urn:li:activity:7' })).text).toBe(
+      "LinkedIn rejected your sign-in: it has expired or been revoked. The LinkedIn sign-in page is open in your browser; if it didn't appear, open this link " +
+        `(valid for 10 minutes): https://www.linkedin.com/oauth/v2/authorization?state=x ${CHECK_APP} Once you have approved access, try again.`,
+    );
+    expect(auth.logins).toBe(1);
+  });
 });
 
 describe('linkedin_delete_post', () => {

@@ -170,6 +170,32 @@ describe('LoopbackLogin', () => {
     await expect(flow.completion).rejects.toThrow('disk <full>');
   });
 
+  it('answers a callback that arrives again during the code exchange with its outcome, rather than failing the sign-in', async () => {
+    const stored = Promise.withResolvers<void>();
+    const storing = Promise.withResolvers<void>();
+    const { loopback, linkedin } = await login({
+      onTokens: async () => {
+        storing.resolve();
+        await stored.promise;
+        return 'Ada';
+      },
+    });
+    const flow = await loopback.start();
+    const first = fetch(callback(flow, { code: 'li-code' }));
+    await storing.promise;
+    // The page reloaded mid-exchange: LinkedIn would refuse its code, already used.
+    const again = fetch(callback(flow, { code: 'li-code-again' }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    stored.resolve();
+    for (const response of await Promise.all([first, again])) {
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('Connected to LinkedIn as <strong>Ada</strong>');
+    }
+    expect(await flow.completion).toBe('Ada');
+    expect(loopback.lastError).toBeUndefined();
+    expect(linkedin.find('POST', '/oauth/v2/accessToken')).toHaveLength(1);
+  });
+
   it('escapes LinkedIn error descriptions', async () => {
     const { loopback } = await login();
     const flow = await loopback.start();

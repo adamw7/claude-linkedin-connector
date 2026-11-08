@@ -10,16 +10,23 @@ export class FetchError extends Error {
   override readonly name = 'FetchError';
 }
 
+/**
+ * IPv6 addresses that tunnel an IPv4 one are checked as that address first (see `embeddedIPv4`); `::/8` then takes the
+ * rest of the IETF's reserved block: the unspecified and loopback addresses, IPv4-translated ones (`::ffff:0:a.b.c.d`)
+ * and local-use NAT64.
+ */
 const BLOCKED_RANGES = {
   ipv4: '0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4',
-  ipv6: '::/128 ::1/128 64:ff9b:1::/48 100::/64 2001::/32 2001:db8::/32 fc00::/7 fe80::/10 fec0::/10 ff00::/8',
+  ipv6: '::/8 100::/64 2001::/32 2001:db8::/32 fc00::/7 fe80::/10 fec0::/10 ff00::/8',
 } as const;
 
-const BLOCKED = new BlockList();
+// One list per family: a BlockList also checks IPv4 addresses against its IPv6 rules, as IPv4-mapped ones
+// (::ffff:a.b.c.d), which `::/8` holds, so a shared list would block every IPv4 address.
+const BLOCKED = { ipv4: new BlockList(), ipv6: new BlockList() };
 for (const [family, ranges] of Object.entries(BLOCKED_RANGES) as Array<['ipv4' | 'ipv6', string]>) {
   for (const range of ranges.split(' ')) {
     const [network, prefix] = range.split('/');
-    BLOCKED.addSubnet(network!, Number(prefix), family);
+    BLOCKED[family].addSubnet(network!, Number(prefix), family);
   }
 }
 
@@ -51,11 +58,11 @@ function embeddedIPv4(address: string): string | undefined {
 export function isBlockedAddress(address: string): boolean {
   const bare = address.replace(/^\[|\]$/g, '');
   const family = isIP(bare.split('%')[0]!);
-  if (family === 4) return BLOCKED.check(bare, 'ipv4');
+  if (family === 4) return BLOCKED.ipv4.check(bare, 'ipv4');
   if (family === 6) {
     const ipv4 = embeddedIPv4(bare);
-    if (ipv4 !== undefined) return BLOCKED.check(ipv4, 'ipv4');
-    return BLOCKED.check(bare.split('%')[0]!, 'ipv6');
+    if (ipv4 !== undefined) return BLOCKED.ipv4.check(ipv4, 'ipv4');
+    return BLOCKED.ipv6.check(bare.split('%')[0]!, 'ipv6');
   }
   return true;
 }

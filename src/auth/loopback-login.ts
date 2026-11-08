@@ -90,6 +90,11 @@ export class LoopbackLogin {
     let timer: NodeJS.Timeout | undefined;
     let flow: LoopbackLoginHandle | undefined;
     let finished = false;
+    /**
+     * The code exchange under way. A callback that arrives meanwhile, as when the page is reloaded, gets its outcome:
+     * exchanging its code too would fail, LinkedIn's codes being single-use, and report a sign-in that worked as failed.
+     */
+    let exchange: Promise<ExchangeOutcome> | undefined;
     const finish = (error?: Error, name?: string) => {
       if (finished) return;
       finished = true;
@@ -122,17 +127,15 @@ export class LoopbackLogin {
       }
       const code = url.searchParams.get('code');
       if (!code) return respond(res, 400, 'Missing code', '<h1>LinkedIn did not return an authorization code</h1>');
-      try {
-        const tokens = await exchangeAuthorizationCode(this.options.app, code, this.options.redirectUri);
-        const name = await this.options.onTokens(tokens);
-        const who = name ? ` as <strong>${escapeHtml(name)}</strong>` : '';
-        respond(res, 200, 'Connected to LinkedIn', `<h1>Connected to LinkedIn${who}</h1><p>You can close this tab and return to Claude.</p>`);
-        finish(undefined, name);
-      } catch (cause) {
-        const message = (cause as Error).message;
-        respond(res, 500, 'Sign-in failed', `<h1>LinkedIn sign-in failed</h1><p>${escapeHtml(message)}</p>`);
-        finish(cause instanceof Error ? cause : new Error(message));
+      exchange ??= this.exchange(code);
+      const outcome = await exchange;
+      if ('error' in outcome) {
+        respond(res, 500, 'Sign-in failed', `<h1>LinkedIn sign-in failed</h1><p>${escapeHtml(outcome.error.message)}</p>`);
+        return finish(outcome.error);
       }
+      const who = outcome.name ? ` as <strong>${escapeHtml(outcome.name)}</strong>` : '';
+      respond(res, 200, 'Connected to LinkedIn', `<h1>Connected to LinkedIn${who}</h1><p>You can close this tab and return to Claude.</p>`);
+      finish(undefined, outcome.name);
     };
 
     const port = Number(redirect.port);
@@ -170,4 +173,16 @@ export class LoopbackLogin {
     this.lastError = undefined;
     return flow;
   }
+
+  /** Exchanges the code for tokens and stores them; never rejects. */
+  private async exchange(code: string): Promise<ExchangeOutcome> {
+    try {
+      const tokens = await exchangeAuthorizationCode(this.options.app, code, this.options.redirectUri);
+      return { name: await this.options.onTokens(tokens) };
+    } catch (cause) {
+      return { error: cause instanceof Error ? cause : new Error(String(cause)) };
+    }
+  }
 }
+
+type ExchangeOutcome = { name: string | undefined } | { error: Error };

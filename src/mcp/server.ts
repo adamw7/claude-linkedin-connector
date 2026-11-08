@@ -100,6 +100,12 @@ function limitedText(max: number, noun: string) {
   });
 }
 
+/**
+ * LinkedIn's refusals that say nothing about the post a request names: the token (401, which signs the user in again),
+ * the API version (426) or the rate limit (429).
+ */
+const NOT_ABOUT_THE_POST = new Set([401, 426, 429]);
+
 /** Network errors from connecting to LinkedIn: the request never reached it. */
 const NOT_SENT = new Set<string | undefined>(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
 
@@ -736,7 +742,7 @@ export function createConnectorServer(options: ConnectorOptions): McpServer {
       await operation(client, urn);
     } catch (error) {
       if (!(error instanceof LinkedInApiError)) throw error;
-      if (urn.startsWith('urn:li:activity:') && error.status < 500) {
+      if (urn.startsWith('urn:li:activity:') && error.status < 500 && !NOT_ABOUT_THE_POST.has(error.status)) {
         throw new UserInputError(
           `LinkedIn could not ${verb} ${urn}. This needs the post's share or ugcPost URN (as returned by linkedin_create_post), not the activity URN that links copied from linkedin.com often contain. ` +
             `To find it, choose "Embed this post" in the post's menu on linkedin.com and pass the embed code, which contains urn:li:share:… or urn:li:ugcPost:…. LinkedIn said: ${error.message}`,
